@@ -1,0 +1,20 @@
+# Build output
+/build/
+/build-*/
+/out/
+compile_commands.json
+
+# Game data must never be committed. Users supply their own ROM; extracted
+# assets belong in the per-user data directory, not in the repository.
+*.nds
+*.srl
+*.sav
+*.dsv
+/extracted/
+/romfs/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
