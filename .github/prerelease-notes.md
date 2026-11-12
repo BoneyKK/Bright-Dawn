@@ -9,3 +9,7 @@ supply yourself. No ROM and no game data are included.
 - `SHA256SUMS.txt`: checksums of the packages
 
 Unpack, then run `bdtool --help`. See the README for what works today.
+
+`bdtool --version` prints this release's tag, and `validate`, `info` and
+`survey` print it as their first line. Please include that line when sharing
+output.

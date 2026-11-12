@@ -29,6 +29,11 @@ function(bd_cli_test name)
   set_tests_properties(${name} PROPERTIES FIXTURES_REQUIRED test_roms)
 endfunction()
 
+# Every report must name the build that produced it.
+bd_cli_test(cli_reports_its_build info ${BD_TEST_DIR}/dark_dawn_like.nds)
+set_tests_properties(cli_reports_its_build PROPERTIES
+  PASS_REGULAR_EXPRESSION "bdtool [0-9]+[.][0-9]+[.][0-9]+-[a-z0-9.]+( [(][0-9a-f]+[)])?\nFile:")
+
 bd_cli_test(cli_validate validate ${BD_TEST_DIR}/dark_dawn_like.nds)
 set_tests_properties(cli_validate PROPERTIES PASS_REGULAR_EXPRESSION "OK: Golden Sun: Dark Dawn")
 

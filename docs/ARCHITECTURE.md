@@ -42,7 +42,7 @@ in them, not before.
 | `rom` | The only code that reads the user's ROM: validation, file system, decompression | `core` |
 | `assets` | Decodes original formats into neutral descriptions (textures, meshes, skeletons, sequences); asset identifiers; cache in the user data directory | `core`, `rom` |
 | `mods` | Manifests, load order, override resolution on top of `assets` | `core`, `assets` |
-| `recompiler` | Offline: machine code to C | `core`, `rom` |
+| `recompiler` | Offline: machine code to C++. The owner's existing translator is to be brought in here rather than rewritten (see ASSESSMENT.md) | `core`, `rom` |
 | `runtime` | What the recompiled game calls: guest memory, replaced SDK services, the fixed-rate simulation loop | `core`, and the *interfaces* of `gfx`, `audio`, `input` |
 | `gfx` | Capture of DS-level graphics state, presentation rules, renderer backends | `core`, `assets`, `platform` |
 | `audio` | Sequence playback, mixing, replacement tracks | `core`, `assets`, `platform` |
@@ -57,6 +57,28 @@ Rules that keep game logic independent of presentation:
 - `rom` is the only module that knows the ROM is a file. Everything else asks
   for assets by identifier.
 - Dependencies point downwards in the table; `core` depends on nothing.
+
+## The boundary between translated code and the runtime
+
+The translated game code sees the machine only through a narrow interface: a
+processor state it passes to every function, memory reads and writes, a
+dispatcher for calls to addresses known only at run time, and hooks for system
+calls and coprocessor access. `runtime` implements that interface. This is the
+seam that keeps game logic independent of everything else: nothing above it
+knows about ARM, and nothing below it knows about windows or graphics APIs.
+
+Three properties of the translated code shape the runtime:
+
+- **Threads.** Calls and returns are native. Each game thread therefore runs
+  on its own native stack, and the SDK's thread switch is replaced by a switch
+  between those stacks.
+- **Overlays.** Several overlays are translated for the same address. The
+  dispatcher chooses by comparing guest memory with the overlay images, so it
+  follows whatever the game's own loader does.
+- **Interrupts.** Translated code cannot be interrupted at an arbitrary
+  instruction. The runtime delivers interrupts at defined points.
+
+These are design intentions, not tested code; see ASSESSMENT.md section 5.
 
 ## How the three headline features attach
 

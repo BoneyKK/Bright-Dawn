@@ -37,6 +37,13 @@ instruction sets), a well-documented target.
 project will pursue. It is a genuine recompilation: the game's logic runs as
 native code. It is also a large undertaking; section 5 is honest about that.
 
+**Update.** The project owner's earlier project already contains such a
+translator for this game: 14,354 functions translated to C++ that compiles and
+links, tested instruction by instruction against reference emulators, but never
+run as a program. Section 5 describes it and what it still lacks. It changes
+the plan: the translator does not need to be written, it needs to be brought
+into this repository, have its known gaps closed, and be given a runtime.
+
 The recompiled C code is derived from the game and is therefore produced on the
 user's machine from the user's ROM. It is never committed to this repository.
 Whether binary releases may contain it is a legal decision for the project
@@ -104,21 +111,56 @@ Ordered by how likely each is to block the intended result.
     (**unverified** for this game). A recompilation that models the cartridge
     faithfully should pass them, but they can cost debugging time.
 
-## 5. Roadmap
+## 5. The existing translator, and what it lacks
+
+From the owner's description of their earlier project (see ROM_SURVEY.md for
+its measured results). It is written in Python and is not yet in this
+repository, so nothing below has been checked against its source here.
+
+How it works: it finds functions by following the code from its entry points,
+then turns each ARM or Thumb instruction into C++ statements that act on a
+processor model (16 registers, the flags, and memory access through callbacks
+the runtime supplies). A call to a known function becomes a C++ call; a call
+or jump to an address not known until run time goes through a dispatcher that
+looks the address up in a table.
+
+Its own documentation lists these gaps. Each is a piece of work for this
+project, and the first is a design decision that shapes the runtime:
+
+| Gap | Why it matters | Proposed answer (untested) |
+| --- | --- | --- |
+| Calls and returns are native C++ calls and returns | Code that resumes somewhere other than its caller breaks: the SDK's thread switch and interrupt return do exactly that | Give every game thread its own native stack (a fibre) and replace the SDK's thread-switch routine with a fibre switch. The translated functions stay as they are. Needs that routine to be located |
+| Nothing delivers interrupts | The game's frame logic is driven by the vertical-blank interrupt | The runtime calls the game's handler at defined points: when the game waits for an interrupt, and at points still to be chosen for long-running code |
+| The dispatcher cannot tell which overlay is loaded | 297 overlays share one address | Decide by content: the loaded overlay is the one whose image matches guest memory at that address. No knowledge of the game's loader is needed |
+| Functions reached only through pointers may be missed; Thumb switch tables are not recognised | A missed function has no translation, and a mistranslated switch misbehaves | Measure first (the translator reports unresolved jumps). Fix the Thumb switch case in the translator. Decide then whether a small interpreter is needed as a safety net for anything still missed |
+| System calls, coprocessor access, hardware registers | The translated code calls out for these and nothing answers | The runtime, built up function by function as the boot sequence demands them |
+| ARM7 program | It handles sound, touch and power; the ARM9 side talks to it constantly | Do not run it. Answer the ARM9 side's requests natively |
+| Names are addresses | The SDK functions that should be replaced cannot be found by name | Identify them by signature against SDK 5.4 |
+
+The interpreter question deserves a plain statement. A fallback interpreter
+would make the result a hybrid: recompiled code with interpreted exceptions.
+That is a legitimate engineering choice and common in practice, but it is a
+step towards emulation, so it is the owner's decision and will not be added
+quietly.
+
+## 6. Roadmap
 
 Sizing is deliberately frank: the complete vision is a multi-year effort of the
 kind normally carried by a team. Milestones are ordered so that each leaves
 something usable and testable, and so that the riskiest unknowns are resolved
-first. The order differs from the original brief because nothing existed to
-build on: there is no rendering to make single-screen until code runs.
+first. Nothing can be rendered on one screen until code runs, so the visible
+features come after the runtime.
+
+One constraint governs the pace: the development environment has no ROM. Every
+step that touches the real game is run by the owner and reported back.
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| 0 | **ROM ingestion and survey** (this change) | Validation, file system, decompression and survey tool pass their tests |
-| 1 | **Survey of the real game** (in progress) | `bdtool info` and `survey` output from a real ROM is recorded in ROM_SURVEY.md; unknown formats and overlay layout are listed; the open questions there are answered |
-| 2 | **Code analysis** | ARM/Thumb decoder and function discovery for the main program and overlays; SDK functions identified by signature; coverage is reported as a number |
-| 3 | **Recompiler core** | ARMv5TE to C translation plus a minimal runtime; test programs give identical results under the recompiler and a reference interpreter |
-| 4 | **Boot without graphics** | With the SDK replaced (threads, files, cartridge, timers), the game's start-up runs and its graphics commands are captured to a log |
+| 0 | **ROM ingestion and survey** (done) | Validation, file system, decompression and survey tool pass their tests |
+| 1 | **Survey of the real game** (done) | Program code and the standard asset formats are accounted for on the real ROM; see ROM_SURVEY.md for the minor questions left |
+| 2 | **Bring in the translator** | Its source is in this repository; it runs from this project's ROM layer; its output builds in CI against a generated test program; its own tests run without hard-coded paths |
+| 3 | **Runtime core** | Guest memory map, the dispatcher with overlay selection by content, fibres for game threads; test programs behave identically under the translator and a reference |
+| 4 | **Boot without graphics** | With SDK services answered natively (threads, files, cartridge, timers, the ARM7's duties), the game's start-up runs on the owner's machine and its graphics commands are captured to a log |
 | 5 | **Platform shell and reference renderer** | Window, input and audio device via SDL; captured frames drawn correctly at native resolution (accuracy first) |
 | 6 | **Unified screen, high resolution, widescreen** | Per-situation layout rules replace the two-screen output; 3D renders at selectable resolution with corrected projection; effects catalogue started |
 | 7 | **Audio** | Original music and sound effects play; music and effects volumes are separate |
@@ -127,12 +169,11 @@ build on: there is no rendering to make single-screen until code runs.
 | 10 | **Book-style settings menu** | Built from fonts and UI graphics read from the user's ROM |
 | 11 | **Optimisation and release engineering** | Performance, crash reporting, save management, packaging |
 
-Milestones 2 and 3 carry the most technical risk. If they cannot reach
-sufficient coverage of the game's code, the project does not have a fallback
-that still counts as a recompilation, and that should be decided openly rather
-than papered over with an emulator core.
+Milestones 3 and 4 carry the most technical risk: the translated code has
+never been executed, and the first attempt to run it is where its untested
+paths (calls between functions, the dispatcher, interrupts) meet reality.
 
-## 6. Milestone 0, delivered
+## 7. Milestone 0, delivered
 
 - CMake build with no third-party dependencies; warnings-as-errors and
   sanitizer configurations.
@@ -146,9 +187,10 @@ than papered over with an emulator core.
 
 Known limitations:
 
-- Run once against a real ROM, which exposed a bug in locating the ARM9
-  start-up parameters (since fixed). The fixed tool, with LZ40 and overlay
-  decoding, has not yet been rerun on real data.
+- Run three times against a real ROM. The first run exposed a bug in locating
+  the ARM9 start-up parameters and the second showed the LZ40 decoder failing
+  on a quarter of its input; both are fixed and the third run confirms it.
+  Details are in ROM_SURVEY.md.
 - Game identification uses the cartridge game code only. A table of known-good
   whole-image checksums would detect modified dumps; it is omitted until the
   values can be confirmed against real dumps.

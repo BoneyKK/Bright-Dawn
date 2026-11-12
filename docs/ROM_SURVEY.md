@@ -1,36 +1,49 @@
 # Survey of the real game
 
-Facts established by running `bdtool` on a real ROM, and what they mean for the
-project. This file takes precedence over the guesses in ASSESSMENT.md.
+Facts established about the real ROM, and what they mean for the project. This
+file takes precedence over the guesses in ASSESSMENT.md.
 
-Sources, and how far to trust each:
+Every figure is tagged with where it comes from:
 
-- **bdtool run**: one run of `bdtool info` and `bdtool survey` (version 0.1.0)
-  by the project owner on their own copy. Figures are as reported.
-- **Owner's notes**: a summary the owner supplied from an earlier asset
-  extraction project of theirs, built against the same ROM. Items it marks as
-  measured were counted by scripts on the real ROM there; they have not been
-  re-measured with this project's tools.
+- **[run 1]** `bdtool info` and `survey`, first build, run by the project
+  owner on their own copy.
+- **[run 2]** release `v0.1.0-pre.8`, same copy. Its LZ40 decoder still had
+  three errors, so its asset figures are superseded by run 3.
+- **[run 3]** `bdtool info` and `survey`, release `v0.1.0-pre.10`, same copy.
+  This is the first build with the corrected LZ40 decoder and overlay
+  decoding, and the source of the asset figures below.
+- **[owner]** Notes the owner supplied from an earlier extraction and code
+  translation project of theirs, built against the same ROM. Items given here
+  were measured by scripts there; they have not been re-measured with this
+  project's tools unless a run is also cited.
 
 ## The image
 
-| | |
-| --- | --- |
-| Release | Europe, game code `BO5P`, revision 0, internal title `GOLDENSUN_DD` |
-| Size | 268,435,456 bytes (256 MiB chip, 214.45 MiB used), CRC32 `C92C3E10` |
-| SHA-1 | `0b60543279fcd04c437ee22906e10887475a48ea` (owner's notes) |
-| ARM9 program | 309,672 bytes stored, loads at `0x02000000`, entry `0x02000800` |
-| ARM7 program | 156,716 bytes, loads at `0x02380000` |
-| Secure area | decrypted |
-| File system | 13,237 named files in 1,520 directories; 13,603 file IDs |
+| | | |
+| --- | --- | --- |
+| Release | Europe, game code `BO5P`, revision 0, title `GOLDENSUN_DD` | run 1 |
+| Size | 268,435,456 bytes (256 MiB chip, 214.45 MiB used) | run 1 |
+| CRC32 | `C92C3E10` | run 1 |
+| SHA-1 | `0b60543279fcd04c437ee22906e10887475a48ea` | owner |
+| File system | 13,237 named files in 1,520 directories; 13,603 file IDs | run 1 |
+| Secure area | decrypted | run 1 |
+
+`bdtool validate` accepts this image and decompresses its ARM9 program without
+error [run 2].
 
 ## Program code
 
-366 overlays, 7.10 MiB when loaded. None is flagged as compressed in the
-overlay table, yet they are compressed: this game stores its overlays as LZ40
-files, which the table has no flag for (owner's notes). `bdtool` now decodes
-them and checks each result against the size the table says is loaded. They
-load at only 14 distinct addresses:
+| | | |
+| --- | --- | --- |
+| SDK version | 5.4, release step 30001 (raw `0x05047531`) | run 2, run 3 |
+| ARM9 program | 309,672 bytes stored, BLZ-compressed; 507,960 bytes once decompressed | run 2, run 3 |
+| ARM9 load address, entry | `0x02000000`, `0x02000800` | run 1 |
+| ARM7 program | 156,716 bytes, loads at `0x02380000` | run 1 |
+| Overlays | 366, none flagged compressed in the overlay table | run 1 |
+| Overlay storage | all 366 are LZ40 files, which the overlay table has no flag for; 3.25 MiB stored, 7.10 MiB when loaded | run 3, owner |
+| Overlay check | all 366 decode to exactly the size the overlay table gives | run 3 |
+
+The overlays load at only 14 distinct addresses [run 1]:
 
 | Load address | Overlays | | Load address | Overlays |
 | --- | --- | --- | --- | --- |
@@ -45,53 +58,111 @@ load at only 14 distinct addresses:
 What this means:
 
 - Overlays that share an address can never be loaded together, so the game
-  swaps code constantly. 297 overlays at one address is the signature of
-  per-location or per-event code: a small module loaded for the current scene.
-  This is a guess from the numbers, to be confirmed by code analysis.
-- The first overlay starts about 1.04 MiB above the ARM9 load address, while
-  the stored ARM9 program is 0.30 MiB. The stored program is therefore very
-  likely compressed (the rest being uninitialised data would also fit).
-- The recompiler has to treat overlays as its normal case: translate each
-  separately and resolve calls according to what is loaded.
+  swaps code constantly. 297 overlays at one address suggests a small module
+  per location or event; that is a guess from the numbers.
+- Every overlay decodes to exactly the size the game expects, so this
+  project can now extract the game's program code: the decompressed ARM9
+  program and all 366 overlays. The ARM9 program's decompression is checked
+  for internal consistency only; nothing independent confirms its content.
 
-**Bug found.** The tool reported that the ARM9 start-up parameters were
-missing. They cannot be missing from a retail game; the search looked for the
-two marker words in the wrong order. Retail images store the bytes
-`21 06 C0 DE DE C0 06 21` (confirmed by the owner's notes); the tool now
-accepts either order. Until it is rerun, the SDK version and whether the ARM9
-program is compressed are unknown.
+### The owner's existing code translation
+
+The owner's earlier project already translates this game's machine code to
+C++ [owner]. In its own words it is static binary translation, not
+decompilation: each ARM or Thumb instruction becomes a few C++ statements
+acting on a model of the processor.
+
+| | |
+| --- | --- |
+| Input | 368 program files: ARM9 (with its autoload blocks), ARM7, 366 overlays |
+| Output | 14,354 functions, 877,968 instructions, about 190 MB of C++17 |
+| Builds | the whole output compiles and links with g++ |
+| Tested | decoder against Capstone on the main program (matched, apart from a few differences whose details were not recorded); about 10,000 random instruction sequences and all 485 leaf functions of the main program against Unicorn, with no differences where Unicorn models this processor correctly (it does not model rotated unaligned loads, so those were not compared) |
+| Not tested | functions that call other functions, the dispatcher and jump-table paths, system calls, coprocessor access, interrupts, anything touching hardware registers, ARM7 code |
+| Never done | running the translated code as a program; there is no platform layer |
+
+Its documented gaps are listed in ASSESSMENT.md, because they define the work
+ahead. That translator is written in Python and is not part of this
+repository.
+
+**Bug found by run 1.** The tool reported that the ARM9 start-up parameters
+were missing. The search looked for the two marker words in the wrong order.
+Retail images store the bytes `21 06 C0 DE DE C0 06 21` [owner]; the tool now
+accepts either order, and run 2 found them.
 
 ## Assets
 
-By content signature, top-level files only:
+All figures in this section are from run 3.
 
-| Detected | Files | Size |
-| --- | --- | --- |
-| Unrecognised | 11,773 | 93.52 MiB |
-| NARC archive | 1,416 | 61.37 MiB |
-| SDAT sound archive | 1 | 49.97 MiB |
-| Standard 3D formats (model, texture, animation) | 47 | 1.75 MiB |
+Of the 13,237 files, 10,369 are LZ40-compressed (31 of them twice) and 2,868
+are not compressed. By content, after removing compression:
 
-By extension, the standard 3D formats are far more common than their
-signatures suggest: 444 `.nsbmd`, 437 `.nsbtx`, 368 `.nsbca`, 300 `.nsbta`.
-Most of those files do not begin with the format's signature. They begin with
-the byte `0x40` followed by what reads as a 24-bit size, as do thousands of
-other files. That is the shape of a compression header.
+| Content | Files |
+| --- | --- |
+| Unrecognised | 9,731 |
+| NARC archive | 1,416 |
+| 3D model | 444 |
+| 3D texture set | 437 |
+| Skeletal animation | 368 |
+| Texture coordinate animation | 300 |
+| Visibility animation | 269 |
+| Material animation | 248 |
+| Texture pattern animation | 11 |
+| Bitmap font | 10 |
+| LZ40 header inside LZ40 that did not decode | 2 |
+| SDAT sound archive | 1 |
+
+Inside archives: 1,674 archives were found (1,416 top-level, 258 nested) and
+1,672 were opened, holding 15,755 members. Two were not opened and produced no
+error; the only path in that build that leaves an archive unopened silently is
+its nesting limit, which has since been raised and now reports what it skips.
+
+| Member content | Members |
+| --- | --- |
+| Skeletal animation (4,625 plain, 1,933 under LZ40) | 6,558 |
+| Texture coordinate animation | 3,727 |
+| Unrecognised (1,369 plain, 567 under LZ40, 3 under LZ10 or LZ11) | 1,939 |
+| 3D model (423 plain, 894 under LZ40) | 1,317 |
+| 3D texture set (49 plain, 977 under LZ40) | 1,026 |
+| Material animation | 575 |
+| Visibility animation | 355 |
+| Nested archive (9 plain, 249 under LZ40) | 258 |
+
+Counting files and archive members together, the standard formats account for
+1,761 models, 1,463 texture sets and 6,926 skeletal animations. Models inside
+the game's `.cbmdl` containers are not in these figures, because the container
+is what the survey sees.
 
 What this means:
 
-- **Audio** is one standard sound archive (`data/sound/test_data.sdat`). The
-  format is documented, and its sequence numbers give music packs natural
-  track identifiers.
-- **Models, textures and animations** use the standard, documented formats,
-  mostly behind LZ40 compression (see below). That is good news for texture
-  and model replacement.
-- **Archives** are NARC, including the 317 `.cbarc` files. A quarter of the
-  ROM's data is inside them, so the first survey did not see it.
-- **Formats specific to this game**, to be reverse-engineered: `.cbmdl` (1,396
-  files, compressed; contents unknown), `MDLR` (signature of 1,284 small
-  `.mdlr` files), `.col` (454), `.nbb` (443), `.cbin` (622), `.dat2` to `.dat7`
-  (253 of each), `.cam`, `.spr`, and `filenames.bin`.
+- **Audio** is one standard sound archive (`data/sound/test_data.sdat`,
+  49.97 MiB). Its sequence numbers give music packs natural track identifiers.
+- **Models, textures and animations** use the standard, documented container
+  formats throughout. That is good news for texture and model replacement.
+- **Fonts**: ten files decode to the standard bitmap font format. The
+  settings menu can therefore take its fonts from the ROM in a documented
+  format.
+- **No standard 2D graphics files** were found [owner]. Interface graphics are
+  stored some other way, which the settings menu milestone has to work out.
+- **Archives** are standard NARC, and that includes `.cbarc`: the number of
+  files with a NARC signature (1,416) equals the number of `.narc` files
+  (1,099) plus `.cbarc` files (317).
+- **Extensions agree with content** for the standard formats, at least by
+  count: the files whose content is a model, texture set, skeletal animation
+  or texture coordinate animation number 444, 437, 368 and 300, the same as
+  the counts of `.nsbmd`, `.nsbtx`, `.nsbca` and `.nsbta` files.
+- **Game-specific formats**, to be reverse-engineered. The largest groups of
+  unrecognised data begin with a small 32-bit number: 0 (1,806 items),
+  2 (1,211), 3 (432), 6 (368), 7 (337), 5 (312), 4 (238), 12 (195), 8 (168),
+  10 (21), 9 (20). That looks like a count followed by a table, which would
+  fit the owner's description of `.cbmdl` below; it is an inference, not a
+  measurement. The one clear signature is `MDLR` (2,437 items). The common
+  extensions that are not standard format names are `.cbmdl`, `.bin`,
+  `.mdlr`, `.cbin`, `.col`, `.nbb`, `.dat2` to `.dat7`, `.cam` and `.spr`.
+- **Loose ends**: two files contain, inside their LZ40 layer, data that has an
+  LZ40 header but does not decode; five files and three archive members
+  decode further as LZ10 or LZ11 to unrecognised content. Whether these are
+  real nested compression or data that merely resembles it is not known.
 
 More from the owner's notes:
 
@@ -101,20 +172,18 @@ More from the owner's notes:
 - `.cbarc` archives hold battle characters: one model and 15 to 30 animations.
   Their animations are a game-specific revision of the standard skeletal
   animation format (2,485 files) with different key-frame and rotation
-  encoding. This matters for the model replacement pipeline: original
-  animations cannot be read by a stock decoder.
-- No files in the standard 2D graphics formats were found. Fonts and interface
-  graphics must therefore be stored some other way, which the settings menu
-  milestone will have to work out.
+  encoding. A stock decoder cannot read them, which matters for the model
+  replacement pipeline.
 
 ## LZ40 compression
 
 Almost every data file, and every overlay, is compressed with LZ40 (type byte
 `0x40`), sometimes two layers deep. The console's built-in routines do not
-handle this scheme, so the game carries its own decoder in its program code.
+handle this scheme, so the game carries its own decoder in its program code
+[owner].
 
 The format, as measured in the owner's project against 15,355 real files and
-an independent implementation:
+an independent implementation [owner]:
 
 ```
 u8   0x40
@@ -133,16 +202,26 @@ output past the declared size is discarded
 
 Up to 32 bytes of padding may follow the stream in a file.
 
-This project's first implementation, written from the DSDecmp plugin before
-the owner's notes arrived, had the 16-bit length in the wrong byte order,
-rejected output past the declared size, and allowed only 3 bytes of padding.
-All three are corrected and covered by tests.
+How this project's decoder stands against real data [run 3]:
+
+- Every item whose outer layer has an LZ40 header decodes: 10,369 files,
+  4,620 archive members and 366 overlays, with none left undecoded.
+- 6,093 of the files and members decode to a recognised format signature,
+  and all 366 overlays decode to exactly the size the overlay table gives.
+  Both are checks the decoder could not pass by accident.
+- 10,369 + 4,620 + 366 = 15,355, which is the number of real LZ40 files the
+  owner's project reports having decoded. The two counts were produced
+  independently.
+- History: the first decoder here, written from the DSDecmp plugin, read the
+  16-bit length in the wrong byte order, rejected output past the declared
+  size and allowed only 3 bytes of padding. Run 2 used it and failed on 4,055
+  items. The owner's notes identified all three errors.
 
 What this means for the recompilation:
 
-- The game's own LZ40 routine will be among the recompiled code. The runtime
-  can either run it as translated or substitute the native decoder here; the
-  second is simpler and faster, and needs the routine to be located first.
+- The game's own LZ40 routine is among the translated code. The runtime can
+  run it as translated or substitute the native decoder here; the second
+  needs the routine to be located first.
 - The runtime must serve files to the game compressed, exactly as stored,
   unless the game's file loading is replaced as well.
 - Asset replacement does not need an LZ40 encoder: replacements are loaded
@@ -150,13 +229,8 @@ What this means for the recompilation:
 
 ## Open questions
 
-Answered by rerunning `validate`, `info` and `survey` with the current tool:
-
-1. Which SDK version was the game built with, and is the ARM9 program
-   compressed? Does it decompress cleanly?
-2. Do all 366 overlays decode to exactly the size the overlay table gives?
-3. Does this project's LZ40 decoder agree with the owner's figures on the
-   real ROM (no files left labelled `0x40?`)?
-4. What is inside the 1,416 archives, and how common is double compression?
-5. What do the game-specific formats look like once decompressed (the survey
-   lists the leading bytes of everything it does not recognise)?
+1. Why were two archives not opened? A build that prints its version as the
+   first line of its output reports archives it skips for nesting depth.
+2. Are the "loose ends" above real nested compression?
+3. What are the game-specific formats? This needs format work, not another
+   survey.
