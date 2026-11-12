@@ -61,6 +61,7 @@ add_library(bd_rom STATIC
   src/rom/export_path.cpp
   src/rom/file_format.cpp
   src/rom/game_id.cpp
+  src/rom/narc.cpp
   src/rom/nds_header.cpp
   src/rom/nitrofs.cpp
   src/rom/overlay.cpp

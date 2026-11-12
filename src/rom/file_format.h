@@ -4,8 +4,10 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "core/bytes.h"
+#include "core/result.h"
 
 namespace bd::rom {
 
@@ -34,7 +36,11 @@ enum class FileFormat {
   Nftr,   // Bitmap font.
   Lz10,   // LZ10-compressed data.
   Lz11,   // LZ11-compressed data.
+  Lz40,   // Data under the game's own 0x40 compression.
+  Lz40Unconfirmed,  // Has a plausible 0x40 header but did not decode.
 };
+
+inline constexpr FileFormat kLastFileFormat = FileFormat::Lz40Unconfirmed;
 
 const char* name(FileFormat format);
 const char* description(FileFormat format);
@@ -45,8 +51,16 @@ struct Sniffed {
   FileFormat inner = FileFormat::Unknown;
 };
 
-// Identifies `data` by its leading bytes. A file is only reported as LZ10 or
-// LZ11 when it actually decompresses, which keeps false positives rare.
+// Identifies `data` by its leading bytes. A file is only reported as
+// compressed when it actually decompresses (and, for the 0x40 scheme, when
+// the stream accounts for the whole file), which keeps false positives rare.
 Sniffed sniff(ByteSpan data);
+
+// True for the formats that wrap other data in compression.
+bool is_compression(FileFormat format);
+
+// Removes the compression `format` names. Fails with InvalidArgument for a
+// format that is not a compression scheme.
+Result<std::vector<std::uint8_t>> decompress(FileFormat format, ByteSpan data);
 
 }  // namespace bd::rom

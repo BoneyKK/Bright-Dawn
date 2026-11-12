@@ -24,6 +24,7 @@ struct RomSpec {
   bool compress_arm9 = true;
   bool decrypted_secure_area = true;
   bool with_module_params = true;
+  bool swapped_markers = false;  // The start-up markers in the non-retail order.
   std::uint32_t sdk_version = 0x04020001;
   // Paths use '/' separators; file IDs are assigned after the overlays.
   std::vector<std::pair<std::string, Bytes>> files;

@@ -50,7 +50,8 @@ TEST(rom_lists_and_reads_files) {
 
   CHECK(rom.fs().named_files().size() == spec.files.size());
   CHECK(rom.fs().ranges().size() == spec.files.size() + spec.overlays.size());
-  CHECK(rom.fs().directory_count() == 6);  // root, data, data/model, data/font, script, script/ev
+  // root, data, data/model, data/font, script, script/ev, model
+  CHECK(rom.fs().directory_count() == 7);
   for (const auto& [path, data] : spec.files) {
     CHECK(rom.fs().find(path) != nullptr);
     CHECK(contents(rom, path.c_str()) == data);
@@ -101,6 +102,26 @@ TEST(rom_decompresses_arm9_and_overlays) {
     CHECK(data.value() == spec.overlays[i].data);
   }
   CHECK(rom.arm7_overlays().empty());
+}
+
+TEST(rom_finds_startup_parameters_in_either_marker_order) {
+  // A real ROM showed that retail images store the marker bytes in the
+  // opposite order from the one this project first assumed.
+  for (bool swapped : {false, true}) {
+    auto spec = bd_test::default_spec();
+    spec.swapped_markers = swapped;
+    const auto built = bd_test::build_rom(spec);
+    // Guard the test itself: the default must be the retail byte order.
+    const std::size_t marker = 0x4000 + 0x40 + 28;
+    CHECK((built.image[marker] == 0x21) == !swapped);
+    const auto opened = Rom::from_bytes(built.image);
+    REQUIRE(opened.ok());
+    REQUIRE(opened.value().module_params().has_value());
+    CHECK(opened.value().module_params()->sdk_major() == 4);
+    const auto arm9 = opened.value().arm9_decompressed();
+    REQUIRE(arm9.ok());
+    CHECK(arm9.value() == built.arm9_plain);
+  }
 }
 
 TEST(rom_handles_uncompressed_arm9) {

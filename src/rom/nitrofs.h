@@ -26,6 +26,16 @@ struct NamedFile {
   std::uint16_t file_id = 0;
 };
 
+struct NameTable {
+  std::vector<NamedFile> files;  // In the order the directory tree lists them.
+  std::size_t directory_count = 0;
+};
+
+// Parses a file name table, the structure shared by the cartridge file system
+// and by NARC archives. `file_count` is the number of files that exist; names
+// that refer to any other file ID are rejected.
+Result<NameTable> parse_name_table(ByteSpan fnt, std::size_t file_count);
+
 class NitroFs {
  public:
   // Reads both tables from `rom`. Every structural problem is reported as an

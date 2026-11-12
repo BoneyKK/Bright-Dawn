@@ -9,6 +9,7 @@ add_executable(bd_tests
   test_checksum.cpp
   test_compression.cpp
   test_formats.cpp
+  test_narc.cpp
   test_rom.cpp
 )
 target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform)
@@ -46,6 +47,15 @@ set_tests_properties(cli_list PROPERTIES PASS_REGULAR_EXPRESSION "data/model/her
 
 bd_cli_test(cli_survey survey ${BD_TEST_DIR}/dark_dawn_like.nds)
 set_tests_properties(cli_survey PROPERTIES PASS_REGULAR_EXPRESSION "LZ10 > NSBMD")
+
+# The survey must look through 0x40 compression and into archives.
+bd_cli_test(cli_survey_archives survey ${BD_TEST_DIR}/dark_dawn_like.nds)
+set_tests_properties(cli_survey_archives PROPERTIES
+  PASS_REGULAR_EXPRESSION "2 archive.s. opened, 4 member.s..*LZ40 > NSBTX +1 ")
+
+bd_cli_test(cli_lz40_probe lz40-probe ${BD_TEST_DIR}/dark_dawn_like.nds)
+set_tests_properties(cli_lz40_probe PROPERTIES
+  PASS_REGULAR_EXPRESSION "negated +big-endian +3 +3")
 
 bd_cli_test(cli_extract extract ${BD_TEST_DIR}/dark_dawn_like.nds --code --out ${BD_TEST_DIR}/out)
 set_tests_properties(cli_extract PROPERTIES PASS_REGULAR_EXPRESSION "Wrote [0-9]+ file")

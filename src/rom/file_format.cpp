@@ -59,6 +59,8 @@ const char* name(FileFormat format) {
     case FileFormat::Nftr: return "NFTR";
     case FileFormat::Lz10: return "LZ10";
     case FileFormat::Lz11: return "LZ11";
+    case FileFormat::Lz40: return "LZ40";
+    case FileFormat::Lz40Unconfirmed: return "0x40?";
   }
   return "unknown";
 }
@@ -89,9 +91,27 @@ const char* description(FileFormat format) {
     case FileFormat::Nftr: return "bitmap font";
     case FileFormat::Lz10: return "LZ10-compressed data";
     case FileFormat::Lz11: return "LZ11-compressed data";
+    case FileFormat::Lz40: return "0x40-compressed data";
+    case FileFormat::Lz40Unconfirmed: return "has a 0x40 compression header but did not decode";
   }
   return "";
 }
+
+namespace {
+
+// Files are padded to a 4-byte boundary, so up to three bytes may follow a
+// compressed stream. More than that means the stream was not the whole file.
+constexpr std::size_t kMaxPadding = 3;
+
+// Whether the header alone is believable: a non-zero size that the file could
+// actually expand to (literal-only data costs nine bytes per eight).
+bool plausible_lz40_header(ByteSpan data) {
+  if (data.size() < 5 || data[0] != 0x40) return false;
+  const std::uint64_t declared = le32(data, 0) >> 8;
+  return declared != 0 && data.size() <= declared + declared / 8 + 8;
+}
+
+}  // namespace
 
 Sniffed sniff(ByteSpan data) {
   if (data.empty()) return {FileFormat::Empty, FileFormat::Unknown};
@@ -105,7 +125,27 @@ Sniffed sniff(ByteSpan data) {
       return {is_lz10 ? FileFormat::Lz10 : FileFormat::Lz11, by_magic(decoded.value())};
     }
   }
+  if (plausible_lz40_header(data)) {
+    std::size_t consumed = 0;
+    const auto decoded = lz40_decompress(data, &consumed);
+    if (decoded && data.size() - consumed <= kMaxPadding)
+      return {FileFormat::Lz40, by_magic(decoded.value())};
+    return {FileFormat::Lz40Unconfirmed, FileFormat::Unknown};
+  }
   return {};
+}
+
+bool is_compression(FileFormat format) {
+  return format == FileFormat::Lz10 || format == FileFormat::Lz11 || format == FileFormat::Lz40;
+}
+
+Result<std::vector<std::uint8_t>> decompress(FileFormat format, ByteSpan data) {
+  switch (format) {
+    case FileFormat::Lz10: return lz10_decompress(data);
+    case FileFormat::Lz11: return lz11_decompress(data);
+    case FileFormat::Lz40: return lz40_decompress(data);
+    default: return Error{ErrorCode::InvalidArgument, "not a compression format"};
+  }
 }
 
 }  // namespace bd::rom

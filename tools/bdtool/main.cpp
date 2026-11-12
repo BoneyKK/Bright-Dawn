@@ -19,7 +19,9 @@
 #include "platform/paths.h"
 #include "rom/export_path.h"
 #include "rom/file_format.h"
+#include "rom/compression.h"
 #include "rom/game_id.h"
+#include "rom/narc.h"
 #include "rom/rom.h"
 
 namespace {
@@ -40,7 +42,10 @@ void print_usage(std::FILE* out) {
       "                                   Golden Sun: Dark Dawn (exit status 0 if so)\n"
       "  bdtool info <rom>                Show header, program and overlay details\n"
       "  bdtool list <rom>                List every file in the ROM file system\n"
-      "  bdtool survey <rom> [--top N]    Classify the ROM's contents by format\n"
+      "  bdtool survey <rom> [--top N]    Classify the ROM's contents by format,\n"
+      "                                   looking inside archives and compressed files\n"
+      "  bdtool lz40-probe <rom>          Diagnostic: test which reading of the game's\n"
+      "                                   0x40 compression decodes its files\n"
       "  bdtool extract <rom> [options] [PATH...]\n"
       "                                   Extract files (all files when no PATH is given)\n"
       "      --out DIR                    Destination (default: per-user data directory)\n"
@@ -154,13 +159,26 @@ int cmd_info(const std::filesystem::path& path) {
               static_cast<unsigned>(h.arm7.size), h.arm7.rom_offset, h.arm7.ram_address);
 
   std::size_t compressed = 0;
+  std::size_t size_differs = 0;
   std::uint64_t loaded_bytes = 0;
+  std::uint64_t stored_bytes = 0;
   for (const auto& overlay : rom.arm9_overlays()) {
+    const std::uint32_t stored = rom.fs().ranges()[overlay.file_id].size;
     compressed += overlay.compressed ? 1 : 0;
     loaded_bytes += overlay.ram_size;
+    stored_bytes += stored;
+    // An overlay that is not flagged as compressed should be stored at the
+    // size it occupies in memory; anything else deserves a closer look.
+    if (!overlay.compressed && stored != overlay.ram_size) ++size_differs;
   }
-  std::printf("ARM9 overlays:  %zu (%zu compressed), %s of code and data when loaded\n",
-              rom.arm9_overlays().size(), compressed, human_size(loaded_bytes).c_str());
+  std::printf("ARM9 overlays:  %zu (%zu flagged compressed), %s stored, %s when loaded\n",
+              rom.arm9_overlays().size(), compressed, human_size(stored_bytes).c_str(),
+              human_size(loaded_bytes).c_str());
+  if (size_differs != 0) {
+    std::printf("  Note:         %zu overlay(s) not flagged compressed are stored at a "
+                "different size than they load at\n",
+                size_differs);
+  }
   std::printf("ARM7 overlays:  %zu\n", rom.arm7_overlays().size());
   std::printf("File system:    %zu named files in %zu directories, %zu file IDs in total\n",
               rom.fs().named_files().size(), rom.fs().directory_count(),
@@ -205,6 +223,141 @@ std::vector<std::pair<std::string, Tally>> by_size(const std::map<std::string, T
   return rows;
 }
 
+// Walks the ROM's files, descending through compression and into archives.
+class Survey {
+ public:
+  struct Sized {
+    std::uint32_t size;
+    std::string path;
+    std::string format;
+  };
+
+  void add_rom_file(const std::string& path, ByteSpan data) {
+    const std::string label = visit(data, rom_formats_, 0);
+    ++by_extension_[extension_of(path)].count;
+    by_extension_[extension_of(path)].bytes += data.size();
+    files_.push_back(Sized{static_cast<std::uint32_t>(data.size()), path, label});
+    total_bytes_ += data.size();
+  }
+
+  void print(const Rom& rom, std::size_t top) {
+    std::printf("Game code %s, revision %u: %zu named files, %s\n\n",
+                printable(rom.header().game_code).c_str(),
+                static_cast<unsigned>(rom.header().rom_version), files_.size(),
+                human_size(total_bytes_).c_str());
+
+    std::printf("Files in the ROM file system, by detected format\n");
+    print_formats(rom_formats_);
+
+    std::printf("\nMembers of archives, by detected format\n");
+    std::printf("  (%zu archive(s) opened, %zu member(s)", archives_, members_);
+    if (broken_archives_ != 0) std::printf("; %zu archive(s) could not be read", broken_archives_);
+    std::printf(")\n");
+    if (!member_formats_.empty()) print_formats(member_formats_);
+
+    std::printf("\nBy file extension\n");
+    std::printf("  %-18s %7s %12s\n", "extension", "files", "size");
+    print_top(by_extension_, 18, top);
+
+    if (!unknown_leads_.empty()) {
+      std::printf("\nLeading bytes of unrecognised data (after decompression, archives included)\n");
+      std::printf("  %-28s %7s %12s\n", "first four bytes", "items", "size");
+      print_top(unknown_leads_, 28, top);
+    }
+
+    std::stable_sort(files_.begin(), files_.end(),
+                     [](const Sized& a, const Sized& b) { return a.size > b.size; });
+    std::printf("\nLargest files\n");
+    for (std::size_t i = 0; i < files_.size() && i < top; ++i) {
+      std::printf("  %12s  %-18s %s\n", human_size(files_[i].size).c_str(),
+                  files_[i].format.c_str(), printable(files_[i].path).c_str());
+    }
+  }
+
+ private:
+  // Archives nested deeper than this are counted but not opened.
+  static constexpr int kMaxDepth = 3;
+
+  std::string visit(ByteSpan data, std::map<std::string, Tally>& tallies, int depth) {
+    using bd::rom::FileFormat;
+    const bd::rom::Sniffed sniffed = bd::rom::sniff(data);
+    const bool wrapped = bd::rom::is_compression(sniffed.format);
+    std::string label = bd::rom::name(sniffed.format);
+    if (wrapped) label += std::string(" > ") + bd::rom::name(sniffed.inner);
+    notes_[label] = bd::rom::description(wrapped ? sniffed.inner : sniffed.format);
+    ++tallies[label].count;
+    tallies[label].bytes += data.size();
+
+    // From here on, look at the content rather than its wrapping.
+    std::vector<std::uint8_t> unpacked;
+    ByteSpan payload = data;
+    FileFormat format = sniffed.format;
+    if (wrapped) {
+      auto decoded = bd::rom::decompress(sniffed.format, data);
+      if (decoded) {
+        unpacked = std::move(decoded.value());
+        payload = unpacked;
+        format = sniffed.inner;
+      }
+    }
+
+    if (format == FileFormat::Unknown) {
+      // A value shared by many items is very likely the signature of a
+      // game-specific format.
+      char lead[40] = "(shorter than 4 bytes)";
+      if (payload.size() >= 4) {
+        char ascii[5];
+        for (int i = 0; i < 4; ++i)
+          ascii[i] = (payload[i] >= 0x20 && payload[i] < 0x7F) ? static_cast<char>(payload[i]) : '.';
+        ascii[4] = '\0';
+        std::snprintf(lead, sizeof lead, "%02X %02X %02X %02X  \"%s\"", payload[0], payload[1],
+                      payload[2], payload[3], ascii);
+      }
+      ++unknown_leads_[lead].count;
+      unknown_leads_[lead].bytes += payload.size();
+    } else if (format == FileFormat::Narc && depth < kMaxDepth) {
+      const auto archive = bd::rom::Narc::parse(payload);
+      if (!archive) {
+        ++broken_archives_;
+      } else {
+        ++archives_;
+        members_ += archive.value().file_count();
+        for (std::size_t i = 0; i < archive.value().file_count(); ++i)
+          visit(archive.value().file(i), member_formats_, depth + 1);
+      }
+    }
+    return label;
+  }
+
+  void print_formats(const std::map<std::string, Tally>& tallies) {
+    std::printf("  %-18s %7s %12s  %s\n", "format", "items", "size", "meaning");
+    for (const auto& [label, tally] : by_size(tallies)) {
+      std::printf("  %-18s %7zu %12s  %s\n", label.c_str(), tally.count,
+                  human_size(tally.bytes).c_str(), notes_[label].c_str());
+    }
+  }
+
+  static void print_top(const std::map<std::string, Tally>& tallies, int width, std::size_t top) {
+    std::size_t shown = 0;
+    for (const auto& [key, tally] : by_size(tallies)) {
+      if (shown++ == top) break;
+      std::printf("  %-*s %7zu %12s\n", width, key.c_str(), tally.count,
+                  human_size(tally.bytes).c_str());
+    }
+  }
+
+  std::map<std::string, Tally> rom_formats_;
+  std::map<std::string, Tally> member_formats_;
+  std::map<std::string, Tally> by_extension_;
+  std::map<std::string, Tally> unknown_leads_;
+  std::map<std::string, std::string> notes_;
+  std::vector<Sized> files_;
+  std::uint64_t total_bytes_ = 0;
+  std::size_t archives_ = 0;
+  std::size_t broken_archives_ = 0;
+  std::size_t members_ = 0;
+};
+
 int cmd_survey(const std::filesystem::path& path, std::size_t top) {
   auto opened = Rom::open(path);
   if (!opened) return report(opened.error());
@@ -212,90 +365,10 @@ int cmd_survey(const std::filesystem::path& path, std::size_t top) {
   print_warnings(rom);
   note_if_other_game(rom);
 
-  std::map<std::string, Tally> by_format;
-  std::map<std::string, Tally> by_extension;
-  std::map<std::string, Tally> unknown_leads;
-  std::map<std::string, std::string> format_notes;
-  struct Sized {
-    std::uint32_t size;
-    std::string path;
-    std::string format;
-  };
-  std::vector<Sized> files;
-  std::uint64_t total_bytes = 0;
-
-  for (const auto& file : rom.fs().named_files()) {
-    const ByteSpan data = rom.file(file.file_id).value();
-    const bd::rom::Sniffed sniffed = bd::rom::sniff(data);
-    std::string label = bd::rom::name(sniffed.format);
-    if (sniffed.format == bd::rom::FileFormat::Lz10 ||
-        sniffed.format == bd::rom::FileFormat::Lz11) {
-      label += std::string(" > ") + bd::rom::name(sniffed.inner);
-    }
-    format_notes[label] = bd::rom::description(
-        sniffed.inner != bd::rom::FileFormat::Unknown ? sniffed.inner : sniffed.format);
-
-    auto add = [&](Tally& tally) {
-      ++tally.count;
-      tally.bytes += data.size();
-    };
-    add(by_format[label]);
-    add(by_extension[extension_of(file.path)]);
-    if (sniffed.format == bd::rom::FileFormat::Unknown) {
-      // Group unrecognised files by their first four bytes: a value shared by
-      // many files is very likely the signature of a game-specific format.
-      char lead[40] = "(shorter than 4 bytes)";
-      if (data.size() >= 4) {
-        char ascii[5];
-        for (int i = 0; i < 4; ++i) ascii[i] = (data[i] >= 0x20 && data[i] < 0x7F) ? data[i] : '.';
-        ascii[4] = '\0';
-        std::snprintf(lead, sizeof lead, "%02X %02X %02X %02X  \"%s\"", data[0], data[1], data[2],
-                      data[3], ascii);
-      }
-      add(unknown_leads[lead]);
-    }
-    files.push_back(Sized{static_cast<std::uint32_t>(data.size()), file.path, label});
-    total_bytes += data.size();
-  }
-
-  std::printf("Game code %s, revision %u: %zu named files, %s\n\n",
-              printable(rom.header().game_code).c_str(),
-              static_cast<unsigned>(rom.header().rom_version), files.size(),
-              human_size(total_bytes).c_str());
-
-  std::printf("By detected format\n");
-  std::printf("  %-16s %7s %12s  %s\n", "format", "files", "size", "meaning");
-  for (const auto& [label, tally] : by_size(by_format)) {
-    std::printf("  %-16s %7zu %12s  %s\n", label.c_str(), tally.count,
-                human_size(tally.bytes).c_str(), format_notes[label].c_str());
-  }
-
-  std::printf("\nBy file extension\n");
-  std::printf("  %-16s %7s %12s\n", "extension", "files", "size");
-  std::size_t shown = 0;
-  for (const auto& [ext, tally] : by_size(by_extension)) {
-    if (shown++ == top) break;
-    std::printf("  %-16s %7zu %12s\n", ext.c_str(), tally.count, human_size(tally.bytes).c_str());
-  }
-
-  if (!unknown_leads.empty()) {
-    std::printf("\nLeading bytes of unrecognised files\n");
-    std::printf("  %-28s %7s %12s\n", "first four bytes", "files", "size");
-    shown = 0;
-    for (const auto& [lead, tally] : by_size(unknown_leads)) {
-      if (shown++ == top) break;
-      std::printf("  %-28s %7zu %12s\n", lead.c_str(), tally.count,
-                  human_size(tally.bytes).c_str());
-    }
-  }
-
-  std::stable_sort(files.begin(), files.end(),
-                   [](const Sized& a, const Sized& b) { return a.size > b.size; });
-  std::printf("\nLargest files\n");
-  for (std::size_t i = 0; i < files.size() && i < top; ++i) {
-    std::printf("  %12s  %-16s %s\n", human_size(files[i].size).c_str(), files[i].format.c_str(),
-                printable(files[i].path).c_str());
-  }
+  Survey survey;
+  for (const auto& file : rom.fs().named_files())
+    survey.add_rom_file(file.path, rom.file(file.file_id).value());
+  survey.print(rom, top);
 
   // Overlays that occupy the same memory cannot be resident together; the
   // count of distinct load addresses hints at how the game swaps code.
@@ -308,6 +381,69 @@ int cmd_survey(const std::filesystem::path& path, std::size_t top) {
     for (const auto& [address, count] : by_address)
       std::printf("  0x%08" PRIX32 "  %zu overlay(s)\n", address, count);
   }
+  return kExitOk;
+}
+
+// The 0x40 compression scheme is known from one public description that
+// leaves two details open. This tries every combination on every candidate in
+// the ROM. The right reading decodes (nearly) everything to exactly the size
+// each header declares; a wrong one fails almost at once.
+int cmd_lz40_probe(const std::filesystem::path& path) {
+  using Flags = bd::rom::Lz40Options::Flags;
+  auto opened = Rom::open(path);
+  if (!opened) return report(opened.error());
+  const Rom& rom = opened.value();
+  print_warnings(rom);
+  note_if_other_game(rom);
+
+  struct Variant {
+    const char* flags_name;
+    const char* length_name;
+    bd::rom::Lz40Options options;
+    std::size_t decoded = 0;
+    std::size_t recognised = 0;
+  };
+  Variant variants[] = {
+      {"negated", "big-endian", {Flags::Negated, true}},
+      {"negated", "little-endian", {Flags::Negated, false}},
+      {"plain", "big-endian", {Flags::Plain, true}},
+      {"plain", "little-endian", {Flags::Plain, false}},
+      {"inverted", "big-endian", {Flags::Inverted, true}},
+      {"inverted", "little-endian", {Flags::Inverted, false}},
+  };
+
+  std::size_t candidates = 0;
+  auto probe = [&](ByteSpan data) {
+    if (data.size() < 5 || data[0] != 0x40) return;
+    ++candidates;
+    for (Variant& variant : variants) {
+      std::size_t consumed = 0;
+      const auto decoded = bd::rom::lz40_decompress(data, &consumed, variant.options);
+      if (!decoded || data.size() - consumed > 3) continue;
+      ++variant.decoded;
+      if (bd::rom::sniff(decoded.value()).format != bd::rom::FileFormat::Unknown)
+        ++variant.recognised;
+    }
+  };
+  for (const auto& file : rom.fs().named_files()) {
+    const ByteSpan data = rom.file(file.file_id).value();
+    probe(data);
+    if (bd::rom::sniff(data).format != bd::rom::FileFormat::Narc) continue;
+    const auto archive = bd::rom::Narc::parse(data);
+    if (!archive) continue;
+    for (std::size_t i = 0; i < archive.value().file_count(); ++i) probe(archive.value().file(i));
+  }
+
+  std::printf("%zu file(s) and archive member(s) begin with the byte 0x40\n\n", candidates);
+  std::printf("  %-10s %-14s %9s %12s\n", "flags", "long length", "decoded", "recognised");
+  for (const Variant& variant : variants) {
+    std::printf("  %-10s %-14s %9zu %12zu\n", variant.flags_name, variant.length_name,
+                variant.decoded, variant.recognised);
+  }
+  std::printf("\n\"decoded\": the stream produced exactly the declared size and used the whole\n"
+              "file. \"recognised\": the result then began with a known format signature.\n"
+              "Equal counts for both byte orders mean no item used the long length form.\n"
+              "bdtool currently assumes: negated, big-endian.\n");
   return kExitOk;
 }
 
@@ -420,7 +556,7 @@ int main(int argc, char** argv) {
     return kExitOk;
   }
   if (command != "validate" && command != "info" && command != "list" && command != "survey" &&
-      command != "extract") {
+      command != "lz40-probe" && command != "extract") {
     return usage_error(("unknown command: " + command).c_str());
   }
 
@@ -457,6 +593,7 @@ int main(int argc, char** argv) {
   if (command == "info") return cmd_info(rom_path);
   if (command == "list") return cmd_list(rom_path);
   if (command == "survey") return cmd_survey(rom_path, top);
+  if (command == "lz40-probe") return cmd_lz40_probe(rom_path);
   return cmd_extract(rom_path, out_dir, with_code,
                      std::vector<std::string>(positional.begin() + 1, positional.end()));
 }
