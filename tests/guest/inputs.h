@@ -17,7 +17,7 @@ typedef struct {
   uint32_t state;
 } guest_rng;
 
-static uint32_t guest_rng_next(guest_rng* rng) {
+static inline uint32_t guest_rng_next(guest_rng* rng) {
   rng->state ^= rng->state << 13;
   rng->state ^= rng->state >> 17;
   rng->state ^= rng->state << 5;
@@ -26,7 +26,7 @@ static uint32_t guest_rng_next(guest_rng* rng) {
 
 // Input pair number `index` (0 .. GUEST_PAIR_COUNT-1). Call with increasing
 // index and a generator that was seeded with guest_rng_seed() at index 0.
-static void guest_input(guest_rng* rng, int index, uint32_t* a, uint32_t* b) {
+static inline void guest_input(guest_rng* rng, int index, uint32_t* a, uint32_t* b) {
   if (index < GUEST_EDGE_COUNT * GUEST_EDGE_COUNT) {
     *a = guest_edges[index / GUEST_EDGE_COUNT];
     *b = guest_edges[index % GUEST_EDGE_COUNT];
@@ -36,13 +36,13 @@ static void guest_input(guest_rng* rng, int index, uint32_t* a, uint32_t* b) {
   }
 }
 
-static guest_rng guest_rng_seed(void) {
+static inline guest_rng guest_rng_seed(void) {
   guest_rng rng = {0x12345678u};
   return rng;
 }
 
 // FNV-1a over the results of one test, in input order.
-static uint32_t guest_hash_step(uint32_t hash, uint32_t result) {
+static inline uint32_t guest_hash_step(uint32_t hash, uint32_t result) {
   int i;
   for (i = 0; i < 4; ++i) {
     hash ^= (result >> (i * 8)) & 0xFFu;

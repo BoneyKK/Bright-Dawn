@@ -65,3 +65,54 @@ else()
   set_tests_properties(guest_image_structure PROPERTIES DISABLED TRUE)
   message(STATUS "Guest test image: skipped (needs clang with the ARM backend, ld.lld, llvm-objcopy)")
 endif()
+
+# --- Executors of DS code, checked against the corpus ---
+# These need the ARM image, and Python for the code translator.
+find_package(Python3 3.10 COMPONENTS Interpreter)
+set(BD_TRANSLATOR_DIR ${PROJECT_SOURCE_DIR}/tools/translator)
+set(BD_RUNTIME_DIR ${PROJECT_SOURCE_DIR}/src/runtime)
+
+if(Python3_FOUND)
+  # The checked-in processor model must be the one the translator emits.
+  add_test(NAME translator_runtime_header
+    COMMAND Python3::Interpreter ${BD_TRANSLATOR_DIR}/check_runtime_header.py ${BD_RUNTIME_DIR}/ds_cpu.h)
+endif()
+
+if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
+  add_library(bd_guest_runner STATIC guest_runner.cpp
+    $<TARGET_OBJECTS:bd_guest_host_a> $<TARGET_OBJECTS:bd_guest_host_t>)
+  target_include_directories(bd_guest_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(bd_guest_runner PUBLIC bd_build_flags)
+
+  # Translate the image. The translator's own sources are dependencies, so a
+  # change to it re-runs the translation.
+  set(gen ${CMAKE_CURRENT_BINARY_DIR}/translated)
+  add_custom_command(
+    OUTPUT ${gen}/code.cpp ${gen}/table.cpp ${gen}/functions.h ${gen}/report.txt
+    COMMAND Python3::Interpreter -B ${BD_TRANSLATOR_DIR}/translate_image.py
+            ${BD_GUEST_IMAGE} ${BD_GUEST_IMAGE_BASE} ${gen}
+    DEPENDS ${BD_GUEST_IMAGE} ${BD_TRANSLATOR_DIR}/translate_image.py
+            ${BD_TRANSLATOR_DIR}/dslab/arm_decode.py ${BD_TRANSLATOR_DIR}/dslab/arm_analysis.py
+            ${BD_TRANSLATOR_DIR}/dslab/arm_lift.py
+    COMMENT "Translating the guest test image to C++"
+    VERBATIM)
+  add_library(bd_guest_translated STATIC ${gen}/code.cpp ${gen}/table.cpp)
+  target_include_directories(bd_guest_translated PUBLIC ${gen} ${BD_RUNTIME_DIR})
+  # Machine-generated code: one statement per instruction, with labels and
+  # temporaries that are not always used. Warnings about it are not useful.
+  if(MSVC)
+    target_compile_options(bd_guest_translated PRIVATE /w)
+  else()
+    target_compile_options(bd_guest_translated PRIVATE -w)
+  endif()
+
+  add_executable(guest_translated_test translated_test.cpp)
+  target_link_libraries(guest_translated_test PRIVATE bd_guest_runner bd_guest_translated)
+  # The translator alone leaves two kinds of gap, each exercised by one test:
+  # functions reached only through pointers, and unrecognised jump tables.
+  add_test(NAME guest_translated
+    COMMAND guest_translated_test ${BD_GUEST_IMAGE} indirect sw)
+else()
+  add_test(NAME guest_translated COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
+  set_tests_properties(guest_translated PROPERTIES DISABLED TRUE)
+endif()
