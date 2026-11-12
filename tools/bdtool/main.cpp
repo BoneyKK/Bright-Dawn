@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "core/checksum.h"
+#include "core/version.h"
 #include "platform/paths.h"
 #include "rom/export_path.h"
 #include "rom/file_format.h"
@@ -260,6 +261,8 @@ class Survey {
     std::printf("\nMembers of archives, by detected format\n");
     std::printf("  (%zu archive(s) opened, %zu member(s)", archives_, members_);
     if (broken_archives_ != 0) std::printf("; %zu archive(s) could not be read", broken_archives_);
+    if (too_deep_archives_ != 0)
+      std::printf("; %zu archive(s) nested too deeply to open", too_deep_archives_);
     std::printf(")\n");
     if (!member_formats_.empty()) print_formats(member_formats_);
 
@@ -283,8 +286,8 @@ class Survey {
   }
 
  private:
-  // Archives nested deeper than this are counted but not opened.
-  static constexpr int kMaxDepth = 3;
+  // Archives nested deeper than this are reported but not opened.
+  static constexpr int kMaxDepth = 8;
   static constexpr int kMaxLayers = 4;
 
   std::string visit(ByteSpan data, std::map<std::string, Tally>& tallies, int depth) {
@@ -323,9 +326,11 @@ class Survey {
       }
       ++unknown_leads_[lead].count;
       unknown_leads_[lead].bytes += payload.size();
-    } else if (format == FileFormat::Narc && depth < kMaxDepth) {
+    } else if (format == FileFormat::Narc) {
       const auto archive = bd::rom::Narc::parse(payload);
-      if (!archive) {
+      if (depth >= kMaxDepth) {
+        ++too_deep_archives_;
+      } else if (!archive) {
         ++broken_archives_;
       } else {
         ++archives_;
@@ -363,6 +368,7 @@ class Survey {
   std::uint64_t total_bytes_ = 0;
   std::size_t archives_ = 0;
   std::size_t broken_archives_ = 0;
+  std::size_t too_deep_archives_ = 0;
   std::size_t members_ = 0;
 };
 
@@ -535,6 +541,9 @@ int main(int argc, char** argv) {
     return usage_error(("'" + command + "' takes exactly one ROM file").c_str());
 
   const std::filesystem::path rom_path = positional[0];
+  // Output from these commands gets pasted into reports; say which build made it.
+  if (command == "validate" || command == "info" || command == "survey")
+    std::printf("bdtool %s\n", BD_VERSION);
   if (command == "validate") return cmd_validate(rom_path);
   if (command == "info") return cmd_info(rom_path);
   if (command == "list") return cmd_list(rom_path);

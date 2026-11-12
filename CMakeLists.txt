@@ -21,9 +21,19 @@ if(BD_STATIC_RUNTIME)
   endif()
 endif()
 
+# Every build identifies itself, so that output pasted into a bug report can
+# be matched to the build that produced it. Release builds set BD_BUILD_ID to
+# the label of their release tag.
+set(BD_BUILD_ID "dev" CACHE STRING "Build label appended to the version, e.g. pre.12")
+set(BD_COMMIT "" CACHE STRING "Short hash of the source revision being built")
+set(BD_VERSION_STRING "${PROJECT_VERSION}-${BD_BUILD_ID}")
+if(BD_COMMIT)
+  string(APPEND BD_VERSION_STRING " (${BD_COMMIT})")
+endif()
+configure_file(src/core/version.h.in ${CMAKE_BINARY_DIR}/generated/core/version.h @ONLY)
+
 # Shared compile settings. Every Bright Dawn target links this.
 add_library(bd_build_flags INTERFACE)
-target_compile_definitions(bd_build_flags INTERFACE BD_VERSION="${PROJECT_VERSION}")
 if(MSVC)
   target_compile_options(bd_build_flags INTERFACE /W4 /permissive- /utf-8)
   if(BD_WERROR)
@@ -47,7 +57,7 @@ add_library(bd_core STATIC
   src/core/checksum.cpp
   src/core/result.cpp
 )
-target_include_directories(bd_core PUBLIC src)
+target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(bd_core PUBLIC bd_build_flags)
 
 add_library(bd_platform STATIC

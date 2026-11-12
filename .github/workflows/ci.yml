@@ -29,8 +29,14 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # Builds from main are published, so they carry their release label;
+      # the release job below derives the tag from the same run number.
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBD_STATIC_RUNTIME=ON
+        run: |
+          build_id=dev
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then build_id="pre.$GITHUB_RUN_NUMBER"; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBD_STATIC_RUNTIME=ON \
+            -DBD_BUILD_ID="$build_id" -DBD_COMMIT="${GITHUB_SHA::7}"
       - name: Build
         run: cmake --build build --config Release
       - name: Test
