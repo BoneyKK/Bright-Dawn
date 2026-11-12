@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(BrightDawn VERSION 0.1.0 LANGUAGES CXX)
+project(BrightDawn VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,6 +78,21 @@ add_library(bd_rom STATIC
   src/rom/rom.cpp
 )
 target_link_libraries(bd_rom PUBLIC bd_core)
+
+# The fallback interpreter. This target wraps third-party code that is
+# compiled as it comes: without this project's warning flags, and without the
+# sanitizers, whose findings in it would not be ours to act on.
+add_library(bd_arm_core STATIC src/runtime/interp/arm_core_skyemu.c)
+target_include_directories(bd_arm_core PUBLIC src/runtime/interp PRIVATE third_party/skyemu)
+set_target_properties(bd_arm_core PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+# Always optimised: an interpreter built without optimisation is several
+# times slower, which shows directly in the test times.
+if(MSVC)
+  target_compile_options(bd_arm_core PRIVATE /w /O2)
+  string(REGEX REPLACE "/RTC[^ ]*" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+else()
+  target_compile_options(bd_arm_core PRIVATE -w -O2)
+endif()
 
 add_executable(bdtool tools/bdtool/main.cpp)
 target_link_libraries(bdtool PRIVATE bd_rom bd_platform)

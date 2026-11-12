@@ -84,6 +84,7 @@ int main(int argc, char** argv) {
   }
   std::map<std::string, guest::Expect> expectations;
   for (int i = 2; i < argc; ++i) expectations[argv[i]] = guest::Expect::Gap;
+  guest::Memory memory;
   TranslatedExecutor executor;
-  return guest::run_all(executor, argv[1], expectations);
+  return guest::run_all(executor, memory, argv[1], expectations);
 }
