@@ -40,8 +40,9 @@ you (see below).
 
 ## Building
 
-Requirements: CMake 3.20+ and a C++20 compiler. Verified locally with GCC 13 and
-Clang 18 on Linux; Windows (MSVC) and macOS builds are exercised by CI.
+Requirements: CMake 3.20+ and a C++20 compiler. Verified with GCC 13 and Clang 18
+on Linux and with MSVC 2022 on Windows (CI). macOS is in the CI matrix but has
+not been verified yet: its job has not been given a runner.
 There are no third-party dependencies yet.
 
 ```bash
