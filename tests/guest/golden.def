@@ -1,0 +1,17 @@
+// Checksums of the host results of every guest test over the fixed input
+// sequence (inputs.h). Generated with: guest_reference_test --print
+G(leaf, 0x4650B00Bu)
+G(arith, 0x91F012E0u)
+G(shifts, 0x4CCF9B0Fu)
+G(mul, 0x8E54A94Au)
+G(dsp, 0x3D21A488u)
+G(clz, 0x1A6ED449u)
+G(loops, 0x11EB0B78u)
+G(memory, 0x65938F13u)
+G(stack, 0x71BCB34Au)
+G(fib, 0x8D603B9Cu)
+G(calls, 0x17DC4012u)
+G(indirect, 0x10EA025Fu)
+G(sw, 0xD08BE227u)
+G(div, 0x57B07DCCu)
+G(wide, 0x566B6676u)

@@ -1,0 +1,1 @@
+T(leaf) T(arith) T(shifts) T(mul) T(dsp) T(clz) T(loops) T(memory) T(stack) T(fib) T(calls) T(indirect) T(sw) T(div) T(wide)

@@ -74,3 +74,5 @@ bd_cli_test(cli_extract_missing_path extract ${BD_TEST_DIR}/dark_dawn_like.nds
   --out ${BD_TEST_DIR}/out no/such/file.bin)
 set_tests_properties(cli_extract_missing_path PROPERTIES
   PASS_REGULAR_EXPRESSION "no such file in the ROM")
+
+add_subdirectory(guest)
