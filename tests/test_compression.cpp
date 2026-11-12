@@ -1,3 +1,5 @@
+#include <utility>
+
 #include "codecs.h"
 #include "rom/compression.h"
 #include "test.h"
@@ -118,4 +120,73 @@ TEST(blz_survives_arbitrary_damage) {
     // which the sanitizer build turns into a test failure.
     (void)bd::rom::blz_decompress(damaged);
   }
+}
+
+TEST(lz40_round_trip_in_every_variant) {
+  using bd::rom::Lz40Options;
+  const std::pair<bd_test::Lz40Flags, Lz40Options::Flags> modes[] = {
+      {bd_test::Lz40Flags::Negated, Lz40Options::Flags::Negated},
+      {bd_test::Lz40Flags::Plain, Lz40Options::Flags::Plain},
+      {bd_test::Lz40Flags::Inverted, Lz40Options::Flags::Inverted},
+  };
+  for (const auto& [encoder_flags, decoder_flags] : modes) {
+    for (bool big_endian : {true, false}) {
+      for (const Bytes& raw : samples()) {
+        const Bytes packed = bd_test::lz40_compress(raw, encoder_flags, big_endian);
+        std::size_t consumed = 0;
+        const auto decoded =
+            bd::rom::lz40_decompress(packed, &consumed, Lz40Options{decoder_flags, big_endian});
+        REQUIRE(decoded.ok());
+        CHECK(decoded.value() == raw);
+        CHECK(consumed == packed.size());
+      }
+    }
+  }
+}
+
+TEST(lz40_known_stream) {
+  // Logical flags 0b00010000 (three literals, then a back-reference) are stored
+  // negated as 0xF0. The token 0x0039 means distance 3, length 9.
+  const Bytes stream = {0x40, 12, 0, 0, 0xF0, 'a', 'b', 'c', 0x39, 0x00};
+  const auto decoded = bd::rom::lz40_decompress(stream);
+  REQUIRE(decoded.ok());
+  CHECK(decoded.value() == Bytes({'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c'}));
+
+  // Length code 0: one extra byte holding length - 16. Logical flags
+  // 0b01000000 (a literal, then a back-reference) are stored as 0xC0. The
+  // token 0x0010 means distance 1; the extra byte gives length 20.
+  const Bytes medium = {0x40, 21, 0, 0, 0xC0, 'x', 0x10, 0x00, 0x04};
+  const auto run = bd::rom::lz40_decompress(medium);
+  REQUIRE(run.ok());
+  CHECK(run.value() == Bytes(21, 'x'));
+}
+
+TEST(lz40_variants_disagree_on_real_streams) {
+  // The probe relies on a wrong reading failing rather than quietly producing
+  // different output. Long matches distinguish the two byte orders.
+  using bd::rom::Lz40Options;
+  const Bytes raw = bd_test::sample_data(6000, 12);
+  const Bytes packed = bd_test::lz40_compress(raw);
+  for (auto flags : {Lz40Options::Flags::Plain, Lz40Options::Flags::Inverted}) {
+    const auto decoded = bd::rom::lz40_decompress(packed, nullptr, Lz40Options{flags, true});
+    CHECK(!decoded.ok() || decoded.value() != raw);
+  }
+  const Bytes long_run = bd_test::lz40_compress(Bytes(70000, 0x33));
+  const auto swapped =
+      bd::rom::lz40_decompress(long_run, nullptr, Lz40Options{Lz40Options::Flags::Negated, false});
+  CHECK(!swapped.ok() || swapped.value() != Bytes(70000, 0x33));
+}
+
+TEST(lz40_rejects_bad_streams) {
+  CHECK(!bd::rom::lz40_decompress(Bytes{0x40}).ok());
+  CHECK(!bd::rom::lz40_decompress(Bytes{0x10, 4, 0, 0, 0, 1, 2, 3, 4}).ok());  // wrong type
+  CHECK(!bd::rom::lz40_decompress(Bytes{0x40, 8, 0, 0, 0x00, 1, 2}).ok());     // ends early
+  // Distance zero, and a distance before the start of the output.
+  CHECK(!bd::rom::lz40_decompress(Bytes{0x40, 8, 0, 0, 0x80, 0x03, 0x00}).ok());
+  CHECK(!bd::rom::lz40_decompress(Bytes{0x40, 8, 0, 0, 0x80, 0x53, 0x00}).ok());
+  // A back-reference that would overrun the declared size.
+  CHECK(!bd::rom::lz40_decompress(Bytes{0x40, 4, 0, 0, 0x40, 'x', 0x1F, 0x00}).ok());
+  const Bytes packed = bd_test::lz40_compress(bd_test::sample_data(3000, 13));
+  for (std::size_t cut = 0; cut < packed.size(); cut += 5)
+    CHECK(!bd::rom::lz40_decompress(bd::ByteSpan(packed).first(cut)).ok());
 }

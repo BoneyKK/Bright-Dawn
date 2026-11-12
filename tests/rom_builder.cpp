@@ -63,8 +63,11 @@ BuiltRom build_rom(const RomSpec& spec) {
   }
   if (spec.with_module_params) {
     std::size_t p = kModuleParamsOffset;
+    // Retail images store the marker bytes 21 06 C0 DE, then the reverse.
+    const std::uint32_t first = spec.swapped_markers ? 0x2106C0DEu : 0xDEC00621u;
+    const std::uint32_t second = spec.swapped_markers ? 0xDEC00621u : 0x2106C0DEu;
     for (std::uint32_t word : {0x02004000u, 0x02004010u, 0x02004020u, 0x02005000u, 0x02006000u,
-                               0u, spec.sdk_version, 0x2106C0DEu, 0xDEC00621u}) {
+                               0u, spec.sdk_version, first, second}) {
       put_le32(arm9, p, word);
       p += 4;
     }
@@ -219,6 +222,17 @@ BuiltRom build_rom(const RomSpec& spec) {
   return built;
 }
 
+namespace {
+
+Bytes tagged(const char* tag, std::size_t size, std::uint32_t seed) {
+  Bytes data(tag, tag + 4);
+  const Bytes body = sample_data(size, seed);
+  data.insert(data.end(), body.begin(), body.end());
+  return data;
+}
+
+}  // namespace
+
 RomSpec default_spec() {
   RomSpec spec;
   const Bytes model = [] {
@@ -245,6 +259,14 @@ RomSpec default_spec() {
          return data;
        }()},
       {"script/ev/0001.bin", sample_data(64, 11)},
+      // The shapes the real game uses: 0x40-compressed assets, archives of
+      // them, and an archive that is itself compressed.
+      {"model/hero.cbmdl", lz40_compress(tagged("BMD0", 1500, 41))},
+      {"model/hero.cbarc",
+       build_narc({{"hero.nsbtx", lz40_compress(tagged("BTX0", 800, 42))},
+                   {"hero.nsbca", tagged("BCA0", 300, 43)},
+                   {"", sample_data(200, 44)}})},
+      {"model/packed.narc", lz40_compress(build_narc({{"", tagged("BTA0", 120, 45)}}))},
   };
   spec.overlays = {
       OverlaySpec{sample_data(0x900, 31), true, 0x02100000},

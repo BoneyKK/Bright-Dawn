@@ -2,8 +2,10 @@
 
 Written at the start of the project. Statements about the game's internals are
 marked **unverified** where they come from general knowledge rather than from
-inspecting a ROM; none could be checked, because no ROM is available in the
-development environment.
+inspecting a ROM; none could be checked at the time, because no ROM is
+available in the development environment. Facts since established from a real
+ROM are recorded in [ROM_SURVEY.md](ROM_SURVEY.md), which takes precedence over
+the guesses here.
 
 ## 1. What the repository contained
 
@@ -59,8 +61,9 @@ Ordered by how likely each is to block the intended result.
 2. **Overlays.** DS games load code on demand, and several overlays can occupy
    the same address range. A static recompiler must translate each overlay
    separately and dispatch indirect calls according to which overlay is
-   currently loaded. How many overlays this game has, and how they overlap, is
-   **unverified**; `bdtool survey` reports it.
+   currently loaded. Now measured: 366 overlays at 14 load addresses, 297 of
+   them sharing a single address (see ROM_SURVEY.md). Overlay handling is
+   therefore central to the recompiler, not an edge case.
 3. **Indirect control flow.** Jump tables, function pointers and ARM/Thumb
    mode switches must all be resolved or handled by a runtime lookup. Code
    discovery that misses a function produces a runtime failure, not a build
@@ -89,9 +92,10 @@ Ordered by how likely each is to block the intended result.
    fixed-resolution or DS-specific semantics. They need a catalogue and
    per-effect replacements.
 9. **Asset formats.** Texture and model replacement require decoding the
-   originals. If the game uses the standard Nintendo formats this is documented
-   work; if it uses its own (**unverified**), each format must be
-   reverse-engineered first. Model replacement with different skeletons needs an
+   originals. Now measured: the game uses the standard Nintendo sound archive
+   and the standard 3D model, texture and animation formats by name, mostly
+   wrapped in its own compression, alongside several formats of its own that
+   must be reverse-engineered (see ROM_SURVEY.md). Model replacement with different skeletons needs an
    animation retargeting pipeline on top.
 10. **Timing.** DS game logic is normally tied to the 60 Hz display refresh.
     The simulation will keep its original tick rate; rendering above it would
@@ -111,7 +115,7 @@ build on: there is no rendering to make single-screen until code runs.
 | # | Milestone | Done when |
 | --- | --- | --- |
 | 0 | **ROM ingestion and survey** (this change) | Validation, file system, decompression and survey tool pass their tests |
-| 1 | **Survey of the real game** | `bdtool info` and `survey` output from a real ROM is recorded here; unknown formats and overlay layout are listed |
+| 1 | **Survey of the real game** (in progress) | `bdtool info` and `survey` output from a real ROM is recorded in ROM_SURVEY.md; unknown formats and overlay layout are listed; the open questions there are answered |
 | 2 | **Code analysis** | ARM/Thumb decoder and function discovery for the main program and overlays; SDK functions identified by signature; coverage is reported as a number |
 | 3 | **Recompiler core** | ARMv5TE to C translation plus a minimal runtime; test programs give identical results under the recompiler and a reference interpreter |
 | 4 | **Boot without graphics** | With the SDK replaced (threads, files, cartridge, timers), the game's start-up runs and its graphics commands are captured to a log |
@@ -142,9 +146,9 @@ than papered over with an emulator core.
 
 Known limitations:
 
-- Not yet run against a real ROM. The decoders follow published format
-  descriptions and round-trip against independent test encoders, but a real
-  image may reveal details the tests do not cover.
+- Run once against a real ROM, which exposed a bug in locating the ARM9
+  start-up parameters (since fixed). Program decompression and the `0x40`
+  decoder are still unconfirmed on real data.
 - Game identification uses the cartridge game code only. A table of known-good
   whole-image checksums would detect modified dumps; it is omitted until the
   values can be confirmed against real dumps.

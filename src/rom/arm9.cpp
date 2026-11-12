@@ -5,16 +5,24 @@
 namespace bd::rom {
 namespace {
 
-constexpr std::uint32_t kMarkerBigEndian = 0x2106C0DE;
-constexpr std::uint32_t kMarkerLittleEndian = 0xDEC00621;
+// The block ends with a marker word followed by the same word byte-swapped.
+// Retail images store the bytes 21 06 C0 DE first. The opposite order is
+// accepted too, because nothing else in a program looks like either pair.
+constexpr std::uint32_t kMarker = 0xDEC00621;
+constexpr std::uint32_t kMarkerSwapped = 0x2106C0DE;
 constexpr std::size_t kParamsSize = 28;  // Seven words precede the markers.
+
+bool is_marker_pair(std::uint32_t first, std::uint32_t second) {
+  return (first == kMarker && second == kMarkerSwapped) ||
+         (first == kMarkerSwapped && second == kMarker);
+}
 
 }  // namespace
 
 std::optional<ModuleParams> find_module_params(ByteSpan arm9) {
   if (arm9.size() < kParamsSize + 8) return std::nullopt;
   for (std::size_t pos = kParamsSize; pos + 8 <= arm9.size(); pos += 4) {
-    if (le32(arm9, pos) != kMarkerBigEndian || le32(arm9, pos + 4) != kMarkerLittleEndian) continue;
+    if (!is_marker_pair(le32(arm9, pos), le32(arm9, pos + 4))) continue;
     const std::size_t base = pos - kParamsSize;
     ModuleParams p;
     p.offset = static_cast<std::uint32_t>(base);

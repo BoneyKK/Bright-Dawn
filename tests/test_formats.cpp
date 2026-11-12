@@ -46,6 +46,41 @@ TEST(sniff_looks_inside_compressed_files) {
   CHECK(opaque.inner == FileFormat::Unknown);
 }
 
+TEST(sniff_handles_the_0x40_scheme) {
+  const Bytes packed = bd_test::lz40_compress(tagged("BCA0", 500));
+  const auto good = bd::rom::sniff(packed);
+  CHECK(good.format == FileFormat::Lz40);
+  CHECK(good.inner == FileFormat::Nsbca);
+  CHECK(bd::rom::is_compression(good.format));
+  const auto unpacked = bd::rom::decompress(good.format, packed);
+  REQUIRE(unpacked.ok());
+  CHECK(unpacked.value() == tagged("BCA0", 500));
+
+  // Up to three bytes of alignment padding are part of a normal file.
+  Bytes padded = packed;
+  padded.insert(padded.end(), 3, 0x00);
+  CHECK(bd::rom::sniff(padded).format == FileFormat::Lz40);
+
+  // A stream that stops short of the file, or does not decode, is reported
+  // as unconfirmed rather than passed off as decoded.
+  Bytes trailing = packed;
+  trailing.insert(trailing.end(), 16, 0x55);
+  CHECK(bd::rom::sniff(trailing).format == FileFormat::Lz40Unconfirmed);
+  CHECK(!bd::rom::is_compression(FileFormat::Lz40Unconfirmed));
+  const Bytes other_reading = bd_test::lz40_compress(tagged("BCA0", 500), bd_test::Lz40Flags::Plain);
+  CHECK(bd::rom::sniff(other_reading).format == FileFormat::Lz40Unconfirmed);
+
+  // An implausible header is just an unknown file that happens to start with '@'.
+  CHECK(bd::rom::sniff(Bytes{0x40, 0, 0, 0, 0}).format == FileFormat::Unknown);
+  Bytes text(400, 'a');
+  text[0] = '@';
+  text[1] = 4;
+  text[2] = 0;
+  text[3] = 0;
+  CHECK(bd::rom::sniff(text).format == FileFormat::Unknown);
+  CHECK(!bd::rom::decompress(FileFormat::Narc, packed).ok());
+}
+
 TEST(sniff_does_not_trust_a_lone_type_byte) {
   // Starts with 0x10 but is not a valid LZ10 stream.
   CHECK(bd::rom::sniff(Bytes{0x10, 0x40, 0x00, 0x00, 0xFF, 0xFF, 0xFF}).format ==
@@ -53,7 +88,7 @@ TEST(sniff_does_not_trust_a_lone_type_byte) {
 }
 
 TEST(every_format_has_a_name) {
-  for (int i = 0; i <= static_cast<int>(FileFormat::Lz11); ++i) {
+  for (int i = 0; i <= static_cast<int>(bd::rom::kLastFileFormat); ++i) {
     const auto format = static_cast<FileFormat>(i);
     CHECK(std::string(bd::rom::name(format)).size() > 0);
     CHECK(std::string(bd::rom::description(format)).size() > 0);

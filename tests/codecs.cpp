@@ -45,15 +45,19 @@ class TokenWriter {
   void begin_token(bool is_match) {
     if (bit_ == 0) {
       flag_pos_ = out_.size();
+      flag_positions_.push_back(flag_pos_);
       out_.push_back(0);
       bit_ = 0x80;
     }
     if (is_match) out_[flag_pos_] |= bit_;
     bit_ >>= 1;
   }
+  // Where each flag byte was written, for formats that transform them.
+  const std::vector<std::size_t>& flag_positions() const { return flag_positions_; }
 
  private:
   Bytes& out_;
+  std::vector<std::size_t> flag_positions_;
   std::size_t flag_pos_ = 0;
   std::uint8_t bit_ = 0;
 };
@@ -108,6 +112,94 @@ Bytes lz11_compress(const Bytes& raw) {
     out.push_back(static_cast<std::uint8_t>(d));
     pos += m.length;
   }
+  return out;
+}
+
+Bytes lz40_compress(const Bytes& raw, Lz40Flags flags, bool long_length_big_endian) {
+  Bytes out;
+  put_size_header(out, 0x40, raw.size());
+  TokenWriter writer(out);
+  for (std::size_t pos = 0; pos < raw.size();) {
+    const Match m = find_match(raw, pos, 0x110 + 0xFFFF, 1, 0xFFF);
+    if (m.length < 2) {
+      writer.begin_token(false);
+      out.push_back(raw[pos++]);
+      continue;
+    }
+    writer.begin_token(true);
+    // Lengths 2-15 fit the token; longer ones use one or two extra bytes.
+    const std::size_t code = m.length < 0x10 ? m.length : m.length < 0x110 ? 0 : 1;
+    const std::size_t word = (m.distance << 4) | code;
+    out.push_back(static_cast<std::uint8_t>(word));
+    out.push_back(static_cast<std::uint8_t>(word >> 8));
+    if (code == 0) {
+      out.push_back(static_cast<std::uint8_t>(m.length - 0x10));
+    } else if (code == 1) {
+      const std::size_t v = m.length - 0x110;
+      const auto hi = static_cast<std::uint8_t>(v >> 8);
+      const auto lo = static_cast<std::uint8_t>(v);
+      out.push_back(long_length_big_endian ? hi : lo);
+      out.push_back(long_length_big_endian ? lo : hi);
+    }
+    pos += m.length;
+  }
+  for (std::size_t at : writer.flag_positions()) {
+    if (flags == Lz40Flags::Negated) out[at] = static_cast<std::uint8_t>(0x100u - out[at]);
+    if (flags == Lz40Flags::Inverted) out[at] = static_cast<std::uint8_t>(~out[at]);
+  }
+  return out;
+}
+
+Bytes build_narc(const std::vector<NarcMember>& members) {
+  auto put32 = [](Bytes& b, std::size_t v) {
+    for (int shift = 0; shift < 32; shift += 8) b.push_back(static_cast<std::uint8_t>(v >> shift));
+  };
+  auto put16 = [](Bytes& b, std::size_t v) {
+    b.push_back(static_cast<std::uint8_t>(v));
+    b.push_back(static_cast<std::uint8_t>(v >> 8));
+  };
+  auto section = [&](const char* tag, Bytes body) {
+    while (body.size() % 4 != 0) body.push_back(0xFF);
+    Bytes out(tag, tag + 4);
+    put32(out, body.size() + 8);
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+  };
+
+  Bytes image;
+  Bytes fat;
+  put16(fat, members.size());
+  put16(fat, 0);
+  for (const NarcMember& member : members) {
+    put32(fat, image.size());
+    image.insert(image.end(), member.data.begin(), member.data.end());
+    put32(fat, image.size());
+    while (image.size() % 4 != 0) image.push_back(0xFF);
+  }
+
+  // A single root directory. Names must cover a contiguous run of file IDs,
+  // so naming stops at the first member without one.
+  Bytes fnt;
+  put32(fnt, 8);
+  put16(fnt, 0);
+  put16(fnt, 1);
+  for (const NarcMember& member : members) {
+    if (member.name.empty()) break;
+    fnt.push_back(static_cast<std::uint8_t>(member.name.size()));
+    fnt.insert(fnt.end(), member.name.begin(), member.name.end());
+  }
+  fnt.push_back(0);
+
+  const Bytes btaf = section("BTAF", fat);
+  const Bytes btnf = section("BTNF", fnt);
+  const Bytes gmif = section("GMIF", image);
+  Bytes out = {'N', 'A', 'R', 'C', 0xFE, 0xFF, 0x00, 0x01};
+  put32(out, 16 + btaf.size() + btnf.size() + gmif.size());
+  put16(out, 16);
+  put16(out, 3);
+  out.insert(out.end(), btaf.begin(), btaf.end());
+  out.insert(out.end(), btnf.begin(), btnf.end());
+  out.insert(out.end(), gmif.begin(), gmif.end());
   return out;
 }
 
