@@ -1,5 +1,3 @@
-#include <utility>
-
 #include "codecs.h"
 #include "rom/compression.h"
 #include "test.h"
@@ -122,25 +120,14 @@ TEST(blz_survives_arbitrary_damage) {
   }
 }
 
-TEST(lz40_round_trip_in_every_variant) {
-  using bd::rom::Lz40Options;
-  const std::pair<bd_test::Lz40Flags, Lz40Options::Flags> modes[] = {
-      {bd_test::Lz40Flags::Negated, Lz40Options::Flags::Negated},
-      {bd_test::Lz40Flags::Plain, Lz40Options::Flags::Plain},
-      {bd_test::Lz40Flags::Inverted, Lz40Options::Flags::Inverted},
-  };
-  for (const auto& [encoder_flags, decoder_flags] : modes) {
-    for (bool big_endian : {true, false}) {
-      for (const Bytes& raw : samples()) {
-        const Bytes packed = bd_test::lz40_compress(raw, encoder_flags, big_endian);
-        std::size_t consumed = 0;
-        const auto decoded =
-            bd::rom::lz40_decompress(packed, &consumed, Lz40Options{decoder_flags, big_endian});
-        REQUIRE(decoded.ok());
-        CHECK(decoded.value() == raw);
-        CHECK(consumed == packed.size());
-      }
-    }
+TEST(lz40_round_trip) {
+  for (const Bytes& raw : samples()) {
+    const Bytes packed = bd_test::lz40_compress(raw);
+    std::size_t consumed = 0;
+    const auto decoded = bd::rom::lz40_decompress(packed, &consumed);
+    REQUIRE(decoded.ok());
+    CHECK(decoded.value() == raw);
+    CHECK(consumed == packed.size());
   }
 }
 
@@ -161,20 +148,36 @@ TEST(lz40_known_stream) {
   CHECK(run.value() == Bytes(21, 'x'));
 }
 
-TEST(lz40_variants_disagree_on_real_streams) {
-  // The probe relies on a wrong reading failing rather than quietly producing
-  // different output. Long matches distinguish the two byte orders.
-  using bd::rom::Lz40Options;
-  const Bytes raw = bd_test::sample_data(6000, 12);
-  const Bytes packed = bd_test::lz40_compress(raw);
-  for (auto flags : {Lz40Options::Flags::Plain, Lz40Options::Flags::Inverted}) {
-    const auto decoded = bd::rom::lz40_decompress(packed, nullptr, Lz40Options{flags, true});
-    CHECK(!decoded.ok() || decoded.value() != raw);
-  }
-  const Bytes long_run = bd_test::lz40_compress(Bytes(70000, 0x33));
-  const auto swapped =
-      bd::rom::lz40_decompress(long_run, nullptr, Lz40Options{Lz40Options::Flags::Negated, false});
-  CHECK(!swapped.ok() || swapped.value() != Bytes(70000, 0x33));
+TEST(lz40_long_length_is_little_endian) {
+  // Length code 1: a 16-bit little-endian value holding length - 272. Here a
+  // literal, then distance 1 and length 0x0234 + 272 = 836.
+  const Bytes stream = {0x40, 0x45, 0x03, 0, 0xC0, 'z', 0x11, 0x00, 0x34, 0x02};
+  const auto decoded = bd::rom::lz40_decompress(stream);
+  REQUIRE(decoded.ok());
+  CHECK(decoded.value() == Bytes(837, 'z'));
+}
+
+TEST(lz40_cuts_off_output_past_the_declared_size) {
+  // The same stream declaring only 100 bytes: the back-reference overshoots
+  // and the excess is discarded, as the game's files require.
+  const Bytes stream = {0x40, 100, 0, 0, 0xC0, 'z', 0x11, 0x00, 0x34, 0x02};
+  std::size_t consumed = 0;
+  const auto decoded = bd::rom::lz40_decompress(stream, &consumed);
+  REQUIRE(decoded.ok());
+  CHECK(decoded.value() == Bytes(100, 'z'));
+  CHECK(consumed == stream.size());
+}
+
+TEST(lz40_whole_file_rule) {
+  const Bytes raw = bd_test::sample_data(2000, 14);
+  Bytes packed = bd_test::lz40_compress(raw);
+  packed.insert(packed.end(), bd::rom::kLz40MaxPadding, 0x00);
+  const auto padded = bd::rom::lz40_decompress_file(packed);
+  REQUIRE(padded.ok());
+  CHECK(padded.value() == raw);
+  packed.push_back(0x00);  // One byte more than padding can explain.
+  CHECK(!bd::rom::lz40_decompress_file(packed).ok());
+  CHECK(bd::rom::lz40_decompress(packed).ok());  // The stream itself is still fine.
 }
 
 TEST(lz40_rejects_bad_streams) {
@@ -184,8 +187,6 @@ TEST(lz40_rejects_bad_streams) {
   // Distance zero, and a distance before the start of the output.
   CHECK(!bd::rom::lz40_decompress(Bytes{0x40, 8, 0, 0, 0x80, 0x03, 0x00}).ok());
   CHECK(!bd::rom::lz40_decompress(Bytes{0x40, 8, 0, 0, 0x80, 0x53, 0x00}).ok());
-  // A back-reference that would overrun the declared size.
-  CHECK(!bd::rom::lz40_decompress(Bytes{0x40, 4, 0, 0, 0x40, 'x', 0x1F, 0x00}).ok());
   const Bytes packed = bd_test::lz40_compress(bd_test::sample_data(3000, 13));
   for (std::size_t cut = 0; cut < packed.size(); cut += 5)
     CHECK(!bd::rom::lz40_decompress(bd::ByteSpan(packed).first(cut)).ok());

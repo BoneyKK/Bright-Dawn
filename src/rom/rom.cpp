@@ -121,18 +121,33 @@ Result<std::vector<std::uint8_t>> Rom::arm9_decompressed() const {
   return decompress_arm9(arm9(), header_.arm9, module_params_);
 }
 
-Result<std::vector<std::uint8_t>> Rom::overlay_data(const Overlay& overlay) const {
+Result<OverlayImage> Rom::load_overlay(const Overlay& overlay) const {
   auto raw = file(overlay.file_id);
   if (!raw) return raw.error();
-  if (!overlay.compressed)
-    return std::vector<std::uint8_t>(raw.value().begin(), raw.value().end());
-  auto decoded = blz_decompress(raw.value());
-  if (!decoded) {
-    return Error{decoded.error().code, "cannot decompress overlay " +
-                                           std::to_string(overlay.id) + ": " +
-                                           decoded.error().message};
+
+  if (overlay.compressed) {
+    auto decoded = blz_decompress(raw.value());
+    if (!decoded) {
+      return Error{decoded.error().code, "cannot decompress overlay " +
+                                             std::to_string(overlay.id) + ": " +
+                                             decoded.error().message};
+    }
+    return OverlayImage{std::move(decoded.value()), OverlayEncoding::Blz};
   }
-  return decoded;
+
+  OverlayImage image{std::vector<std::uint8_t>(raw.value().begin(), raw.value().end()),
+                     OverlayEncoding::Raw};
+  // Unflagged overlays may be LZ40 files, possibly more than one layer deep.
+  // Stop as soon as the size matches what the overlay table says is loaded.
+  constexpr int kMaxLayers = 4;
+  for (int layer = 0; layer < kMaxLayers && image.data.size() != overlay.ram_size; ++layer) {
+    if (image.data.empty() || image.data[0] != 0x40) break;
+    auto decoded = lz40_decompress_file(image.data);
+    if (!decoded) break;
+    image.data = std::move(decoded.value());
+    image.encoding = OverlayEncoding::Lz40;
+  }
+  return image;
 }
 
 Result<ByteSpan> Rom::file(std::uint16_t file_id) const {

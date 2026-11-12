@@ -1,5 +1,6 @@
 #include "rom/compression.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 
@@ -122,8 +123,7 @@ Result<std::vector<std::uint8_t>> lz11_decompress(ByteSpan in) {
   return out;
 }
 
-Result<std::vector<std::uint8_t>> lz40_decompress(ByteSpan in, std::size_t* consumed,
-                                                  Lz40Options options) {
+Result<std::vector<std::uint8_t>> lz40_decompress(ByteSpan in, std::size_t* consumed) {
   static constexpr char kScheme[] = "LZ40";
   auto header = read_lz_header(in, 0x40, kScheme);
   if (!header) return header.error();
@@ -134,13 +134,9 @@ Result<std::vector<std::uint8_t>> lz40_decompress(ByteSpan in, std::size_t* cons
   out.reserve(size);
   while (out.size() < size) {
     if (pos >= in.size()) return corrupt(kScheme, "input ends early");
-    // Normalise to "set bit = back-reference", most significant bit first.
-    std::uint32_t flags = in[pos++];
-    switch (options.flags) {
-      case Lz40Options::Flags::Negated: flags = (0x100u - flags) & 0xFFu; break;
-      case Lz40Options::Flags::Plain: break;
-      case Lz40Options::Flags::Inverted: flags ^= 0xFFu; break;
-    }
+    // Flag bytes are stored negated; undo that so a set bit means
+    // "back-reference", most significant bit first.
+    const std::uint32_t flags = (0x100u - in[pos++]) & 0xFFu;
     for (int bit = 7; bit >= 0 && out.size() < size; --bit) {
       if (!((flags >> bit) & 1)) {
         if (pos >= in.size()) return corrupt(kScheme, "input ends early");
@@ -148,8 +144,6 @@ Result<std::vector<std::uint8_t>> lz40_decompress(ByteSpan in, std::size_t* cons
         continue;
       }
       if (in.size() - pos < 2) return corrupt(kScheme, "input ends inside a back-reference");
-      // A 16-bit little-endian word: distance in the top 12 bits, and a
-      // length code in the low 4 that selects one of three length forms.
       const std::uint32_t word = le16(in, pos);
       pos += 2;
       const std::size_t distance = word >> 4;
@@ -159,17 +153,26 @@ Result<std::vector<std::uint8_t>> lz40_decompress(ByteSpan in, std::size_t* cons
         length = in[pos++] + 0x10u;
       } else if (length == 1) {
         if (in.size() - pos < 2) return corrupt(kScheme, "input ends inside a back-reference");
-        const std::uint32_t a = in[pos];
-        const std::uint32_t b = in[pos + 1];
+        length = le16(in, pos) + 0x110u;
         pos += 2;
-        length = (options.long_length_big_endian ? (a << 8) | b : (b << 8) | a) + 0x110u;
       }
+      // The final back-reference may run past the declared size; the excess
+      // is discarded.
+      length = std::min(length, size - out.size());
       if (distance == 0 || !copy_back(out, size, distance, length))
         return corrupt(kScheme, "back-reference out of bounds");
     }
   }
   if (consumed != nullptr) *consumed = pos;
   return out;
+}
+
+Result<std::vector<std::uint8_t>> lz40_decompress_file(ByteSpan in) {
+  std::size_t consumed = 0;
+  auto decoded = lz40_decompress(in, &consumed);
+  if (decoded && in.size() - consumed > kLz40MaxPadding)
+    return Error{ErrorCode::Corrupt, "LZ40 stream ends well before the end of the file"};
+  return decoded;
 }
 
 Result<std::vector<std::uint8_t>> blz_decompress(ByteSpan in) {

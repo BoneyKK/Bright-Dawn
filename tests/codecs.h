@@ -14,11 +14,8 @@ using Bytes = std::vector<std::uint8_t>;
 Bytes lz10_compress(const Bytes& raw);
 Bytes lz11_compress(const Bytes& raw);
 
-// The game's 0x40 scheme. `negated_flags` and `long_length_big_endian` select
-// between the readings of the format that the decoder can be told to use.
-enum class Lz40Flags { Negated, Plain, Inverted };
-Bytes lz40_compress(const Bytes& raw, Lz40Flags flags = Lz40Flags::Negated,
-                    bool long_length_big_endian = true);
+// LZ40, the scheme Golden Sun: Dark Dawn uses.
+Bytes lz40_compress(const Bytes& raw);
 
 // A NARC archive. Members with an empty name are left out of the name table.
 struct NarcMember {

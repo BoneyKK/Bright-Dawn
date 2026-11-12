@@ -36,7 +36,7 @@ enum class FileFormat {
   Nftr,   // Bitmap font.
   Lz10,   // LZ10-compressed data.
   Lz11,   // LZ11-compressed data.
-  Lz40,   // Data under the game's own 0x40 compression.
+  Lz40,   // LZ40-compressed data (the scheme this game uses throughout).
   Lz40Unconfirmed,  // Has a plausible 0x40 header but did not decode.
 };
 
@@ -54,6 +54,7 @@ struct Sniffed {
 // Identifies `data` by its leading bytes. A file is only reported as
 // compressed when it actually decompresses (and, for the 0x40 scheme, when
 // the stream accounts for the whole file), which keeps false positives rare.
+// Only the outermost layer is examined; files may be compressed more than once.
 Sniffed sniff(ByteSpan data);
 
 // True for the formats that wrap other data in compression.
