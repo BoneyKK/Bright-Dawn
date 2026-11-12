@@ -9,6 +9,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BD_BUILD_TESTS "Build the unit tests" ON)
 option(BD_SANITIZE "Build with AddressSanitizer and UBSan (GCC/Clang)" OFF)
 option(BD_WERROR "Treat compiler warnings as errors" OFF)
+option(BD_STATIC_RUNTIME "Link the C/C++ runtime statically, for release packages" OFF)
+
+# Release packages should run without installing a compiler runtime. Not
+# compatible with BD_SANITIZE. No effect on macOS, which has no static libc.
+if(BD_STATIC_RUNTIME)
+  if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_link_options(-static)
+  endif()
+endif()
 
 # Shared compile settings. Every Bright Dawn target links this.
 add_library(bd_build_flags INTERFACE)
@@ -59,6 +70,10 @@ target_link_libraries(bd_rom PUBLIC bd_core)
 
 add_executable(bdtool tools/bdtool/main.cpp)
 target_link_libraries(bdtool PRIVATE bd_rom bd_platform)
+
+# A relocatable layout: the tool and its documents side by side.
+install(TARGETS bdtool RUNTIME DESTINATION .)
+install(FILES LICENSE README.md DESTINATION .)
 
 if(BD_BUILD_TESTS)
   enable_testing()

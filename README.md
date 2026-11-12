@@ -41,8 +41,9 @@ you (see below).
 ## Building
 
 Requirements: CMake 3.20+ and a C++20 compiler. Verified with GCC 13 and Clang 18
-on Linux and with MSVC 2022 on Windows (CI). macOS is in the CI matrix but has
-not been verified yet: its job has not been given a runner.
+on Linux and with MSVC 2022 on Windows (CI). macOS should work but is
+unverified: the CI job for it was never given a runner, so it was removed from
+the matrix.
 There are no third-party dependencies yet.
 
 ```bash
@@ -58,7 +59,15 @@ ctest --test-dir build --output-on-failure
 ```
 
 Developer options: `-DBD_SANITIZE=ON` (AddressSanitizer + UBSan on GCC/Clang),
-`-DBD_WERROR=ON` (warnings as errors), `-DBD_BUILD_TESTS=OFF`.
+`-DBD_WERROR=ON` (warnings as errors), `-DBD_BUILD_TESTS=OFF`,
+`-DBD_STATIC_RUNTIME=ON` (self-contained binaries, as used for releases).
+
+## Pre-built packages
+
+Every change that reaches `main` with all checks passing is published
+automatically as a pre-release on the repository's Releases page, for Windows
+and Linux (64-bit). The packages contain `bdtool` only; they include no ROM and
+no game data, and they do not run the game.
 
 ## Using bdtool
 
