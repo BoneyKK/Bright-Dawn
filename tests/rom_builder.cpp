@@ -120,8 +120,16 @@ BuiltRom build_rom(const RomSpec& spec) {
   // File IDs: overlays first, then each directory's files as a contiguous run.
   const std::size_t overlay_count = spec.overlays.size();
   std::vector<Bytes> file_data;
-  for (const OverlaySpec& overlay : spec.overlays)
-    file_data.push_back(overlay.compressed ? blz_compress(overlay.data, 0) : overlay.data);
+  for (const OverlaySpec& overlay : spec.overlays) {
+    switch (overlay.storage) {
+      case OverlayStorage::Raw: file_data.push_back(overlay.data); break;
+      case OverlayStorage::Blz: file_data.push_back(blz_compress(overlay.data, 0)); break;
+      case OverlayStorage::Lz40: file_data.push_back(lz40_compress(overlay.data)); break;
+      case OverlayStorage::Lz40Twice:
+        file_data.push_back(lz40_compress(lz40_compress(overlay.data)));
+        break;
+    }
+  }
   std::vector<std::uint32_t> first_file(dirs.size());
   for (std::size_t d = 0; d < dirs.size(); ++d) {
     first_file[d] = static_cast<std::uint32_t>(file_data.size());
@@ -168,7 +176,7 @@ BuiltRom build_rom(const RomSpec& spec) {
     push_le32(image, overlay.ram_address);
     push_le32(image, overlay.ram_address + 4);
     push_le32(image, static_cast<std::uint32_t>(i));  // file ID
-    push_le32(image, (overlay.compressed ? 0x01000000u : 0u) |
+    push_le32(image, (overlay.storage == OverlayStorage::Blz ? 0x01000000u : 0u) |
                          static_cast<std::uint32_t>(file_data[i].size()));
   }
   align(image, 0x200);
@@ -267,11 +275,20 @@ RomSpec default_spec() {
                    {"hero.nsbca", tagged("BCA0", 300, 43)},
                    {"", sample_data(200, 44)}})},
       {"model/packed.narc", lz40_compress(build_narc({{"", tagged("BTA0", 120, 45)}}))},
+      {"model/twice.nsbtx", lz40_compress(lz40_compress(tagged("BTX0", 900, 46)))},
   };
   spec.overlays = {
-      OverlaySpec{sample_data(0x900, 31), true, 0x02100000},
-      OverlaySpec{sample_data(0x500, 32), false, 0x02100000},
-      OverlaySpec{sample_data(0x700, 33), true, 0x02180000},
+      OverlaySpec{sample_data(0x900, 31), OverlayStorage::Blz, 0x02100000},
+      OverlaySpec{sample_data(0x500, 32), OverlayStorage::Raw, 0x02100000},
+      OverlaySpec{sample_data(0x700, 33), OverlayStorage::Lz40, 0x02180000},
+      OverlaySpec{sample_data(0x600, 34), OverlayStorage::Lz40Twice, 0x02180000},
+      // Uncompressed code that happens to begin with the LZ40 type byte.
+      OverlaySpec{[] {
+                    Bytes data = sample_data(0x300, 35);
+                    data[0] = 0x40;
+                    return data;
+                  }(),
+                  OverlayStorage::Raw, 0x02190000},
   };
   return spec;
 }

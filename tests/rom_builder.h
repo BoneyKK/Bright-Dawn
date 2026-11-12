@@ -11,9 +11,16 @@
 
 namespace bd_test {
 
+enum class OverlayStorage {
+  Raw,
+  Blz,         // Flagged as compressed in the overlay table.
+  Lz40,        // Not flagged; this is how the real game stores its overlays.
+  Lz40Twice,   // Not flagged, compressed two layers deep.
+};
+
 struct OverlaySpec {
   Bytes data;
-  bool compressed = false;
+  OverlayStorage storage = OverlayStorage::Raw;
   std::uint32_t ram_address = 0x02100000;
 };
 

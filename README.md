@@ -30,7 +30,7 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | ARM9 program and overlay decompression (BLZ) | Done, tested |
 | LZ10 / LZ11 decompression | Done, tested |
 | NARC archive reader | Done, tested |
-| The game's own `0x40` compression | Implemented from a public description; **not yet confirmed on real data** |
+| LZ40 decompression (the scheme this game uses for almost every file, overlays included) | Done, tested; the format rules come from the owner's measurements on the real ROM, but this implementation has not itself been run on real data yet |
 | File format survey, looking inside archives and compressed files | Done, tested |
 | `bdtool` command-line tool | Done, tested |
 | Recompiler, runtime, renderer, audio, input, mods, settings menu | Not started |
@@ -84,16 +84,15 @@ build/bdtool survey path/to/your-rom.nds
 | Command | Purpose |
 | --- | --- |
 | `validate <rom>` | Exit status 0 only for an intact, recognised copy of the game |
-| `info <rom>` | Header, program sizes, SDK version, overlay summary |
+| `info <rom>` | Header, program sizes, SDK version, and how the overlays are stored and whether they decode to the expected size |
 | `list <rom>` | Every file in the ROM file system |
 | `survey <rom>` | Classifies the contents by format, including archive members and compressed data, and summarises the overlays |
-| `lz40-probe <rom>` | Diagnostic: reports which reading of the `0x40` compression decodes the game's files |
 | `extract <rom> [--out DIR] [--code] [PATH...]` | Writes files (and optionally decompressed program code) to the per-user data directory |
 
 ### How you can help
 
-Run `bdtool info`, `bdtool survey` and `bdtool lz40-probe` on your ROM and
-share the output. It contains file names, sizes and format statistics only, no
+Run `bdtool validate`, `bdtool info` and `bdtool survey` on your ROM and share
+the output. It contains file names, sizes and format statistics only, no
 game content. [docs/ROM_SURVEY.md](docs/ROM_SURVEY.md) lists the questions that
 are still open.
 

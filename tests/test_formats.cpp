@@ -56,19 +56,20 @@ TEST(sniff_handles_the_0x40_scheme) {
   REQUIRE(unpacked.ok());
   CHECK(unpacked.value() == tagged("BCA0", 500));
 
-  // Up to three bytes of alignment padding are part of a normal file.
+  // Padding after the stream is part of a normal file.
   Bytes padded = packed;
-  padded.insert(padded.end(), 3, 0x00);
+  padded.insert(padded.end(), 20, 0x00);
   CHECK(bd::rom::sniff(padded).format == FileFormat::Lz40);
 
-  // A stream that stops short of the file, or does not decode, is reported
-  // as unconfirmed rather than passed off as decoded.
+  // A stream that stops well short of the file, or does not decode, is
+  // reported as unconfirmed rather than passed off as decoded.
   Bytes trailing = packed;
-  trailing.insert(trailing.end(), 16, 0x55);
+  trailing.insert(trailing.end(), 40, 0x55);
   CHECK(bd::rom::sniff(trailing).format == FileFormat::Lz40Unconfirmed);
   CHECK(!bd::rom::is_compression(FileFormat::Lz40Unconfirmed));
-  const Bytes other_reading = bd_test::lz40_compress(tagged("BCA0", 500), bd_test::Lz40Flags::Plain);
-  CHECK(bd::rom::sniff(other_reading).format == FileFormat::Lz40Unconfirmed);
+  Bytes damaged = packed;
+  damaged[4] = 0x80;  // The first token becomes a reference to nothing.
+  CHECK(bd::rom::sniff(damaged).format == FileFormat::Lz40Unconfirmed);
 
   // An implausible header is just an unknown file that happens to start with '@'.
   CHECK(bd::rom::sniff(Bytes{0x40, 0, 0, 0, 0}).format == FileFormat::Unknown);

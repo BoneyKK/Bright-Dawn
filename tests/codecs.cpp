@@ -115,7 +115,7 @@ Bytes lz11_compress(const Bytes& raw) {
   return out;
 }
 
-Bytes lz40_compress(const Bytes& raw, Lz40Flags flags, bool long_length_big_endian) {
+Bytes lz40_compress(const Bytes& raw) {
   Bytes out;
   put_size_header(out, 0x40, raw.size());
   TokenWriter writer(out);
@@ -136,17 +136,14 @@ Bytes lz40_compress(const Bytes& raw, Lz40Flags flags, bool long_length_big_endi
       out.push_back(static_cast<std::uint8_t>(m.length - 0x10));
     } else if (code == 1) {
       const std::size_t v = m.length - 0x110;
-      const auto hi = static_cast<std::uint8_t>(v >> 8);
-      const auto lo = static_cast<std::uint8_t>(v);
-      out.push_back(long_length_big_endian ? hi : lo);
-      out.push_back(long_length_big_endian ? lo : hi);
+      out.push_back(static_cast<std::uint8_t>(v));
+      out.push_back(static_cast<std::uint8_t>(v >> 8));
     }
     pos += m.length;
   }
-  for (std::size_t at : writer.flag_positions()) {
-    if (flags == Lz40Flags::Negated) out[at] = static_cast<std::uint8_t>(0x100u - out[at]);
-    if (flags == Lz40Flags::Inverted) out[at] = static_cast<std::uint8_t>(~out[at]);
-  }
+  // Flag bytes are stored as their two's complement.
+  for (std::size_t at : writer.flag_positions())
+    out[at] = static_cast<std::uint8_t>(0x100u - out[at]);
   return out;
 }
 

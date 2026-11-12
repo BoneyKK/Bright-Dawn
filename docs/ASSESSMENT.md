@@ -147,8 +147,8 @@ than papered over with an emulator core.
 Known limitations:
 
 - Run once against a real ROM, which exposed a bug in locating the ARM9
-  start-up parameters (since fixed). Program decompression and the `0x40`
-  decoder are still unconfirmed on real data.
+  start-up parameters (since fixed). The fixed tool, with LZ40 and overlay
+  decoding, has not yet been rerun on real data.
 - Game identification uses the cartridge game code only. A table of known-good
   whole-image checksums would detect modified dumps; it is omitted until the
   values can be confirmed against real dumps.

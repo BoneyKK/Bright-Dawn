@@ -94,12 +94,19 @@ TEST(rom_decompresses_arm9_and_overlays) {
   for (std::size_t i = 0; i < spec.overlays.size(); ++i) {
     const auto& overlay = rom.arm9_overlays()[i];
     CHECK(overlay.id == i);
-    CHECK(overlay.compressed == spec.overlays[i].compressed);
+    using bd::rom::OverlayEncoding;
+    using bd_test::OverlayStorage;
+    const OverlayStorage storage = spec.overlays[i].storage;
+    // Only the SDK's own scheme is flagged in the table.
+    CHECK(overlay.compressed == (storage == OverlayStorage::Blz));
     CHECK(overlay.ram_address == spec.overlays[i].ram_address);
     CHECK(overlay.ram_size == spec.overlays[i].data.size());
-    const auto data = rom.overlay_data(overlay);
-    REQUIRE(data.ok());
-    CHECK(data.value() == spec.overlays[i].data);
+    const auto image = rom.load_overlay(overlay);
+    REQUIRE(image.ok());
+    CHECK(image.value().data == spec.overlays[i].data);
+    CHECK(image.value().encoding == (storage == OverlayStorage::Blz   ? OverlayEncoding::Blz
+                                     : storage == OverlayStorage::Raw ? OverlayEncoding::Raw
+                                                                      : OverlayEncoding::Lz40));
   }
   CHECK(rom.arm7_overlays().empty());
 }
@@ -314,7 +321,7 @@ TEST(rom_reports_damaged_compressed_code) {
   for (std::uint32_t i = end - 8; i < end; ++i) image[i] = 0;
   opened = Rom::from_bytes(image);
   REQUIRE(opened.ok());
-  const auto overlay = opened.value().overlay_data(opened.value().arm9_overlays()[0]);
+  const auto overlay = opened.value().load_overlay(opened.value().arm9_overlays()[0]);
   REQUIRE(!overlay.ok());
   CHECK(overlay.error().message.find("overlay 0") != std::string::npos);
 }
@@ -332,7 +339,7 @@ TEST(rom_survives_random_structural_damage) {
       {0x4000, 0x100},
       {built.fnt_offset, built.fnt_size},
       {built.fat_offset, built.fat_size},
-      {built.overlay_table_offset, 96},
+      {built.overlay_table_offset, 160},
   };
   std::uint32_t state = 2024;
   auto next = [&state] {
@@ -355,7 +362,7 @@ TEST(rom_survives_random_structural_damage) {
     ++accepted;
     const Rom& rom = opened.value();
     (void)rom.arm9_decompressed();
-    for (const auto& overlay : rom.arm9_overlays()) (void)rom.overlay_data(overlay);
+    for (const auto& overlay : rom.arm9_overlays()) (void)rom.load_overlay(overlay);
     std::size_t total = 0;
     for (const auto& file : rom.fs().named_files()) total += rom.file(file.file_id).value().size();
     CHECK(total <= rom.bytes().size() * rom.fs().named_files().size() + 1);

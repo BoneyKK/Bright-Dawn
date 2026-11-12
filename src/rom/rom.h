@@ -26,6 +26,18 @@ enum class SecureArea {
   Encrypted,  // The first 2 KiB of ARM9 code are still encrypted.
 };
 
+// How an overlay is stored in the ROM.
+enum class OverlayEncoding {
+  Raw,   // Stored exactly as it is loaded.
+  Blz,   // Backward LZ, as flagged in the overlay table (the SDK's own scheme).
+  Lz40,  // LZ40, not flagged in the table; this is what Dark Dawn uses.
+};
+
+struct OverlayImage {
+  std::vector<std::uint8_t> data;  // Contents as they sit in memory.
+  OverlayEncoding encoding = OverlayEncoding::Raw;
+};
+
 class Rom {
  public:
   // Reads and validates `path`. Structural problems are reported as NotNds,
@@ -51,8 +63,11 @@ class Rom {
 
   // The ARM9 program with its compression removed.
   Result<std::vector<std::uint8_t>> arm9_decompressed() const;
-  // An overlay's contents with its compression removed.
-  Result<std::vector<std::uint8_t>> overlay_data(const Overlay& overlay) const;
+  // An overlay's contents with its compression removed. An overlay that the
+  // table does not flag as compressed is still decoded when it is a complete
+  // LZ40 file. Compare the result's size with overlay.ram_size to confirm
+  // that it decoded to what the game expects.
+  Result<OverlayImage> load_overlay(const Overlay& overlay) const;
 
   // Contents of a file by ID.
   Result<ByteSpan> file(std::uint16_t file_id) const;

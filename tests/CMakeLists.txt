@@ -53,9 +53,14 @@ bd_cli_test(cli_survey_archives survey ${BD_TEST_DIR}/dark_dawn_like.nds)
 set_tests_properties(cli_survey_archives PROPERTIES
   PASS_REGULAR_EXPRESSION "2 archive.s. opened, 4 member.s..*LZ40 > NSBTX +1 ")
 
-bd_cli_test(cli_lz40_probe lz40-probe ${BD_TEST_DIR}/dark_dawn_like.nds)
-set_tests_properties(cli_lz40_probe PROPERTIES
-  PASS_REGULAR_EXPRESSION "negated +big-endian +3 +3")
+bd_cli_test(cli_survey_layers survey ${BD_TEST_DIR}/dark_dawn_like.nds)
+set_tests_properties(cli_survey_layers PROPERTIES
+  PASS_REGULAR_EXPRESSION "LZ40 > LZ40 > NSBTX +1 ")
+
+# Overlays stored as LZ40 without a flag in the overlay table must be decoded.
+bd_cli_test(cli_info_overlays info ${BD_TEST_DIR}/dark_dawn_like.nds)
+set_tests_properties(cli_info_overlays PROPERTIES
+  PASS_REGULAR_EXPRESSION "2 LZ40, 1 BLZ, 2 uncompressed.*5 of 5 decode to exactly")
 
 bd_cli_test(cli_extract extract ${BD_TEST_DIR}/dark_dawn_like.nds --code --out ${BD_TEST_DIR}/out)
 set_tests_properties(cli_extract PROPERTIES PASS_REGULAR_EXPRESSION "Wrote [0-9]+ file")
