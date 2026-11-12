@@ -50,7 +50,7 @@ std::uint8_t* Memory::at(std::uint32_t address, std::uint32_t size) {
   return bytes_.data() + (address - kRamBase);
 }
 
-int run_all(Executor& executor, const char* image_path,
+int run_all(Executor& executor, Memory& memory, const char* image_path,
             const std::map<std::string, Expect>& expectations) {
   std::vector<std::uint8_t> image;
   if (!read_file(image_path, image) || image.size() < sizeof kTests / sizeof kTests[0] * 8 + 4) {
@@ -68,7 +68,6 @@ int run_all(Executor& executor, const char* image_path,
   }
 
   std::printf("executor: %s\n", executor.name());
-  Memory memory;
   int failures = 0;
   int index = 0;
   for (const Test& test : kTests) {

@@ -61,8 +61,10 @@ enum class Expect {
 
 // Runs every test in both instruction sets on the fixed inputs. `expectations`
 // maps test names (as in tests.def) to Expect::Gap; all others must pass.
-// Prints one line per test and returns the process exit status.
-int run_all(Executor& executor, const char* image_path,
+// `memory` is the guest memory the executor works on; it is reloaded with the
+// image before each test. Prints one line per test and returns the process
+// exit status.
+int run_all(Executor& executor, Memory& memory, const char* image_path,
             const std::map<std::string, Expect>& expectations);
 
 }  // namespace guest

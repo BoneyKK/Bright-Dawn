@@ -2,8 +2,6 @@
 # where a cross-compiler is available, as an ARMv5TE image in ARM and Thumb
 # state. Executors of DS code (translated code, an interpreter) are checked
 # against it. Nothing here comes from the game.
-enable_language(C)
-
 # --- Host reference, on every platform ---
 # The corpus is built twice under the two name prefixes the ARM image uses.
 add_library(bd_guest_host_a OBJECT corpus.c)
@@ -115,4 +113,20 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
 else()
   add_test(NAME guest_translated COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
   set_tests_properties(guest_translated PROPERTIES DISABLED TRUE)
+endif()
+
+# The interpreter on its own needs only the ARM image.
+if(BD_GUEST_IMAGE_OK)
+  if(NOT TARGET bd_guest_runner)
+    add_library(bd_guest_runner STATIC guest_runner.cpp
+      $<TARGET_OBJECTS:bd_guest_host_a> $<TARGET_OBJECTS:bd_guest_host_t>)
+    target_include_directories(bd_guest_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(bd_guest_runner PUBLIC bd_build_flags)
+  endif()
+  add_executable(guest_interpreter_test interpreter_test.cpp)
+  target_link_libraries(guest_interpreter_test PRIVATE bd_guest_runner bd_arm_core)
+  add_test(NAME guest_interpreter COMMAND guest_interpreter_test ${BD_GUEST_IMAGE})
+else()
+  add_test(NAME guest_interpreter COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image")
+  set_tests_properties(guest_interpreter PROPERTIES DISABLED TRUE)
 endif()
