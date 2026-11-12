@@ -18,3 +18,7 @@ compile_commands.json
 .idea/
 *.swp
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
