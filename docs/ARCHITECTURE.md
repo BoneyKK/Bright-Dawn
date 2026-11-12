@@ -77,6 +77,10 @@ Three properties of the translated code shape the runtime:
   follows whatever the game's own loader does.
 - **Interrupts.** Translated code cannot be interrupted at an arbitrary
   instruction. The runtime delivers interrupts at defined points.
+- **Untranslated code.** Where the dispatcher has no translation for an
+  address, an interpreter runs the code there, hands back to translated code
+  at the first opportunity, and reports the address. Translated code is always
+  preferred; see FALLBACK_INTERPRETER.md.
 
 These are design intentions, not tested code; see ASSESSMENT.md section 5.
 

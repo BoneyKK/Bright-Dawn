@@ -29,6 +29,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # The guest test image is cross-compiled for ARM with Clang and LLD.
+      - name: Install the ARM cross-toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
       # Builds from main are published, so they carry their release label;
       # the release job below derives the tag from the same run number.
       - name: Configure
@@ -57,6 +61,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install the ARM cross-toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBD_SANITIZE=ON -DBD_WERROR=ON
       - name: Build
