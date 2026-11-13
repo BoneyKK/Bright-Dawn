@@ -28,7 +28,7 @@ class Bus : public bd::runtime::Bus {
 // processor; any other request is recorded as a problem.
 class System : public bd::runtime::System {
  public:
-  void software_interrupt(ds::Cpu& cpu, std::uint32_t number) override {
+  void software_interrupt(ds::Cpu& cpu, std::uint32_t number, std::uint32_t) override {
     if (number == kTestSoftwareInterrupt) {
       cpu.r[0] = test_software_interrupt(cpu.r[0], cpu.r[1]);
     } else {

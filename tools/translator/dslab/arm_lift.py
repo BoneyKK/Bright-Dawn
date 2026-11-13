@@ -202,7 +202,9 @@ class Emitter:
             n = f["imm"] if i.thumb else (f["imm"] >> 16) & 0xFF
             # The processor puts the return address in the supervisor mode's own r14; the
             # program's r14 is untouched, and the usual wrapper ("swi n; bx lr") relies on that.
-            return [f"ds::swi(c, {n}u); /* BIOS call */"]
+            # The address of the next instruction goes along: what the BIOS call does may
+            # depend on it (waiting for an interrupt, which then returns there).
+            return [f"ds::swi(c, {n}u, {hexc(i.end | (1 if i.thumb else 0))}); /* BIOS call */"]
         if k == "cop":
             op = f["op"]
             if op == "mcr":
@@ -602,7 +604,7 @@ inline bool leave(Cpu& c, u32 ret) {
 // provided by the platform layer
 void call(Cpu& c, u32 address);                              // a call; bit 0 set = Thumb code
 void jump(Cpu& c, u32 address);                              // a jump whose target is not known in advance
-void swi(Cpu& c, u32 number);
+void swi(Cpu& c, u32 number, u32 return_address);          // return_address: the next instruction, bit 0 set = Thumb
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value);
 u32 cp_read(Cpu& c, int cp, int opc1, int crn, int crm, int opc2);
 void unhandled(Cpu& c, u32 address, const char* what);

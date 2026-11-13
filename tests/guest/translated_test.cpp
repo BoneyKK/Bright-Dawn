@@ -62,7 +62,7 @@ bool leave_slow(Cpu& c, u32 ret) {
   --c.unwind;
   return true;
 }
-void swi(Cpu& c, u32 number) {
+void swi(Cpu& c, u32 number, u32) {
   if (number == guest::kTestSoftwareInterrupt) {
     c.r[0] = guest::test_software_interrupt(c.r[0], c.r[1]);
   } else {

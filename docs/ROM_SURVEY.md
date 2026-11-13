@@ -83,6 +83,10 @@ module: 896,736 bytes and 2,601 functions. The translation is 3.5 million
 lines of C++ that compile and link against the runtime. None of it has been
 executed. More in FALLBACK_INTERPRETER.md.
 
+The program's start-up code has been run in the interpreter [code]. It
+completes, and the program then waits for the console's second processor.
+What it does on the way is in BOOT.md.
+
 ### The owner's existing code translation
 
 The owner's earlier project already translates this game's machine code to

@@ -6,8 +6,9 @@ interpreter runs the code there. The owner's rule is that translated code is
 always preferred. This document describes how that is built, what has been
 tested, and what has not.
 
-Implemented in `src/runtime` (`machine.h`). It has been tested on this
-project's own test programs only. **It has not run any of the game.**
+Implemented in `src/runtime` (`machine.h`) and tested on this project's own
+test programs. Of the game, the interpreter alone has run the start-up code
+(BOOT.md). **No translated game code has been executed.**
 
 ## The rule
 
@@ -123,8 +124,9 @@ What the wrapper has to deal with:
 - Software interrupts would jump to a BIOS that is not in memory. The runtime
   intercepts them before they execute and sends them where translated code
   sends them.
-- The breakpoint instruction is not implemented, and unimplemented cases
-  print to standard output.
+- The breakpoint instruction is not implemented. The core prints what it
+  cannot execute to standard output; the wrapper discards that, because the
+  runtime detects those cases and reports them itself.
 - One defect, found by this project's tests and corrected in the wrapper
   because the core is kept unmodified: for `ldm rn!, {..., pc}^`, an exception
   return that also updates its base register, the core writes the base
@@ -234,7 +236,8 @@ What the numbers say:
 
 ## Limits
 
-- Nothing here runs the game yet.
+- The game does not run yet, and no translated game code has been executed.
+  The interpreter has run the game's start-up code (BOOT.md).
 - Code that rewrites itself in place is not detected (see Overlays).
 - Comparing an overlay translation with memory reads the bytes one at a time
   through the memory interface. Correct, and not repeated while memory is
