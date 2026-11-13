@@ -70,11 +70,27 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # A second compiler: Clang reports things GCC and MSVC accept.
+  clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang and the ARM cross-toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBD_WERROR=ON
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   # Every push to main that passes the jobs above is published as a
   # pre-release. Packages contain the tools only: no ROM and no game data.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, sanitizers]
+    needs: [build, sanitizers, clang]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
