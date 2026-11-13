@@ -12,10 +12,10 @@ constexpr u32 kSyncSendInterrupt = 1u << 13;    // Write one: interrupt the othe
 constexpr u32 kSyncInterruptEnable = 1u << 14;  // Accept the other side's interrupt.
 
 // Queue control register.
+// Bit 1 (send queue full) is never set and bit 3 (write one: empty the send
+// queue) has nothing to do, because the peer takes every word at once.
 constexpr u32 kSendEmpty = 1u << 0;
-constexpr u32 kSendFull = 1u << 1;
 constexpr u32 kSendEmptyInterrupt = 1u << 2;
-constexpr u32 kSendClear = 1u << 3;       // Write one: empty the send queue.
 constexpr u32 kReceiveEmpty = 1u << 8;
 constexpr u32 kReceiveFull = 1u << 9;
 constexpr u32 kReceiveInterrupt = 1u << 10;
@@ -34,7 +34,7 @@ void Ipc::attach(Arm9Io& io) {
 }
 
 u32 Ipc::read_sync() const {
-  return sync_in_ | (static_cast<u32>(sync_out_) << kSyncOutShift) |
+  return (sync_in_ & kSyncIn) | (static_cast<u32>(sync_out_) << kSyncOutShift) |
          (sync_interrupt_enabled_ ? kSyncInterruptEnable : 0);
 }
 
@@ -64,9 +64,6 @@ u32 Ipc::read_control() const {
 }
 
 void Ipc::write_control(u32 value, u32 mask) {
-  // kSendClear: the send queue is always empty, so there is nothing to clear.
-  (void)kSendClear;
-  (void)kSendFull;
   if (mask & kSendEmptyInterrupt) {
     const bool on = (value & kSendEmptyInterrupt) != 0;
     // Enabling it while the queue is empty, which it always is, requests it.
