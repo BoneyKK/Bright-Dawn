@@ -77,6 +77,7 @@ int run_all(Executor& executor, Memory& memory, const char* image_path,
       std::uint32_t address;
       std::memcpy(&address, image.data() + index * 4, 4);
       memory.load(image);  // A fresh image for every test.
+      executor.begin_test(test.name, variant == 1);
 
       long wrong = 0, gaps = 0, failed = 0;
       std::map<std::string, long> details;
@@ -110,6 +111,11 @@ int run_all(Executor& executor, Memory& memory, const char* image_path,
         }
       }
 
+      const std::string complaint = executor.end_test(test.name, variant == 1);
+      if (!complaint.empty()) {
+        ++failed;
+        ++details[complaint];
+      }
       const char* verdict = "ok";
       if (wrong != 0 || failed != 0) {
         verdict = "FAIL";

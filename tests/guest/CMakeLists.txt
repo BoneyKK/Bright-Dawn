@@ -8,8 +8,12 @@ add_library(bd_guest_host_a OBJECT corpus.c)
 add_library(bd_guest_host_t OBJECT corpus.c)
 target_compile_definitions(bd_guest_host_t PRIVATE MODE_T)
 
-add_executable(guest_reference_test reference_test.c
-  $<TARGET_OBJECTS:bd_guest_host_a> $<TARGET_OBJECTS:bd_guest_host_t>)
+# The C equivalents of the tests that the ARM build has in assembly.
+add_library(bd_guest_host_special OBJECT special_host.c)
+set(BD_GUEST_HOST_OBJECTS $<TARGET_OBJECTS:bd_guest_host_a> $<TARGET_OBJECTS:bd_guest_host_t>
+  $<TARGET_OBJECTS:bd_guest_host_special>)
+
+add_executable(guest_reference_test reference_test.c ${BD_GUEST_HOST_OBJECTS})
 add_test(NAME guest_reference COMMAND guest_reference_test)
 
 # --- ARMv5TE image, where Clang with the ARM backend and LLD are present ---
@@ -44,10 +48,11 @@ if(BD_GUEST_IMAGE_OK)
     COMMAND ${BD_ARM_CLANG} ${BD_ARM_FLAGS} -mthumb -DMODE_T -c ${src}/corpus.c -o ${dir}/corpus_t.o
     COMMAND ${BD_ARM_CLANG} ${BD_ARM_FLAGS} -marm -O1 -c ${src}/rt.c -o ${dir}/rt.o
     COMMAND ${BD_ARM_CLANG} ${BD_ARM_FLAGS} -marm -c ${src}/table.c -o ${dir}/table.o
+    COMMAND ${BD_ARM_CLANG} ${BD_ARM_FLAGS} -c ${src}/special.S -o ${dir}/special.o
     COMMAND ${BD_ARM_LLD} -T ${src}/link.ld ${dir}/table.o ${dir}/corpus_a.o ${dir}/corpus_t.o
-            ${dir}/rt.o -o ${dir}/guest_image.elf
+            ${dir}/special.o ${dir}/rt.o -o ${dir}/guest_image.elf
     COMMAND ${BD_ARM_OBJCOPY} -O binary ${dir}/guest_image.elf ${BD_GUEST_IMAGE}
-    DEPENDS corpus.c rt.c table.c tests.def link.ld
+    DEPENDS corpus.c special.S rt.c table.c tests.def link.ld
     COMMENT "Building the ARMv5TE guest test image"
     VERBATIM)
   add_custom_target(guest_image ALL DEPENDS ${BD_GUEST_IMAGE})
@@ -77,8 +82,7 @@ if(Python3_FOUND)
 endif()
 
 if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
-  add_library(bd_guest_runner STATIC guest_runner.cpp
-    $<TARGET_OBJECTS:bd_guest_host_a> $<TARGET_OBJECTS:bd_guest_host_t>)
+  add_library(bd_guest_runner STATIC guest_runner.cpp ${BD_GUEST_HOST_OBJECTS})
   target_include_directories(bd_guest_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(bd_guest_runner PUBLIC bd_build_flags)
 
@@ -106,26 +110,40 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
 
   add_executable(guest_translated_test translated_test.cpp)
   target_link_libraries(guest_translated_test PRIVATE bd_guest_runner bd_guest_translated)
-  # The translator alone leaves two kinds of gap, each exercised by one test:
-  # functions reached only through pointers, and unrecognised jump tables.
+  # The translator alone cannot complete these: each one exercises something
+  # it does not cover (functions reached only through pointers, unrecognised
+  # jump tables, returns and calls made through registers, callees that do not
+  # return to their call site). It must still never give a wrong result.
   add_test(NAME guest_translated
-    COMMAND guest_translated_test ${BD_GUEST_IMAGE} indirect sw)
+    COMMAND guest_translated_test ${BD_GUEST_IMAGE}
+            indirect sw handback retreg v4call inltab nonlocal skipdata svc)
+
+  # The same translated code with the interpreter behind it: everything must
+  # pass. Only the tests listed may enter the interpreter at all, and each of
+  # them must. (retreg is absent: its return through a register is resolved
+  # without interpreting anything.)
+  add_executable(guest_mixed_test mixed_test.cpp)
+  target_link_libraries(guest_mixed_test PRIVATE bd_guest_runner bd_guest_translated bd_runtime)
+  add_test(NAME guest_mixed
+    COMMAND guest_mixed_test ${BD_GUEST_IMAGE}
+            indirect sw handback v4call inltab nonlocal skipdata svc)
 else()
   add_test(NAME guest_translated COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
-  set_tests_properties(guest_translated PROPERTIES DISABLED TRUE)
+  add_test(NAME guest_mixed COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
+  set_tests_properties(guest_translated guest_mixed PROPERTIES DISABLED TRUE)
 endif()
 
 # The interpreter on its own needs only the ARM image.
 if(BD_GUEST_IMAGE_OK)
   if(NOT TARGET bd_guest_runner)
-    add_library(bd_guest_runner STATIC guest_runner.cpp
-      $<TARGET_OBJECTS:bd_guest_host_a> $<TARGET_OBJECTS:bd_guest_host_t>)
+    add_library(bd_guest_runner STATIC guest_runner.cpp ${BD_GUEST_HOST_OBJECTS})
     target_include_directories(bd_guest_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(bd_guest_runner PUBLIC bd_build_flags)
   endif()
   add_executable(guest_interpreter_test interpreter_test.cpp)
   target_link_libraries(guest_interpreter_test PRIVATE bd_guest_runner bd_arm_core)
-  add_test(NAME guest_interpreter COMMAND guest_interpreter_test ${BD_GUEST_IMAGE})
+  # svc: the bare interpreter has no BIOS to take software interrupts.
+  add_test(NAME guest_interpreter COMMAND guest_interpreter_test ${BD_GUEST_IMAGE} svc)
 else()
   add_test(NAME guest_interpreter COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image")
   set_tests_properties(guest_interpreter PROPERTIES DISABLED TRUE)

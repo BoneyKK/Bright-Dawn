@@ -11,10 +11,18 @@ faithful translation, not hand-written-looking code. Names are addresses
 What maps to what:
   * each function           -> void f_<address>(ds::Cpu& c)
   * branches in the function -> goto L_<address>
-  * BL / BLX to a function  -> c.r[14] = <return address>; f_<address>(c);
-  * calls through registers -> ds::call(c, address) (looks the function up
-                               in the generated table, ds_dispatch.cpp)
+  * BL / BLX to a function  -> c.r[14] = <return address>; ds::enter(c, ...);
+                               f_<address>(c); if (ds::leave(c, ...)) return;
+  * calls through registers -> the same, with ds::call(c, address) (the
+                               run-time looks the function up)
+  * computed jumps          -> ds::jump(c, address); return;
   * returns                 -> return
+
+Every call site registers itself with ds::enter before the call and checks
+ds::leave after it. That gives the run-time a list of the call sites that are
+waiting for a return, so it can tell when control, by whatever route, has come
+back to one of them, and ds::leave tells the function to stop when control
+has gone to an outer call site instead.
   * memory                  -> c.rd8/rd16/rd32, c.wr8/wr16/wr32 (the platform
                                layer, ds_platform.cpp, decides what memory is)
   * SWI (BIOS calls), coprocessor 15 (caches, memory protection) -> calls into
@@ -87,11 +95,18 @@ class Emitter:
     def out(self, text: str, indent: int = 1) -> None:
         self.lines.append("    " * indent + text)
 
-    def call_expr(self, target: int, thumb: bool) -> str:
+    def call_expr(self, target: int, thumb: bool, link: bool = True) -> str:
         name = self.names.get((target, thumb))
         if name:
             return f"{name}(c)"
-        return f"ds::call(c, {hexc(target | (1 if thumb else 0))})"
+        via = "call" if link else "jump"
+        return f"ds::{via}(c, {hexc(target | (1 if thumb else 0))})"
+
+    @staticmethod
+    def linked(ret: int, call: str) -> list[str]:
+        """Statements for a call that is expected to return to `ret`."""
+        r = hexc(ret)
+        return [f"c.r[14] = {r}; ds::enter(c, {r});", f"{call};", f"if (ds::leave(c, {r})) return;"]
 
     def jump_to_value(self, i: Insn, value: str, ret_ok: bool) -> list[str]:
         """Statements for "pc = value" (a computed jump or a return)."""
@@ -101,12 +116,12 @@ class Emitter:
             for t in sorted(set(fn.tables[i.addr])):
                 if t in fn.insns:
                     lines.append(f"    case {hexc(t)}: goto L_{t:08x};")
-            lines.append(f"    default: ds::call(c, {value}); return;")
+            lines.append(f"    default: ds::jump(c, {value}); return;")
             lines.append("}")
             return lines
         if ret_ok:
             return [f"c.ret_to = {value}; return;"]
-        return [f"ds::call(c, {value}); return; /* computed jump */"]
+        return [f"ds::jump(c, {value}); return; /* computed jump */"]
 
     # ---- one instruction -------------------------------------------------
 
@@ -123,15 +138,15 @@ class Emitter:
             target, tthumb = f["target"], (i.thumb != f["exchange"])
             if f["link"]:
                 ret = i.end | (1 if i.thumb else 0)
-                return [f"c.r[14] = {hexc(ret)};", f"{self.call_expr(target, tthumb)};"]
+                return self.linked(ret, self.call_expr(target, tthumb))
             if target in self.fn.insns and tthumb == i.thumb and (target, tthumb) not in self.fn.tails:
                 return [f"goto L_{target:08x};"]
-            return [f"{self.call_expr(target, tthumb)}; return; /* tail call */"]
+            return [f"{self.call_expr(target, tthumb, link=False)}; return; /* tail call */"]
         if k == "bx":
             v = self.reg(f["rm"], i)
             if f["link"]:
                 ret = i.end | (1 if i.thumb else 0)
-                return [f"{{ u32 t = {v}; c.r[14] = {hexc(ret)}; ds::call(c, t); }}"]
+                return [f"{{ u32 t = {v};"] + ["    " + x for x in self.linked(ret, "ds::call(c, t)")] + ["}"]
             if f["rm"] == 14:
                 return ["c.ret_to = c.r[14]; return;"]
             return self.jump_to_value(i, v, False)
@@ -185,7 +200,9 @@ class Emitter:
                     f"c.wr32(a & ~3u, v); c.r[{f['rd']}] = t; }}"]
         if k == "swi":
             n = f["imm"] if i.thumb else (f["imm"] >> 16) & 0xFF
-            return [f"c.r[14] = {hexc(i.end | (1 if i.thumb else 0))}; ds::swi(c, {n}u); /* BIOS call */"]
+            # The processor puts the return address in the supervisor mode's own r14; the
+            # program's r14 is untouched, and the usual wrapper ("swi n; bx lr") relies on that.
+            return [f"ds::swi(c, {n}u); /* BIOS call */"]
         if k == "cop":
             op = f["op"]
             if op == "mcr":
@@ -223,8 +240,11 @@ class Emitter:
                     5: f"{a} + {b} + (u32)c.C", 6: f"{a} - {b} - (u32)!c.C", 7: f"{b} - {a} - (u32)!c.C",
                     12: f"{a} | {b}", 13: b, 14: f"{a} & ~{b}", 15: f"~{b}"}[op]
             if rd == 15:
+                # A data-processing instruction that writes pc does not change the instruction
+                # set (only bx/blx, loads and pops do), so the target carries this function's.
+                dest = "(res | 1u)" if i.thumb else "(res & ~3u)"
                 return self._wrap(pre + [f"u32 res = {expr};"] + self.jump_to_value(
-                    i, "res", f["op2"] == ("sh", 14, 0, 0) and op == 13))
+                    i, dest, f["op2"] == ("sh", 14, 0, 0) and op == 13))
             if pre:
                 return ["{ " + " ".join(pre + [f"c.r[{rd}] = {expr};"]) + " }"]
             return [f"c.r[{rd}] = {expr};"]
@@ -418,9 +438,17 @@ struct Cpu {
     bool N = false, Z = false, C = false, V = false, Q = false;
     u32 cpsr_ctrl = 0x1F;            // mode, interrupt and Thumb bits of CPSR
     u32 spsr = 0;
-    u32 ret_to = 0;                  // where the last return went (for checking)
+    u32 ret_to = 0;                  // where the last return went (checked by leave)
     int cpu = 9;                     // 9 = ARM9 (main CPU), 7 = ARM7
     void* platform = nullptr;        // the platform layer's own data
+
+    // Call sites that are waiting for their callee to return, innermost last:
+    // the return address each one gave, and the stack pointer at the call.
+    struct Frame { u32 ret; u32 sp; };
+    static constexpr u32 kMaxFrames = 4096;
+    Frame frames[kMaxFrames];
+    u32 depth = 0;                   // may exceed kMaxFrames; the excess is not recorded
+    u32 unwind = 0;                  // call sites that must still give up (see leave)
 
     u8  rd8(u32 a);
     u16 rd16(u32 a);
@@ -496,8 +524,23 @@ inline void set_cpsr(Cpu& c, u32 v, u32 mask) {
 }
 inline void return_from_exception(Cpu& c) { set_cpsr(c, c.spsr, 0xFF0000FFu); }
 
-// provided by the platform layer (ds_platform.cpp) and the generated dispatcher (ds_dispatch.cpp)
-void call(Cpu& c, u32 address);                              // bit 0 set = Thumb code
+// Around every call: enter before it, leave after it. leave returns true when the
+// calling function must return at once, because control did not come back to this
+// call site but went to an outer one. In the ordinary case it costs two compares.
+bool leave_slow(Cpu& c, u32 ret);                            // provided by the platform layer
+inline void enter(Cpu& c, u32 ret) {
+    if (c.depth < Cpu::kMaxFrames) { c.frames[c.depth].ret = ret; c.frames[c.depth].sp = c.r[13]; }
+    ++c.depth;
+}
+inline bool leave(Cpu& c, u32 ret) {
+    --c.depth;
+    if (c.unwind == 0 && c.ret_to == ret) return false;
+    return leave_slow(c, ret);
+}
+
+// provided by the platform layer
+void call(Cpu& c, u32 address);                              // a call; bit 0 set = Thumb code
+void jump(Cpu& c, u32 address);                              // a jump whose target is not known in advance
 void swi(Cpu& c, u32 number);
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value);
 u32 cp_read(Cpu& c, int cp, int opc1, int crn, int crm, int opc2);

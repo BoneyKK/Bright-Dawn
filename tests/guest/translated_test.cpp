@@ -45,7 +45,21 @@ void call(Cpu& c, u32 address) {
   }
   note_gap("no translation for %08x", address);
 }
-void swi(Cpu&, u32 number) { note_gap("software interrupt %u", number); }
+// Without a runtime behind it, a computed jump can only be a tail call to a
+// translated function, and a call can only return to its own call site.
+void jump(Cpu& c, u32 address) { call(c, address); }
+bool leave_slow(Cpu& c, u32 ret) {
+  if (c.unwind == 0) note_gap("a call returned somewhere other than to %08x", ret);
+  c.unwind = 0;
+  return false;
+}
+void swi(Cpu& c, u32 number) {
+  if (number == guest::kTestSoftwareInterrupt) {
+    c.r[0] = guest::test_software_interrupt(c.r[0], c.r[1]);
+  } else {
+    note_gap("software interrupt %u", number);
+  }
+}
 void cp_write(Cpu&, int, int, int, int, int, u32) { note_gap("coprocessor write%.0u", 0); }
 u32 cp_read(Cpu&, int, int, int, int, int) { note_gap("coprocessor read%.0u", 0); return 0; }
 void unhandled(Cpu&, u32 address, const char* what) { note_gap("not translated at %08x: %s", address, what); }
@@ -58,14 +72,17 @@ class TranslatedExecutor : public guest::Executor {
   const char* name() const override { return "translated code only"; }
   guest::CallResult call(guest::Memory& memory, std::uint32_t address, std::uint32_t a,
                          std::uint32_t b) override {
-    ds::Cpu c;
+    ds::Cpu& c = cpu_;
+    c = ds::Cpu();
     c.platform = &memory;
     c.r[0] = a;
     c.r[1] = b;
     c.r[13] = guest::kStackTop;
     c.r[14] = guest::kReturnAddress;
     g_gap.clear();
+    ds::enter(c, guest::kReturnAddress);
     ds::call(c, address);
+    (void)ds::leave(c, guest::kReturnAddress);
     guest::CallResult out;
     out.result = c.r[0];
     out.stack_pointer = c.r[13];
@@ -73,6 +90,9 @@ class TranslatedExecutor : public guest::Executor {
     out.detail = g_gap;
     return out;
   }
+
+ private:
+  ds::Cpu cpu_;
 };
 
 }  // namespace

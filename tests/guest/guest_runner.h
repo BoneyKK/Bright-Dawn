@@ -51,7 +51,23 @@ class Executor {
   // arguments, stack pointer kStackTop and return address kReturnAddress.
   virtual CallResult call(Memory& memory, std::uint32_t address, std::uint32_t a,
                           std::uint32_t b) = 0;
+  // Called around the inputs of one test in one instruction set. end_test may
+  // return a complaint, which fails the test; empty means none.
+  virtual void begin_test(const std::string& name, bool thumb) {
+    (void)name;
+    (void)thumb;
+  }
+  virtual std::string end_test(const std::string& name, bool thumb) {
+    (void)name;
+    (void)thumb;
+    return std::string();
+  }
 };
+
+// The one software interrupt the corpus uses, as every test platform must
+// implement it: number 5 computes r0 = r0 * 3 + r1.
+inline constexpr std::uint32_t kTestSoftwareInterrupt = 5;
+inline std::uint32_t test_software_interrupt(std::uint32_t r0, std::uint32_t r1) { return r0 * 3 + r1; }
 
 // Per-test expectation.
 enum class Expect {
