@@ -26,7 +26,18 @@
 #endif
 #define SB_BFE(VALUE, BITOFFSET, SIZE) (((VALUE) >> (BITOFFSET)) & ((1llu << (SIZE)) - 1))
 
+/* The core reports what it cannot execute by printing to standard output.
+ * The runtime detects those cases itself and reports them its own way, and a
+ * library must not write to a program's output, so the core's messages are
+ * discarded. Done here because the core is kept unmodified. */
+#include <stdio.h>
+static int bd_discard_message(const char* format, ...) {
+  (void)format;
+  return 0;
+}
+#define printf bd_discard_message
 #include "arm7.h"
+#undef printf
 
 struct bd_arm_core {
   arm7_t cpu;

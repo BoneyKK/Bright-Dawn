@@ -220,15 +220,20 @@ void Machine::arrive(int call_site) {
 
 void Machine::give_up(u32 address, const char* what) {
   system_.unhandled(cpu_, address, what);
-  // Let the native frames return; the state no longer means anything.
-  if (cpu_.depth != 0 && cpu_.depth <= ds::Cpu::kMaxFrames) cpu_.ret_to = cpu_.frames[cpu_.depth - 1].ret;
-  cpu_.unwind = 0;
+  stop();
+}
+
+void Machine::stop() {
+  stopped_ = true;
+  // Every waiting call site gives up, the outermost one included.
+  cpu_.unwind = cpu_.depth;
 }
 
 // Execution continues at `address`, by whatever means, until control arrives
 // at a waiting call site.
 void Machine::run_from(u32 address) {
   for (;;) {
+    if (stopped_) return;
     if (const Function function = lookup(address)) {
       function(cpu_);
       if (cpu_.unwind != 0) return;  // Control went to an outer call site.
@@ -269,6 +274,7 @@ bool Machine::leave_slow(u32 return_address) {
     --cpu_.unwind;
     return true;
   }
+  if (stopped_) return true;  // Stopped with nothing left to unwind: an outer call_function.
   // The callee returned, but to cpu_.ret_to and not to this call site: for
   // example it was called with "mov lr, pc; bx rX" further down, or it skips
   // data placed after the call. Continue from where it went. This call site
@@ -288,11 +294,15 @@ bool Machine::leave_slow(u32 return_address) {
 }
 
 void Machine::call_function(u32 address, u32 return_address) {
-  instructions_this_call_ = 0;
+  if (cpu_.depth == 0) {  // Not a call made from inside another one.
+    instructions_this_call_ = 0;
+    limit_reached_ = false;
+    stopped_ = false;
+  }
   cpu_.r[14] = return_address;
   ds::enter(cpu_, return_address);
   dispatch_call(address);
-  if (ds::leave(cpu_, return_address))
+  if (ds::leave(cpu_, return_address) && !stopped_)
     system_.unhandled(cpu_, address, "control left the called function without returning to its caller");
 }
 
@@ -365,13 +375,15 @@ bool Machine::interpret(u32 start, u32* continue_at) {
                                  condition_holds(opcode >> 28, state.cpsr));
     if (is_swi) {
       store_from_interpreter(state);
-      system_.software_interrupt(cpu_, thumb ? (opcode & 0xFFu) : ((opcode >> 16) & 0xFFu));
+      system_.software_interrupt(cpu_, thumb ? (opcode & 0xFFu) : ((opcode >> 16) & 0xFFu), next);
+      if (stopped_) return true;
       load_interpreter(next, &state);
       continue;
     }
 
     if (instruction_limit_ != 0 && ++instructions_this_call_ > instruction_limit_) {
       store_from_interpreter(state);
+      limit_reached_ = true;
       give_up(pc, "instruction limit reached while interpreting");
       return true;
     }
@@ -380,6 +392,10 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     bd_arm_core_step(core_);
     bd_arm_core_get_state(core_, &after);
     ++statistics_.interpreted_instructions;
+    if (stopped_) {  // A handler called during the instruction ended the run.
+      store_from_interpreter(after);
+      return true;
+    }
 
     // An undefined instruction: the interpreter took the exception. (Mode and
     // vector together, because code may also enter that mode on purpose.)
@@ -457,7 +473,9 @@ void Cpu::wr32(u32 a, u32 v) {
 void call(Cpu& c, u32 address) { machine(c).dispatch_call(address); }
 void jump(Cpu& c, u32 address) { machine(c).dispatch_jump(address); }
 bool leave_slow(Cpu& c, u32 ret) { return machine(c).leave_slow(ret); }
-void swi(Cpu& c, u32 number) { machine(c).system().software_interrupt(c, number); }
+void swi(Cpu& c, u32 number, u32 return_address) {
+  machine(c).system().software_interrupt(c, number, return_address);
+}
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value) {
   machine(c).system().coprocessor_write(c, cp, opc1, crn, crm, opc2, value);
 }

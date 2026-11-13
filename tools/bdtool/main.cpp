@@ -24,6 +24,9 @@
 #include "rom/narc.h"
 #include "rom/rom.h"
 
+// In boot.cpp.
+int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit);
+
 namespace {
 
 using bd::ByteSpan;
@@ -49,6 +52,10 @@ void print_usage(std::FILE* out) {
       "      --out DIR                    Destination (default: per-user data directory)\n"
       "      --code                       Also write decompressed program code and a\n"
       "                                   manifest of where each file loads\n"
+      "  bdtool boot <rom or code directory> [--instructions N]\n"
+      "                                   Run the game's start-up code in the interpreter\n"
+      "                                   and report what it asks of the machine (a\n"
+      "                                   development diagnostic; default N = 10000000)\n"
       "\n"
       "You must supply your own legally obtained ROM. Nothing is downloaded.\n",
       out);
@@ -537,13 +544,14 @@ int main(int argc, char** argv) {
     return kExitOk;
   }
   if (command != "validate" && command != "info" && command != "list" && command != "survey" &&
-      command != "extract") {
+      command != "extract" && command != "boot") {
     return usage_error(("unknown command: " + command).c_str());
   }
 
   std::filesystem::path out_dir;
   bool with_code = false;
   std::size_t top = 20;
+  std::uint64_t instructions = 10000000;
   std::vector<std::string> positional;
   for (std::size_t i = 1; i < args.size(); ++i) {
     const std::string& arg = args[i];
@@ -559,6 +567,13 @@ int main(int argc, char** argv) {
       if (end == args[i].c_str() || *end != '\0' || value == 0 || value > 100000)
         return usage_error("--top needs a positive number");
       top = value;
+    } else if (arg == "--instructions" && command == "boot") {
+      if (++i == args.size()) return usage_error("--instructions needs a number");
+      char* end = nullptr;
+      const unsigned long long value = std::strtoull(args[i].c_str(), &end, 10);
+      if (end == args[i].c_str() || *end != '\0' || value == 0)
+        return usage_error("--instructions needs a positive number");
+      instructions = value;
     } else if (arg.size() > 1 && arg[0] == '-') {
       return usage_error(("unknown option for '" + command + "': " + arg).c_str());
     } else {
@@ -573,6 +588,7 @@ int main(int argc, char** argv) {
   // Output from these commands gets pasted into reports; say which build made it.
   if (command == "validate" || command == "info" || command == "survey")
     std::printf("bdtool %s\n", BD_VERSION);
+  if (command == "boot") return cmd_boot(rom_path, instructions);
   if (command == "validate") return cmd_validate(rom_path);
   if (command == "info") return cmd_info(rom_path);
   if (command == "list") return cmd_list(rom_path);

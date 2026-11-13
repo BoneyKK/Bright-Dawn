@@ -49,12 +49,14 @@ class Bus {
 class System {
  public:
   virtual ~System() = default;
-  virtual void software_interrupt(ds::Cpu& cpu, std::uint32_t number) = 0;
+  // `return_address` is the instruction after the software interrupt (bit 0
+  // set = Thumb), where the program continues.
+  virtual void software_interrupt(ds::Cpu& cpu, std::uint32_t number, std::uint32_t return_address) = 0;
   virtual std::uint32_t coprocessor_read(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2) = 0;
   virtual void coprocessor_write(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2,
                                  std::uint32_t value) = 0;
-  // Something that cannot be executed correctly. The processor state is not
-  // meaningful afterwards; the embedder should stop.
+  // Something that cannot be executed correctly. The run ends: see
+  // Machine::stop.
   virtual void unhandled(ds::Cpu& cpu, std::uint32_t address, const char* what) = 0;
 };
 
@@ -111,6 +113,14 @@ class Machine {
   // Arguments and results are exchanged through cpu().
   void call_function(std::uint32_t address, std::uint32_t return_address);
 
+  // Ends the run: the outermost call_function returns as soon as it can. The
+  // interpreter stops before its next instruction. Translated functions that
+  // are in progress stop at their next call or return, not before, and what
+  // they do until then no longer means anything. May be called from a System
+  // handler. Also happens after System::unhandled.
+  void stop();
+  bool stopped() const { return stopped_; }
+
   // Whether a call or jump to `address` would run translated code right now.
   bool is_translated(std::uint32_t address) { return lookup(address) != nullptr; }
 
@@ -118,8 +128,11 @@ class Machine {
   void clear_statistics() { statistics_ = Statistics(); }
 
   // Stops interpretation, as unhandled, after this many instructions within
-  // one call_function. 0 means no limit. For tests.
+  // one call_function. 0 means no limit. For tests and traces: translated
+  // code is not counted.
   void set_instruction_limit(std::uint64_t limit) { instruction_limit_ = limit; }
+  // Whether the last call_function stopped for that reason.
+  bool instruction_limit_reached() const { return limit_reached_; }
 
   // Entry points for the functions the translated code calls (ds::call,
   // ds::jump, ds::leave_slow). Not for other use.
@@ -174,6 +187,8 @@ class Machine {
   Statistics statistics_;
   std::uint64_t instruction_limit_ = 0;
   std::uint64_t instructions_this_call_ = 0;
+  bool limit_reached_ = false;
+  bool stopped_ = false;
 };
 
 }  // namespace bd::runtime

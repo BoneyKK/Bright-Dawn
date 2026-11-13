@@ -43,7 +43,8 @@ in them, not before.
 | `assets` | Decodes original formats into neutral descriptions (textures, meshes, skeletons, sequences); asset identifiers; cache in the user data directory | `core`, `rom` |
 | `mods` | Manifests, load order, override resolution on top of `assets` | `core`, `assets` |
 | `tools/translator` | Offline: machine code to C++ (Python). The owner's translator, with the changes listed in its README | nothing in `src` |
-| `runtime` | What the translated game calls: the dispatcher and the fallback interpreter (built); guest memory, replaced SDK services, the fixed-rate simulation loop (to come) | `core`, `third_party/skyemu`, and the *interfaces* of `gfx`, `audio`, `input` |
+| `runtime` | What the translated game calls: the dispatcher and the fallback interpreter. Knows nothing of the DS beyond its processor | `third_party/skyemu` |
+| `nds` | The console around the processor: memory map, system coprocessor, hardware registers, the state a game starts in (built); BIOS calls, interrupts, the second processor's services, the fixed-rate simulation loop (to come) | `core`, `rom`, `runtime`, and the *interfaces* of `gfx`, `audio`, `input` |
 | `gfx` | Capture of DS-level graphics state, presentation rules, renderer backends | `core`, `assets`, `platform` |
 | `audio` | Sequence playback, mixing, replacement tracks | `core`, `assets`, `platform` |
 | `input` | Devices, mapping, touch replacements | `core`, `platform` |

@@ -170,7 +170,7 @@ inline bool leave(Cpu& c, u32 ret) {
 // provided by the platform layer
 void call(Cpu& c, u32 address);                              // a call; bit 0 set = Thumb code
 void jump(Cpu& c, u32 address);                              // a jump whose target is not known in advance
-void swi(Cpu& c, u32 number);
+void swi(Cpu& c, u32 number, u32 return_address);          // return_address: the next instruction, bit 0 set = Thumb
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value);
 u32 cp_read(Cpu& c, int cp, int opc1, int crn, int crm, int opc2);
 void unhandled(Cpu& c, u32 address, const char* what);

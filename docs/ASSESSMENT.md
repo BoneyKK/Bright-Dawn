@@ -134,7 +134,7 @@ dealt with for the test corpus; the rest are the work ahead.
 | Functions reached only from another module were not found | **Fixed.** Call targets are fed between modules until nothing new turns up |
 | Nothing delivers interrupts | Open. The game's frame logic is driven by the vertical-blank interrupt |
 | The processor model has one set of registers, not one per processor mode | **Solved.** Each mode has its registers, in the model and across the boundary to the interpreter |
-| System calls, coprocessor access, hardware registers | Open. The runtime has the entry points; nothing answers them yet |
+| System calls, coprocessor access, hardware registers | Partly. The system coprocessor and the memory map are modelled, and the game's start-up code runs on them (BOOT.md). BIOS calls and hardware registers are not: registers are recorded only |
 | ARM7 program | Open. Plan: do not run it; answer the ARM9 side's requests natively |
 | Names are addresses | Open. Plan: identify SDK functions by signature against SDK 5.4 |
 
