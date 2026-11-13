@@ -12,8 +12,7 @@
 
 namespace {
 
-// What stopped the current call, if anything. Translated code cannot unwind,
-// so after a gap it runs on to its return; the result is then discarded.
+// What stopped the current call, if anything.
 std::string g_gap;
 
 void note_gap(const char* format, ds::u32 value, const char* text = "") {
@@ -22,6 +21,11 @@ void note_gap(const char* format, ds::u32 value, const char* text = "") {
   std::snprintf(buffer, sizeof buffer, format, static_cast<unsigned>(value), text);
   g_gap = buffer;
 }
+
+// After a gap the processor state means nothing, and running on with it can
+// loop for ever. Tell every waiting call site to give up, which makes each
+// translated function return as soon as its current call comes back.
+void abandon(ds::Cpu& c) { c.unwind = c.depth; }
 
 guest::Memory& memory_of(ds::Cpu& c) { return *static_cast<guest::Memory*>(c.platform); }
 
@@ -44,14 +48,19 @@ void call(Cpu& c, u32 address) {
     }
   }
   note_gap("no translation for %08x", address);
+  abandon(c);
 }
 // Without a runtime behind it, a computed jump can only be a tail call to a
 // translated function, and a call can only return to its own call site.
 void jump(Cpu& c, u32 address) { call(c, address); }
 bool leave_slow(Cpu& c, u32 ret) {
-  if (c.unwind == 0) note_gap("a call returned somewhere other than to %08x", ret);
-  c.unwind = 0;
-  return false;
+  if (c.unwind == 0) {
+    note_gap("a call returned somewhere other than to %08x", ret);
+    abandon(c);
+    return true;
+  }
+  --c.unwind;
+  return true;
 }
 void swi(Cpu& c, u32 number) {
   if (number == guest::kTestSoftwareInterrupt) {

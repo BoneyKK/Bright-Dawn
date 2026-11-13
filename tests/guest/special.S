@@ -320,3 +320,76 @@ hidden_svc_table:
         .word   hidden_svc_arm
         .word   hidden_svc_thumb
         .text
+
+@ ---------------------------------------------------------------------------
+@ coro: two flows of control on two stacks, switching back and forth, the
+@ way a thread scheduler does. co_switch saves the registers of the current
+@ flow and loads those of the other, so it returns into a different function
+@ on a different stack every time it is called.
+@ ---------------------------------------------------------------------------
+        .arm
+        .type co_switch, %function
+co_switch:                              @ r0: where to save, r1: what to resume
+        stmia   r0, {r4-r11, sp, lr}
+        ldmia   r1, {r4-r11, sp, lr}
+        bx      lr
+
+        .global a_coro
+        .type a_coro, %function
+a_coro:
+        push    {r4, r5, r6, r7, lr}
+        ldr     r4, =coro_main_context
+        ldr     r5, =coro_other_context
+        ldr     r6, =coro_shared
+        str     r0, [r6]                @ the value being worked on
+        str     r1, [r6, #4]
+        ldr     r2, =coro_stack_top     @ the other flow starts in co_body
+        str     r2, [r5, #32]           @ on its own stack
+        ldr     r2, =co_body
+        str     r2, [r5, #36]
+        mov     r7, #3
+1:      mov     r0, r4
+        mov     r1, r5
+        bl      co_switch               @ let the other flow run one step
+        subs    r7, r7, #1
+        bne     1b
+        ldr     r0, [r6]
+        pop     {r4, r5, r6, r7, lr}
+        bx      lr
+        .ltorg
+
+        .type co_body, %function
+co_body:                                @ never returns; only ever switched away from
+        ldr     r4, =coro_main_context
+        ldr     r5, =coro_other_context
+        ldr     r6, =coro_shared
+2:      ldr     r0, [r6]
+        ldr     r1, [r6, #4]
+        bl      a_leaf
+        str     r0, [r6]
+        mov     r0, r5
+        mov     r1, r4
+        bl      co_switch               @ back to the first flow
+        b       2b
+        .ltorg
+
+        .thumb
+        .global t_coro
+        .thumb_func
+        .type t_coro, %function
+t_coro:
+        push    {r4, lr}
+        blx     a_coro
+        pop     {r4, pc}
+
+        .bss
+        .align  3
+coro_main_context:
+        .space  40
+coro_other_context:
+        .space  40
+coro_shared:
+        .space  8
+        .space  512
+coro_stack_top:
+        .text

@@ -36,3 +36,12 @@ u32 t_skipdata(u32 a, u32 b) { return a_skipdata(a, b); }
 static u32 svc5(u32 r0, u32 r1) { return r0 * 3 + r1; }
 u32 a_svc(u32 a, u32 b) { return svc5(svc5(a, b) + b, b); }
 u32 t_svc(u32 a, u32 b) { return a_svc(a, b); }
+
+// Three steps of the second flow, each replacing the value by leaf(value, b).
+u32 a_coro(u32 a, u32 b) {
+  u32 value = a;
+  int step;
+  for (step = 0; step < 3; ++step) value = a_leaf(value, b);
+  return value;
+}
+u32 t_coro(u32 a, u32 b) { return a_coro(a, b); }
