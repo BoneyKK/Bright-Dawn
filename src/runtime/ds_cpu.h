@@ -13,9 +13,17 @@ struct Cpu {
     bool N = false, Z = false, C = false, V = false, Q = false;
     u32 cpsr_ctrl = 0x1F;            // mode, interrupt and Thumb bits of CPSR
     u32 spsr = 0;
-    u32 ret_to = 0;                  // where the last return went (for checking)
+    u32 ret_to = 0;                  // where the last return went (checked by leave)
     int cpu = 9;                     // 9 = ARM9 (main CPU), 7 = ARM7
     void* platform = nullptr;        // the platform layer's own data
+
+    // Call sites that are waiting for their callee to return, innermost last:
+    // the return address each one gave, and the stack pointer at the call.
+    struct Frame { u32 ret; u32 sp; };
+    static constexpr u32 kMaxFrames = 4096;
+    Frame frames[kMaxFrames];
+    u32 depth = 0;                   // may exceed kMaxFrames; the excess is not recorded
+    u32 unwind = 0;                  // call sites that must still give up (see leave)
 
     u8  rd8(u32 a);
     u16 rd16(u32 a);
@@ -91,8 +99,23 @@ inline void set_cpsr(Cpu& c, u32 v, u32 mask) {
 }
 inline void return_from_exception(Cpu& c) { set_cpsr(c, c.spsr, 0xFF0000FFu); }
 
-// provided by the platform layer (ds_platform.cpp) and the generated dispatcher (ds_dispatch.cpp)
-void call(Cpu& c, u32 address);                              // bit 0 set = Thumb code
+// Around every call: enter before it, leave after it. leave returns true when the
+// calling function must return at once, because control did not come back to this
+// call site but went to an outer one. In the ordinary case it costs two compares.
+bool leave_slow(Cpu& c, u32 ret);                            // provided by the platform layer
+inline void enter(Cpu& c, u32 ret) {
+    if (c.depth < Cpu::kMaxFrames) { c.frames[c.depth].ret = ret; c.frames[c.depth].sp = c.r[13]; }
+    ++c.depth;
+}
+inline bool leave(Cpu& c, u32 ret) {
+    --c.depth;
+    if (c.unwind == 0 && c.ret_to == ret) return false;
+    return leave_slow(c, ret);
+}
+
+// provided by the platform layer
+void call(Cpu& c, u32 address);                              // a call; bit 0 set = Thumb code
+void jump(Cpu& c, u32 address);                              // a jump whose target is not known in advance
 void swi(Cpu& c, u32 number);
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value);
 u32 cp_read(Cpu& c, int cp, int opc1, int crn, int crm, int opc2);

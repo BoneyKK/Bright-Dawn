@@ -2,7 +2,7 @@
 // first instruction to its return. This is the evidence that the interpreter
 // executes ARMv5TE code correctly, independent of the translator.
 //
-// usage: guest_interpreter_test <guest image>
+// usage: guest_interpreter_test <guest image> [test expected to stop at a gap]...
 #include <cstdio>
 #include <cstring>
 
@@ -67,6 +67,9 @@ class InterpreterExecutor : public guest::Executor {
     if (steps == kStepLimit) {
       out.detail = "did not return";
     } else if ((state.cpsr & 0x1Fu) != 0x1Fu) {
+      // On its own the interpreter sends software interrupts to a BIOS that
+      // is not there. The runtime intercepts them; here it is a known gap.
+      out.outcome = guest::Outcome::Gap;
       out.detail = "took an exception (undefined instruction or software interrupt)";
     } else if (g_coprocessor_used) {
       out.detail = "used the coprocessor";
@@ -87,11 +90,13 @@ class InterpreterExecutor : public guest::Executor {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    std::fprintf(stderr, "usage: guest_interpreter_test <guest image>\n");
+  if (argc < 2) {
+    std::fprintf(stderr, "usage: guest_interpreter_test <guest image> [known gap]...\n");
     return 2;
   }
+  std::map<std::string, guest::Expect> expectations;
+  for (int i = 2; i < argc; ++i) expectations[argv[i]] = guest::Expect::Gap;
   guest::Memory memory;
   InterpreterExecutor executor(memory);
-  return guest::run_all(executor, memory, argv[1], {});
+  return guest::run_all(executor, memory, argv[1], expectations);
 }

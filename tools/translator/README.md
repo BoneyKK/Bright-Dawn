@@ -20,6 +20,27 @@ functions of a real game against the Unicorn emulator. Those tests are not
 part of this repository; the tests here compare whole translated programs
 with reference results instead (`tests/guest`).
 
+## Changes since the import
+
+Made in this repository, each needed to run the translated code together with
+the fallback interpreter (`src/runtime`), and each covered by `tests/guest`:
+
+- **Call sites register themselves.** Every call is wrapped in `ds::enter` and
+  `ds::leave`, which record the return address and stack pointer the call
+  site is waiting for. The runtime uses that list to recognise when control
+  has come back to translated code, and `ds::leave` tells a function to stop
+  when control has gone to an outer call site instead. Before this, a callee
+  that did not return to its call site made the caller carry on as if it had,
+  silently.
+- **Computed jumps are distinct from calls.** They go to `ds::jump`, not
+  `ds::call`, so the runtime knows whether a return address was set.
+- **A jump made by a data-processing instruction keeps its instruction set.**
+  `mov pc, rX` and `add pc, ...` in Thumb code produced a target without the
+  Thumb marker, so it was looked up as ARM code.
+- **A software interrupt no longer overwrites r14.** The processor saves the
+  return address in the supervisor mode's own register; the usual wrapper
+  (`swi n; bx lr`) depends on the program's r14 surviving.
+
 ## Use
 
 `translate_image.py` translates a flat memory image whose first words are a

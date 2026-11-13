@@ -19,6 +19,13 @@ compile_commands.json
 *.swp
 .DS_Store
 
+# Program code extracted from a ROM, and anything translated from it, is the
+# game's copyrighted code. It belongs in the user data directory.
+arm9.bin
+arm7.bin
+overlay9_*.bin
+overlay7_*.bin
+
 # Python
 __pycache__/
 *.pyc

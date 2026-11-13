@@ -94,6 +94,12 @@ else()
   target_compile_options(bd_arm_core PRIVATE -w -O2)
 endif()
 
+# Runs translated code with the interpreter behind it. Built against the
+# processor model in src/runtime/ds_cpu.h, the same header translated code uses.
+add_library(bd_runtime STATIC src/runtime/machine.cpp)
+target_include_directories(bd_runtime PUBLIC src/runtime)
+target_link_libraries(bd_runtime PUBLIC bd_build_flags PRIVATE bd_arm_core)
+
 add_executable(bdtool tools/bdtool/main.cpp)
 target_link_libraries(bdtool PRIVATE bd_rom bd_platform)
 
