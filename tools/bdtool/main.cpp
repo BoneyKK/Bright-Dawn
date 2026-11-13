@@ -47,7 +47,8 @@ void print_usage(std::FILE* out) {
       "  bdtool extract <rom> [options] [PATH...]\n"
       "                                   Extract files (all files when no PATH is given)\n"
       "      --out DIR                    Destination (default: per-user data directory)\n"
-      "      --code                       Also write decompressed program code\n"
+      "      --code                       Also write decompressed program code and a\n"
+      "                                   manifest of where each file loads\n"
       "\n"
       "You must supply your own legally obtained ROM. Nothing is downloaded.\n",
       out);
@@ -474,6 +475,34 @@ int cmd_extract(const std::filesystem::path& path, std::filesystem::path out_dir
       if (auto s = write_file(out_dir / "code" / name, data); !s) return report(s.error());
       ++written;
     }
+
+    // Where each program file belongs in memory. The code translator needs
+    // this: the files themselves do not say where they load or where their
+    // entry points are.
+    const auto& h = rom.header();
+    std::string manifest = "# Bright Dawn code manifest, version 1\n";
+    char line[200];
+    std::snprintf(line, sizeof line, "arm9 load=0x%08" PRIx32 " entry=0x%08" PRIx32 " file=arm9.bin\n",
+                  h.arm9.ram_address, h.arm9.entry_address);
+    manifest += line;
+    std::snprintf(line, sizeof line, "arm7 load=0x%08" PRIx32 " entry=0x%08" PRIx32 " file=arm7.bin\n",
+                  h.arm7.ram_address, h.arm7.entry_address);
+    manifest += line;
+    for (const auto& overlay : rom.arm9_overlays()) {
+      std::snprintf(line, sizeof line,
+                    "overlay9 id=%u load=0x%08" PRIx32 " size=%u bss=%u init_start=0x%08" PRIx32
+                    " init_end=0x%08" PRIx32 " file=overlay9_%04u.bin\n",
+                    static_cast<unsigned>(overlay.id), overlay.ram_address,
+                    static_cast<unsigned>(overlay.ram_size), static_cast<unsigned>(overlay.bss_size),
+                    overlay.static_init_start, overlay.static_init_end,
+                    static_cast<unsigned>(overlay.id));
+      manifest += line;
+    }
+    const ByteSpan manifest_bytes(reinterpret_cast<const std::uint8_t*>(manifest.data()),
+                                  manifest.size());
+    if (auto s = write_file(out_dir / "code" / "manifest.txt", manifest_bytes); !s)
+      return report(s.error());
+    ++written;
   }
 
   std::printf("Wrote %zu file(s) to %s\n", written, out_dir.string().c_str());
