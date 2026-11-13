@@ -79,11 +79,13 @@ is no translation, is described in FALLBACK_INTERPRETER.md. In short:
   route, including a switch to another stack, and the runtime picks up
   correctly.
 
+- **A translation stands for particular bytes.** Several overlays are
+  translated for the same address. The runtime uses an overlay's translation
+  only while the bytes it was made from are in guest memory, so it follows
+  whatever the game's own loader does without knowing anything about it.
+
 Still to be built at this boundary:
 
-- **Overlays.** Several overlays are translated for the same address. The
-  dispatcher will choose by comparing guest memory with the overlay images,
-  so it follows whatever the game's own loader does.
 - **Interrupts.** Translated code cannot be interrupted at an arbitrary
   instruction. The runtime will deliver interrupts at defined points.
 

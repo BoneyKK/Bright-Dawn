@@ -74,14 +74,14 @@ Once decompressed (507,960 bytes) it is three blocks [code]: the main block at
 `0x02000000` (496,192 bytes), and two that the start-up code copies elsewhere,
 11,584 bytes to `0x01FF8000` and 160 bytes to `0x027E0000`.
 
-The translator finds 1,822 functions in it (8 of them Thumb) with 79,902
-instructions, recognises 63 jump tables, and leaves 69 computed jumps and 577
-calls through a register to be resolved at run time. The instructions found
-cover 319,486 of the 507,936 bytes; the rest is data, or code that was not
-reached. Translated, it is 266,684 lines of C++ that compile and link against
-the runtime. None of it has been executed. More in FALLBACK_INTERPRETER.md.
-
-The overlays have not been analysed yet.
+Across the whole ARM9 side (the main program and all 366 overlays, 7,954,272
+bytes) the translator finds 17,076 functions, 2,511 of them Thumb, with
+1,125,101 distinct instructions covering 52% of the bytes [code]. In the main
+program alone: 2,352 functions, 77% of its bytes. Overlay 0, which has an
+address range to itself directly below the shared slots, is the largest
+module: 896,736 bytes and 2,601 functions. The translation is 3.5 million
+lines of C++ that compile and link against the runtime. None of it has been
+executed. More in FALLBACK_INTERPRETER.md.
 
 ### The owner's existing code translation
 

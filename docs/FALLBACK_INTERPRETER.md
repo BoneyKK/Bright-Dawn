@@ -66,6 +66,37 @@ its cost on a real game with several threads has not been measured. Giving
 each game thread its own native stack remains possible as an optimisation; it
 is no longer needed for correctness.
 
+## Overlays
+
+The game loads code on demand, and several overlays are built for the same
+address range: only one of them is in memory at a time, and the game's own
+code does the loading. Each overlay is translated separately, so one address
+can have several translations.
+
+The runtime is never told which overlay is loaded. For every translated
+function the table records the bytes it was translated from: its instructions
+and the constants the translator read from next to them. A translation that
+belongs to an overlay is used only while exactly those bytes are in guest
+memory. If none matches, the code there is interpreted.
+
+This is the same idea as the rule itself, applied to presence: a translation
+stands for particular bytes, so it is valid exactly when those bytes are
+there. It needs no knowledge of the game's loader, and it also covers memory
+that holds something no translation was made from.
+
+Comparing is not repeated needlessly. Writes to the overlay address range are
+counted per 4 KiB page, and a translation is compared with memory again only
+after a page holding its code has been written.
+
+Two things are deliberately not checked:
+
+- Calls that the translator binds directly, which it does only when a single
+  module can ever occupy the target address, and calls inside one module.
+- The main program's translations.
+
+So code that rewrites itself in place is not detected. Nothing suggests this
+game does that, but it has not been ruled out.
+
 ## The interpreter
 
 SkyEmu's ARM core, `arm7.h`, unmodified, under its MIT licence
@@ -108,6 +139,7 @@ software interrupts.
 | `guest_interpreter` | The interpreter alone | All 46 cases give the reference result, except the software-interrupt test, which needs the runtime |
 | `guest_translated` | Translated code alone | 13 tests complete; 10 stop at something the translator does not cover; none gives a wrong result |
 | `guest_mixed` | Translated code with the interpreter behind it | All 46 cases give the reference result |
+| `guest_overlays` | A program in four modules, two of them at one address, translated as a whole game is | Correct with either overlay loaded and when swapping between them; a function with one byte changed is interpreted, alone; an overlay with no registered image is interpreted |
 
 In `guest_mixed`, nine tests are allowed to enter the interpreter and each of
 them must; the other fourteen must not, and do not. For the assembly tests
@@ -134,50 +166,54 @@ Fixed in this repository, each with a test:
 
 The owner supplied the game's extracted program files for analysis. They are
 kept outside the repository and none of their content appears here; only
-counts do.
+counts do. Everything below is translation and compilation. **None of it has
+been executed.**
 
-The ARM9 main program (507,960 bytes) consists of the main block at
-`0x02000000` (496,192 bytes) and two blocks that the start-up code copies
-elsewhere: 11,584 bytes to `0x01FF8000` and 160 bytes to `0x027E0000`.
+The whole ARM9 side, 7,954,272 bytes in 367 modules (the main program and
+366 overlays), translates in about 25 seconds:
 
 | | |
 | --- | --- |
-| Functions found | 1,822, of which 8 are Thumb |
-| Instructions | 79,902 |
-| Jump tables recognised | 63, in 58 functions |
-| Computed jumps not followed | 69, all in ARM state |
-| Calls through a register | 577 |
-| Software interrupts | 2 |
-| Coprocessor instructions | 47 |
-| Bytes covered by the instructions found | 319,486 of 507,936 |
+| Functions | 17,076, of which 2,511 are Thumb and 14,724 are in overlays |
+| Instructions translated | 1,165,200 (1,125,101 distinct; the rest is code reached from two functions) |
+| Program bytes covered by those instructions | 4,159,654 of 7,954,272 (52%) |
+| Jump tables recognised | 379 |
+| Computed jumps left to the runtime | 794 |
+| Functions the translator could not finish | 1 |
+| Functions that other modules call directly | 3,287 |
+| Output | 3.5 million lines of C++ in 395 files |
 
-Translated with this repository's translator, that is 266,684 lines of C++
-with 6,140 call sites, 629 calls and 131 jumps that go through the runtime's
-dispatcher. All of it compiles and links against the runtime. It has not been
-executed: there is no memory map, hardware or overlay handling to run it in.
+All 395 files compile, and the result links against the runtime with a table
+of 17,076 functions and 18,702 code runs.
 
 What the numbers say:
 
-- The game's main program is ARM-state code almost throughout, so the
-  unrecognised Thumb jump tables seen in the test corpus matter little here.
-- About 650 places decide their target at run time (577 calls through a
-  register and 69 computed jumps). Whether those targets have translations is
-  what determines how much the interpreter does, and that can only be
-  measured by running.
-- A third of the bytes are not covered by any instruction found. Some is
-  data; some is code the translator did not reach. The interpreter's entry
-  counts will show which.
-
-The 366 overlays have not been analysed: the files alone do not say where
-each one loads. `bdtool extract --code` now writes a manifest with that
-information.
+- **Following calls between modules matters.** Translating each module from
+  its own entry points alone finds 14,242 functions. Feeding call targets
+  from one module into the others finds 2,834 more, including 530 in the main
+  program that only overlays call. Coverage of the main program rises from
+  63% to 77% of its bytes.
+- **Entry points offered for shared addresses need care.** Where several
+  overlays share an address, a call target seen in one module was first added
+  to all of them. That decoded data as code and translated the same code many
+  times over: 1.9 million instructions for the same 1.1 million distinct
+  ones. Taking an offered entry point only where it is not already inside
+  that overlay's code, and only if it reads as complete code, removed the
+  waste and lost almost no coverage.
+- **Half of the bytes are not covered.** Some of that is data. The rest is
+  code that nothing found leads to: 162 of the 366 overlays have less than
+  30% of their bytes covered. Their code is presumably reached through
+  pointers held elsewhere. That code will be interpreted, and the
+  interpreter's entry counts will show where the translator should look.
+- The game is mostly ARM-state code, with Thumb in parts of some overlays.
 
 ## Limits
 
 - Nothing here runs the game yet.
-- Overlays: several are translated for the same address, and the runtime
-  takes one table keyed by address. Choosing by what is actually loaded is
-  not built.
+- Code that rewrites itself in place is not detected (see Overlays).
+- Comparing an overlay translation with memory reads the bytes one at a time
+  through the memory interface. Correct, and not repeated while memory is
+  unchanged, but slow for large functions on first use.
 - Processor modes: the processor model has one set of registers. Code that
   switches mode does not see separate stack pointers per mode, translated or
   interpreted.
