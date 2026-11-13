@@ -12,6 +12,9 @@ Every figure is tagged with where it comes from:
 - **[run 3]** `bdtool info` and `survey`, release `v0.1.0-pre.10`, same copy.
   This is the first build with the corrected LZ40 decoder and overlay
   decoding, and the source of the asset figures below.
+- **[code]** The game's extracted program files, supplied by the owner and
+  analysed in the development session with this repository's translator. The
+  files are kept outside the repository; only counts are recorded.
 - **[owner]** Notes the owner supplied from an earlier extraction and code
   translation project of theirs, built against the same ROM. Items given here
   were measured by scripts there; they have not been re-measured with this
@@ -65,6 +68,21 @@ What this means:
   program and all 366 overlays. The ARM9 program's decompression is checked
   for internal consistency only; nothing independent confirms its content.
 
+### The ARM9 main program
+
+Once decompressed (507,960 bytes) it is three blocks [code]: the main block at
+`0x02000000` (496,192 bytes), and two that the start-up code copies elsewhere,
+11,584 bytes to `0x01FF8000` and 160 bytes to `0x027E0000`.
+
+The translator finds 1,822 functions in it (8 of them Thumb) with 79,902
+instructions, recognises 63 jump tables, and leaves 69 computed jumps and 577
+calls through a register to be resolved at run time. The instructions found
+cover 319,486 of the 507,936 bytes; the rest is data, or code that was not
+reached. Translated, it is 266,684 lines of C++ that compile and link against
+the runtime. None of it has been executed. More in FALLBACK_INTERPRETER.md.
+
+The overlays have not been analysed yet.
+
 ### The owner's existing code translation
 
 The owner's earlier project already translates this game's machine code to
@@ -82,8 +100,7 @@ acting on a model of the processor.
 | Never done | running the translated code as a program; there is no platform layer |
 
 Its documented gaps are listed in ASSESSMENT.md, because they define the work
-ahead. That translator is written in Python and is not part of this
-repository.
+ahead. The translator itself is now in this repository (`tools/translator`).
 
 **Bug found by run 1.** The tool reported that the ARM9 start-up parameters
 were missing. The search looked for the two marker words in the wrong order.

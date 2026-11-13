@@ -37,12 +37,11 @@ instruction sets), a well-documented target.
 project will pursue. It is a genuine recompilation: the game's logic runs as
 native code. It is also a large undertaking; section 5 is honest about that.
 
-**Update.** The project owner's earlier project already contains such a
+**Update.** The project owner's earlier project already contained such a
 translator for this game: 14,354 functions translated to C++ that compiles and
-links, tested instruction by instruction against reference emulators, but never
-run as a program. Section 5 describes it and what it still lacks. It changes
-the plan: the translator does not need to be written, it needs to be brought
-into this repository, have its known gaps closed, and be given a runtime.
+links, tested instruction by instruction against reference emulators. It is
+now in this repository and its output has been executed on test programs.
+Section 5 describes it and what it still lacks.
 
 The recompiled C code is derived from the game and is therefore produced on the
 user's machine from the user's ROM. It is never committed to this repository.
@@ -111,36 +110,31 @@ Ordered by how likely each is to block the intended result.
     (**unverified** for this game). A recompilation that models the cartridge
     faithfully should pass them, but they can cost debugging time.
 
-## 5. The existing translator, and what it lacks
+## 5. The translator, and what it lacked
 
-From the owner's description of their earlier project (see ROM_SURVEY.md for
-its measured results). It is written in Python and is not yet in this
-repository, so nothing below has been checked against its source here.
+The translator from the owner's earlier project is now in this repository
+(`tools/translator`). It finds functions by following the code from its entry
+points, then turns each ARM or Thumb instruction into C++ statements that act
+on a processor model (16 registers, the flags, and memory access through
+callbacks the runtime supplies). A call to a known function becomes a C++
+call; a call or jump to an address not known until run time goes through the
+runtime.
 
-How it works: it finds functions by following the code from its entry points,
-then turns each ARM or Thumb instruction into C++ statements that act on a
-processor model (16 registers, the flags, and memory access through callbacks
-the runtime supplies). A call to a known function becomes a C++ call; a call
-or jump to an address not known until run time goes through a dispatcher that
-looks the address up in a table.
+Its own documentation listed the gaps below. The first four are now dealt
+with for the test corpus; the rest are the work ahead.
 
-Its own documentation lists these gaps. Each is a piece of work for this
-project, and the first is a design decision that shapes the runtime:
-
-| Gap | Why it matters | Proposed answer (untested) |
-| --- | --- | --- |
-| Calls and returns are native C++ calls and returns | Code that resumes somewhere other than its caller breaks: the SDK's thread switch and interrupt return do exactly that | Give every game thread its own native stack (a fibre) and replace the SDK's thread-switch routine with a fibre switch. The translated functions stay as they are. Needs that routine to be located |
-| Nothing delivers interrupts | The game's frame logic is driven by the vertical-blank interrupt | The runtime calls the game's handler at defined points: when the game waits for an interrupt, and at points still to be chosen for long-running code |
-| The dispatcher cannot tell which overlay is loaded | 297 overlays share one address | Decide by content: the loaded overlay is the one whose image matches guest memory at that address. No knowledge of the game's loader is needed |
-| Functions reached only through pointers may be missed; some jump tables are not recognised | A missed function has no translation, and the targets of an unrecognised jump table are sent to the dispatcher | Both were reproduced on the guest test corpus. Close the gaps in the translator where the pattern is known; a fallback interpreter catches the rest and reports each address it had to handle |
-| System calls, coprocessor access, hardware registers | The translated code calls out for these and nothing answers | The runtime, built up function by function as the boot sequence demands them |
-| ARM7 program | It handles sound, touch and power; the ARM9 side talks to it constantly | Do not run it. Answer the ARM9 side's requests natively |
-| Names are addresses | The SDK functions that should be replaced cannot be found by name | Identify them by signature against SDK 5.4 |
-
-The owner has since decided the interpreter question: a fallback interpreter
-is acceptable provided translated code is always preferred. The rule, the
-candidates examined and a first measurement of what the fallback would have to
-catch are in [FALLBACK_INTERPRETER.md](FALLBACK_INTERPRETER.md).
+| Gap | Status |
+| --- | --- |
+| Calls and returns are native C++ calls and returns, so code that resumes somewhere other than its caller breaks | **Solved.** Call sites are recorded and the runtime re-synchronises whenever control reaches one, by any route. Covers returns through registers, old-style calls, jumps out of nested functions, and stack switches. See FALLBACK_INTERPRETER.md |
+| Functions reached only through pointers may be missed; some jump tables are not recognised | **Solved by the fallback interpreter**, which runs what has no translation and reports each address |
+| A software interrupt overwrote the return register | **Fixed** in the translator |
+| A Thumb-state computed jump lost its instruction set | **Fixed** in the translator |
+| The dispatcher cannot tell which overlay is loaded | Open. 297 overlays share one address. Plan: decide by content, comparing guest memory with the overlay images |
+| Nothing delivers interrupts | Open. The game's frame logic is driven by the vertical-blank interrupt |
+| The processor model has one set of registers, not one per processor mode | Open. Matters for the start-up code and interrupt handling |
+| System calls, coprocessor access, hardware registers | Open. The runtime has the entry points; nothing answers them yet |
+| ARM7 program | Open. Plan: do not run it; answer the ARM9 side's requests natively |
+| Names are addresses | Open. Plan: identify SDK functions by signature against SDK 5.4 |
 
 ## 6. Roadmap
 
@@ -157,8 +151,8 @@ step that touches the real game is run by the owner and reported back.
 | --- | --- | --- |
 | 0 | **ROM ingestion and survey** (done) | Validation, file system, decompression and survey tool pass their tests |
 | 1 | **Survey of the real game** (done) | Program code and the standard asset formats are accounted for on the real ROM; see ROM_SURVEY.md for the minor questions left |
-| 2 | **Bring in the translator** (waiting on the owner's decision to publish it) | Its source is in this repository; it runs from this project's ROM layer; its output is compared with the guest test corpus in CI |
-| 3 | **Runtime core** | Guest memory map, the dispatcher with overlay selection by content, the fallback interpreter, fibres for game threads; the guest test corpus gives the reference results under translated code, under the interpreter, and under a mix of the two |
+| 2 | **Bring in the translator** (done for test programs; whole-game driver pending) | Its source is in this repository; its output is compared with the guest test corpus in CI; a driver translates the whole game from `bdtool extract --code` output |
+| 3 | **Runtime core** (dispatcher and interpreter done; memory map and overlays pending) | The guest test corpus gives the reference results under translated code, under the interpreter, and under the two together (done). Guest memory map and overlay selection by content (pending) |
 | 4 | **Boot without graphics** | With SDK services answered natively (threads, files, cartridge, timers, the ARM7's duties), the game's start-up runs on the owner's machine and its graphics commands are captured to a log |
 | 5 | **Platform shell and reference renderer** | Window, input and audio device via SDL; captured frames drawn correctly at native resolution (accuracy first) |
 | 6 | **Unified screen, high resolution, widescreen** | Per-situation layout rules replace the two-screen output; 3D renders at selectable resolution with corrected projection; effects catalogue started |
@@ -168,9 +162,11 @@ step that touches the real game is run by the owner and reported back.
 | 10 | **Book-style settings menu** | Built from fonts and UI graphics read from the user's ROM |
 | 11 | **Optimisation and release engineering** | Performance, crash reporting, save management, packaging |
 
-Milestones 3 and 4 carry the most technical risk: the translated code has
-never been executed, and the first attempt to run it is where its untested
-paths (calls between functions, the dispatcher, interrupts) meet reality.
+Milestone 4 now carries the most technical risk. Translated code has been
+executed on test programs, including calls between functions, the dispatcher
+and stack switches, but none of the game's own code has run. The first
+attempt is where the SDK's start-up, thread and interrupt code meets the
+runtime.
 
 ## 7. Milestone 0, delivered
 

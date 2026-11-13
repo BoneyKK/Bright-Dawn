@@ -1,143 +1,189 @@
-# Fallback interpreter
+# Translated code and the fallback interpreter
 
-The owner has decided that the runtime may fall back to an interpreter for
-code the translator did not cover, on one condition: translated code is always
-preferred. This document records that rule, what a fallback would have to
-catch, which existing interpreters were examined, and what is still undecided.
+The game's program code is run as C++ produced by the translator
+(`tools/translator`). Where the translator has no output for an address, an
+interpreter runs the code there. The owner's rule is that translated code is
+always preferred. This document describes how that is built, what has been
+tested, and what has not.
 
-Nothing described here is implemented yet.
+Implemented in `src/runtime` (`machine.h`). It has been tested on this
+project's own test programs only. **It has not run any of the game.**
 
-## The rule: translated code first
+## The rule
 
 1. A call or jump to an address is served by its translated function whenever
-   one exists. The interpreter is entered only when the dispatcher finds none.
-2. The interpreter hands control back as early as possible. At every call or
-   jump it makes, it looks the target up; if a translated function exists
-   there, that function runs natively and the interpreter resumes, or stops,
-   after it.
-3. Every entry into the interpreter is counted by address and reported. The
-   list is the work queue for the translator: an address that appears there is
-   a gap to close, not a normal state.
-4. A strict mode turns any entry into the interpreter into an error. Tests use
-   it for code that is expected to be fully translated.
+   one exists. The interpreter is entered only where there is none.
+2. The interpreter hands back at the first opportunity. Every call or jump it
+   makes to a translated function runs that function natively.
+3. Every entry into the interpreter is counted by address. The list is the
+   work queue for the translator: each address in it is a gap to close.
 
-Because the translated functions keep all of their state in the processor
-model and in guest memory, the interpreter can take over in the middle of a
-function and continue from exactly the state the translated code left.
+The tests enforce the rule directly: a test whose code is completely
+translated fails if it enters the interpreter even once.
 
-## What a fallback has to catch
+## How the two are joined
 
-The owner's translator (DS Asset Lab 0.15.0) was run on this project's guest
-test corpus (`tests/guest`), and the C++ it produced was compiled and compared
-with the corpus running natively. This was a one-off experiment in the
-development session; the translator is not in this repository, so it is not
-part of the automated tests.
+Translated functions keep all of their state in the processor model and in
+guest memory. Nothing lives in native variables beyond a single instruction.
+The native call stack is therefore only a way of running fast: any native
+frame can be abandoned and the program continued from the model alone.
 
-| | |
+That property is used as follows.
+
+- Every translated call site records the return address and the stack pointer
+  it is waiting for, before the call, and removes the record after it.
+- When control arrives at a recorded return address with the recorded stack
+  pointer, by any route, execution resumes natively at that call site. Any
+  call sites recorded inside it are told to give up, and their functions
+  return at once.
+- Until that happens the interpreter runs.
+
+Requiring both the address and the stack pointer makes the match exact. The
+calling convention returns with the stack pointer the call was made with, and
+the stack pointer distinguishes one activation of a recursive call from
+another.
+
+The result is that unusual control flow is handled exactly, not by guessing
+at instruction patterns:
+
+| Case | What happens |
 | --- | --- |
-| Corpus | 15 functions, each built for ARM state and for Thumb state: arithmetic, shifts, multiplies, the DSP multiplies and saturating adds, bit counting, loops, memory access of every width, stack use, recursion across the two states, calls through pointers, a dense `switch`, division helpers, 64-bit arithmetic |
-| Inputs | 2,484 pairs per function |
-| Translated | 39 functions, 2,227 instructions |
-| Result | 26 of 30 produce the reference result on every input |
-| Wrong results | none, in any test |
-| Not completed | 4 tests stop at a call the dispatcher has no translation for |
+| A call through a pointer to a function with no translation | Interpreted until it returns to the call site |
+| A jump table the translator did not recognise | The rest of that function is interpreted; its caller continues natively |
+| Untranslated code calls or jumps to a translated function | The function runs natively |
+| A return made through a register (`pop {r3}; bx r3`) | Recognised as a return to the waiting call site; nothing is interpreted |
+| A call made with `mov lr, pc` and a branch | The callee runs natively; the instructions after the branch are interpreted |
+| A callee that returns past data placed after the call | The caller's remaining instructions are interpreted |
+| A helper that jumps into its caller through a table after the call | The caller's remaining instructions are interpreted |
+| A jump out of several nested functions | The functions in between are abandoned; the outer one continues |
+| A switch to another stack, as a thread scheduler does | The flow switched to runs; when control returns to a waiting call site, native execution resumes there |
 
-As far as is known this is the first time the translator's output has been
-executed with functions calling each other; its own tests cover single
-instructions and leaf functions.
+About the last row. When one flow of control switches to another and back,
+the native frames of the flow that was left are abandoned. When that flow is
+resumed later, the interpreter picks it up and runs it until its next call
+into translated code. That is correct, and the coroutine test checks it, but
+its cost on a real game with several threads has not been measured. Giving
+each game thread its own native stack remains possible as an optimisation; it
+is no longer needed for correctness.
 
-The four incomplete tests fall into two kinds, both of which the translator's
-documentation predicts:
+## The interpreter
 
-- **Functions reached only through pointers** (`indirect`, both states). Four
-  small functions are stored in a table and never called directly. The
-  translator looks for such functions by their opening instruction, and these
-  do not save the link register, so it does not find them.
-- **Jump tables** (`sw`, both states). The computed jump of the `switch` is
-  not recognised, so its targets, which lie inside the function, are sent to
-  the dispatcher as if they were functions.
+SkyEmu's ARM core, `arm7.h`, unmodified, under its MIT licence
+(`third_party/skyemu`). It is used only through `src/runtime/interp/arm_core.h`,
+a small C interface (host-supplied memory, state exchange, "execute exactly
+one instruction"), so it can be replaced.
 
-One caution about reading these numbers. The corpus is compiled with Clang;
-the game was built with a different compiler, which lays out jump tables
-differently. The translator already recognises ARM-state table layouts that
-Clang did not emit here. How often the real game hits either kind of gap is
-measured by the translator itself, which counts unresolved computed jumps per
-module; that figure has not been recorded yet.
-
-## Interpreters examined
-
-Requirements: a licence that can be combined with GPL-3.0; ARMv5TE in ARM and
-Thumb state; memory access supplied by the host; execution one instruction at
-a time, so that rule 2 can be applied; small enough to maintain.
+Why this one:
 
 | Candidate | Licence | Assessment |
 | --- | --- | --- |
-| SkyEmu `arm7.h` | MIT | One C header of 2,279 lines. Memory and coprocessor access are callbacks. Separate ARM9 instruction tables include the ARMv5TE additions. Stepped by repeated calls. **Best fit.** |
-| NooDS | GPL-3.0-or-later | Interpreter of about 4,900 lines that declares the full ARMv5TE instruction set. Built around the emulator's own `Core` object, which would have to be imitated or cut out. Usable, at more adaptation cost. |
-| melonDS | GPL-3.0-or-later | The most widely used DS core. Its processor class holds a reference to the whole emulated console; heavier to separate than NooDS. |
-| mGBA (`medusa` branch) | MPL-2.0 | Clean callback interface, but the saturating add and subtract instructions were not found in its ARM decoder, and the branch's last non-merge commit is from June 2024. |
-| dynarmic | 0BSD | A just-in-time compiler for x86-64 and AArch64 hosts, not an interpreter. Does not fit the requirement. |
-| Unicorn | GPL-2.0 | Its README states GPLv2 with no "or later", which cannot be combined into a GPL-3.0 program. Still usable as a separate test tool, as the owner's project already does. |
+| SkyEmu `arm7.h` | MIT | One C header, memory through callbacks, separate ARM9 tables with the ARMv5TE instructions. **Chosen.** |
+| NooDS | GPL-3.0-or-later | Usable, but built around the emulator's own core object |
+| melonDS | GPL-3.0-or-later | The most widely used DS core; its processor class holds a reference to the whole console |
+| mGBA (`medusa` branch) | MPL-2.0 | Saturating add and subtract not found in its ARM decoder; last non-merge commit June 2024 |
+| dynarmic | 0BSD | A just-in-time compiler, not an interpreter |
+| Unicorn | GPL-2.0 | Licence cannot be combined into a GPL-3.0 program; still usable as a separate test tool |
 
-Sources read: SkyEmu at commit `f4d3238` (24 October 2026) and NooDS at commit
-`4cb1439` (9 August 2026), both cloned and read in full for the parts cited;
-the others from their licence files, headers and READMEs on GitHub.
+What the wrapper has to deal with:
 
-### SkyEmu `arm7.h` in more detail
-
-Found by reading the source:
-
-- Word loads from unaligned addresses are rotated, and a load into the program
-  counter switches instruction set from bit 0. Both match the translator.
-- `BLX` in its immediate and register forms is implemented. `CLZ`, the
-  saturating instructions, the 16-bit multiplies and doubleword transfers
-  have handlers in the ARM9 tables; their bodies were not checked line by
-  line.
-- It needs four small macros that SkyEmu defines in another header; they are
-  one-liners and can be supplied by a wrapper.
-
-Things a wrapper has to deal with:
-
-- It models the processor's instruction pipeline: after a branch, several
-  calls refill the pipeline before the next instruction runs, and multi-word
-  transfers are spread over several calls. The wrapper must step through
-  those phases.
-- Software interrupts and hardware interrupts jump to vectors in guest
-  memory, where the console's BIOS would be. This project has no BIOS in
-  memory, so the wrapper must intercept software interrupts before they
-  execute and route them to the runtime, as translated code does.
+- The core models the instruction pipeline: after a branch it refills over
+  several calls, and multi-register transfers move one register per call. The
+  wrapper steps through those phases.
+- Software interrupts would jump to a BIOS that is not in memory. The runtime
+  intercepts them before they execute and sends them where translated code
+  sends them.
 - The breakpoint instruction is not implemented, and unimplemented cases
   print to standard output.
 
-**Not established:** that it executes the guest corpus correctly. The plan was
-to prove that by running it against the corpus, exactly as was done for the
-translator. Compiling and running third-party code was not permitted in the
-development session, so the recommendation rests on reading the source. It
-should be treated as provisional until the corpus has been run through it.
+## What the tests show
 
-## How it would fit (design, untested)
+All on the guest corpus (`tests/guest`): 23 small programs, each built for
+ARM state and for Thumb state, each run on 2,484 input pairs and compared
+with the same program built natively. Fifteen are compiled C; eight are
+hand-written assembly for the control flow in the table above and for
+software interrupts.
 
-- **Entering.** The dispatcher finds no translation and passes the processor
-  state to the interpreter, which starts at the requested address.
-- **Stopping.** Translated code treats a fixed set of instruction forms as
-  "return". The interpreter applies the same definition: it keeps a call
-  depth, and when it executes a return at depth zero it copies the state back
-  and returns to the native caller. This covers both an untranslated function
-  and a jump into the middle of a translated one.
-- **Handing back.** On a call whose target is translated, the native function
-  runs and interpretation continues at the return address. On a jump whose
-  target is translated, the native function runs and counts as the return of
-  the code that jumped.
-- **System calls and coprocessor access** go to the same runtime entry points
-  that translated code uses.
+| Test | What runs | Result |
+| --- | --- | --- |
+| `guest_interpreter` | The interpreter alone | All 46 cases give the reference result, except the software-interrupt test, which needs the runtime |
+| `guest_translated` | Translated code alone | 13 tests complete; 10 stop at something the translator does not cover; none gives a wrong result |
+| `guest_mixed` | Translated code with the interpreter behind it | All 46 cases give the reference result |
 
-## Decisions for the owner
+In `guest_mixed`, nine tests are allowed to enter the interpreter and each of
+them must; the other fourteen must not, and do not. For the assembly tests
+the counters the runtime keeps (hand-backs to translated code, returns
+through jumps, calls that returned elsewhere, abandoned call sites) are
+checked against the exact number each test should produce.
 
-1. **May the translator's source be published in this repository?** The
-   repository is public and under GPL-3.0, and every merge is released
-   automatically. The uploaded source carries no licence of its own. It has
-   been read and run locally but not committed. Committing it makes the
-   translator test above a permanent, automated test.
-2. **May a third-party interpreter be added to the repository and run in its
-   tests?** SkyEmu's `arm7.h` is the proposal. Adding it lets the automated
-   tests run the guest corpus through it, which is the proof still missing.
+Each list of expected gaps is checked both ways: a listed test fails if it
+gives a wrong result, and also if it stops needing the exception.
+
+## Bugs this found in the translator
+
+Fixed in this repository, each with a test:
+
+- A Thumb-state jump through `mov pc` or `add pc` lost its Thumb marker, so
+  the target was treated as ARM code.
+- A software interrupt overwrote r14. The standard two-instruction wrapper
+  (`swi n; bx lr`) returns through r14, so every such wrapper returned to the
+  wrong place. This was invisible while return addresses were not checked.
+- A callee that did not return to its call site let the caller continue as if
+  it had. With call sites recorded, this is now detected and handled.
+
+## On the real game
+
+The owner supplied the game's extracted program files for analysis. They are
+kept outside the repository and none of their content appears here; only
+counts do.
+
+The ARM9 main program (507,960 bytes) consists of the main block at
+`0x02000000` (496,192 bytes) and two blocks that the start-up code copies
+elsewhere: 11,584 bytes to `0x01FF8000` and 160 bytes to `0x027E0000`.
+
+| | |
+| --- | --- |
+| Functions found | 1,822, of which 8 are Thumb |
+| Instructions | 79,902 |
+| Jump tables recognised | 63, in 58 functions |
+| Computed jumps not followed | 69, all in ARM state |
+| Calls through a register | 577 |
+| Software interrupts | 2 |
+| Coprocessor instructions | 47 |
+| Bytes covered by the instructions found | 319,486 of 507,936 |
+
+Translated with this repository's translator, that is 266,684 lines of C++
+with 6,140 call sites, 629 calls and 131 jumps that go through the runtime's
+dispatcher. All of it compiles and links against the runtime. It has not been
+executed: there is no memory map, hardware or overlay handling to run it in.
+
+What the numbers say:
+
+- The game's main program is ARM-state code almost throughout, so the
+  unrecognised Thumb jump tables seen in the test corpus matter little here.
+- About 650 places decide their target at run time (577 calls through a
+  register and 69 computed jumps). Whether those targets have translations is
+  what determines how much the interpreter does, and that can only be
+  measured by running.
+- A third of the bytes are not covered by any instruction found. Some is
+  data; some is code the translator did not reach. The interpreter's entry
+  counts will show which.
+
+The 366 overlays have not been analysed: the files alone do not say where
+each one loads. `bdtool extract --code` now writes a manifest with that
+information.
+
+## Limits
+
+- Nothing here runs the game yet.
+- Overlays: several are translated for the same address, and the runtime
+  takes one table keyed by address. Choosing by what is actually loaded is
+  not built.
+- Processor modes: the processor model has one set of registers. Code that
+  switches mode does not see separate stack pointers per mode, translated or
+  interpreted.
+- Interrupts are not delivered.
+- At most 4,096 nested call sites are recorded; beyond that the runtime
+  stops with an error.
+- The interpreter's search of the waiting call sites runs on every taken
+  branch and is linear in the nesting depth.
+- The Windows build of the interpreter is checked only by CI.
