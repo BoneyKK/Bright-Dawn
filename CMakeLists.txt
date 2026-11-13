@@ -100,6 +100,11 @@ add_library(bd_runtime STATIC src/runtime/machine.cpp)
 target_include_directories(bd_runtime PUBLIC src/runtime)
 target_link_libraries(bd_runtime PUBLIC bd_build_flags PRIVATE bd_arm_core)
 
+# The console around the processor: memory map and hardware.
+add_library(bd_ds STATIC src/ds/arm9_bus.cpp)
+target_include_directories(bd_ds PUBLIC src)
+target_link_libraries(bd_ds PUBLIC bd_build_flags bd_runtime)
+
 add_executable(bdtool tools/bdtool/main.cpp)
 target_link_libraries(bdtool PRIVATE bd_rom bd_platform)
 
