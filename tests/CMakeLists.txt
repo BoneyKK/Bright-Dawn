@@ -8,11 +8,12 @@ add_executable(bd_tests
   test_main.cpp
   test_checksum.cpp
   test_compression.cpp
+  test_arm9_bus.cpp
   test_formats.cpp
   test_narc.cpp
   test_rom.cpp
 )
-target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform)
+target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_ds)
 add_test(NAME unit COMMAND bd_tests)
 
 # End-to-end checks of the command-line tool against a generated ROM.
