@@ -18,6 +18,7 @@
 // and any call sites inside it are told to give up.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <vector>
@@ -71,6 +72,10 @@ struct Statistics {
   std::uint64_t returns_elsewhere = 0;
   // Call sites told to give up because control went to an outer one.
   std::uint64_t call_sites_abandoned = 0;
+  // Overlay translations compared with memory, and how many of those
+  // comparisons found that memory held something else.
+  std::uint64_t translations_checked = 0;
+  std::uint64_t translations_rejected = 0;
 };
 
 class Machine {
@@ -86,13 +91,27 @@ class Machine {
   // Returns the processor to its initial state.
   void reset_cpu();
 
+  // Overlays. Several can be translated for one address range, though only
+  // one is in memory at a time, and the game's own code does the loading. A
+  // translation that belongs to an overlay is therefore used only while the
+  // bytes it was made from are what guest memory holds; anything else at that
+  // address is interpreted. This needs the overlay's image (`size` bytes that
+  // load at `load_address`), which must outlive the machine. Translations of
+  // overlays that were never added are not used.
+  void add_overlay(int id, std::uint32_t load_address, const std::uint8_t* image, std::size_t size);
+
+  // Must be called after guest memory in an overlay's range is changed other
+  // than through this machine (for example when a file is read into memory),
+  // so that translations are checked against it again.
+  void note_memory_written(std::uint32_t address, std::size_t size);
+
   // Calls the guest function at `address` (bit 0 set = Thumb) and returns when
   // control comes back to `return_address` with the stack pointer unchanged.
   // Arguments and results are exchanged through cpu().
   void call_function(std::uint32_t address, std::uint32_t return_address);
 
-  // Whether a call or jump to `address` would run translated code.
-  bool is_translated(std::uint32_t address) const { return lookup(address) != nullptr; }
+  // Whether a call or jump to `address` would run translated code right now.
+  bool is_translated(std::uint32_t address) { return lookup(address) != nullptr; }
 
   const Statistics& statistics() const { return statistics_; }
   void clear_statistics() { statistics_ = Statistics(); }
@@ -108,10 +127,28 @@ class Machine {
   bool leave_slow(std::uint32_t return_address);
   Bus& bus() { return bus_; }
   System& system() { return system_; }
+  // Guest writes made by translated and interpreted code come through here.
+  void watch_write(std::uint32_t address) {
+    if (address - watch_start_ < watch_size_) ++page_generation_[(address - watch_start_) >> kPageShift];
+  }
 
  private:
   using Function = void (*)(ds::Cpu&);
-  Function lookup(std::uint32_t address) const;
+  static constexpr unsigned kPageShift = 12;
+  struct Overlay {
+    std::uint32_t load_address = 0;
+    const std::uint8_t* image = nullptr;
+    std::size_t size = 0;
+  };
+  // What the last comparison of an overlay translation with memory found,
+  // and the state of the memory it was made against.
+  struct Check {
+    std::uint64_t stamp = 0;  // 0: never compared.
+    bool matches = false;
+  };
+  Function lookup(std::uint32_t address);
+  bool in_memory(std::size_t index);
+  std::uint64_t stamp_of(const TranslatedEntry& entry) const;
   int waiting_call_site(std::uint32_t address, std::uint32_t stack_pointer) const;
   void arrive(int call_site);
   void run_from(std::uint32_t address);
@@ -123,6 +160,14 @@ class Machine {
   Bus& bus_;
   System& system_;
   std::vector<TranslatedEntry> table_;  // Sorted by address.
+  std::vector<Check> checks_;           // Parallel to table_.
+  std::map<int, Overlay> overlays_;
+  // Writes are counted per page over the range the overlays span. A
+  // translation is compared with memory again only when a page holding its
+  // code has been written since the last comparison.
+  std::uint32_t watch_start_ = 0;
+  std::uint32_t watch_size_ = 0;
+  std::vector<std::uint64_t> page_generation_;
   bd_arm_core* core_ = nullptr;
   ds::Cpu cpu_;
   Statistics statistics_;

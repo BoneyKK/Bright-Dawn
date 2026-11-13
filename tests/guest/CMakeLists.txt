@@ -127,10 +127,61 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   add_test(NAME guest_mixed
     COMMAND guest_mixed_test ${BD_GUEST_IMAGE}
             indirect sw handback v4call inltab nonlocal skipdata svc coro)
+
+  # --- Overlays: a program in several modules, two of them at one address ---
+  # Built, given a manifest and translated exactly as a real game would be,
+  # with the whole-game driver.
+  set(ov_src ${CMAKE_CURRENT_SOURCE_DIR}/overlays)
+  set(ov ${CMAKE_CURRENT_BINARY_DIR}/overlays)
+  set(ov_code ${ov}/code)
+  set(ov_gen ${ov}/translated)
+  set(ov_asm ${BD_ARM_CLANG} --target=armv5te-none-eabi -mcpu=arm946e-s -c)
+  set(ov_helper --defsym=main_helper=0x02000100)
+  add_custom_command(
+    OUTPUT ${ov_code}/manifest.txt
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ov_code}
+    COMMAND ${ov_asm} ${ov_src}/main.S -o ${ov}/main.o
+    COMMAND ${ov_asm} ${ov_src}/ovl_a.S -o ${ov}/ovl_a.o
+    COMMAND ${ov_asm} ${ov_src}/ovl_b.S -o ${ov}/ovl_b.o
+    COMMAND ${ov_asm} ${ov_src}/ovl_c.S -o ${ov}/ovl_c.o
+    COMMAND ${BD_ARM_LLD} -Ttext=0x02000000 -e og_run --defsym=slot_entry=0x02010000
+            --defsym=slot_table=0x02010080 --defsym=fixed_entry=0x02020000 ${ov}/main.o -o ${ov}/main.elf
+    COMMAND ${BD_ARM_LLD} -Ttext=0x02010000 -e slot_entry ${ov_helper} ${ov}/ovl_a.o -o ${ov}/ovl_a.elf
+    COMMAND ${BD_ARM_LLD} -Ttext=0x02010000 -e slot_entry ${ov_helper} ${ov}/ovl_b.o -o ${ov}/ovl_b.elf
+    COMMAND ${BD_ARM_LLD} -Ttext=0x02020000 -e fixed_entry ${ov_helper} ${ov}/ovl_c.o -o ${ov}/ovl_c.elf
+    COMMAND ${BD_ARM_OBJCOPY} -O binary ${ov}/main.elf ${ov_code}/arm9.bin
+    COMMAND ${BD_ARM_OBJCOPY} -O binary ${ov}/ovl_a.elf ${ov_code}/overlay9_0000.bin
+    COMMAND ${BD_ARM_OBJCOPY} -O binary ${ov}/ovl_b.elf ${ov_code}/overlay9_0001.bin
+    COMMAND ${BD_ARM_OBJCOPY} -O binary ${ov}/ovl_c.elf ${ov_code}/overlay9_0002.bin
+    COMMAND Python3::Interpreter -B ${ov_src}/make_manifest.py ${ov_code}
+    DEPENDS ${ov_src}/main.S ${ov_src}/ovl_a.S ${ov_src}/ovl_b.S ${ov_src}/ovl_c.S ${ov_src}/make_manifest.py
+    COMMENT "Building the overlay test program"
+    VERBATIM)
+  set(ov_sources ${ov_gen}/arm9/code_000.cpp ${ov_gen}/overlay9_0000/code_000.cpp
+    ${ov_gen}/overlay9_0001/code_000.cpp ${ov_gen}/overlay9_0002/code_000.cpp ${ov_gen}/table.cpp)
+  add_custom_command(
+    OUTPUT ${ov_sources}
+    COMMAND Python3::Interpreter -B ${BD_TRANSLATOR_DIR}/translate_game.py ${ov_code} ${ov_gen}
+    DEPENDS ${ov_code}/manifest.txt ${BD_TRANSLATOR_DIR}/translate_game.py
+            ${BD_TRANSLATOR_DIR}/dslab/arm_decode.py ${BD_TRANSLATOR_DIR}/dslab/arm_analysis.py
+            ${BD_TRANSLATOR_DIR}/dslab/arm_lift.py
+    COMMENT "Translating the overlay test program to C++"
+    VERBATIM)
+  add_library(bd_guest_overlays_translated STATIC ${ov_sources})
+  target_include_directories(bd_guest_overlays_translated PUBLIC ${BD_RUNTIME_DIR})
+  if(MSVC)
+    target_compile_options(bd_guest_overlays_translated PRIVATE /w)
+  else()
+    target_compile_options(bd_guest_overlays_translated PRIVATE -w)
+  endif()
+  add_executable(guest_overlay_test overlays/overlay_test.cpp)
+  target_link_libraries(guest_overlay_test PRIVATE bd_guest_runner bd_guest_overlays_translated bd_runtime)
+  add_test(NAME guest_overlays COMMAND guest_overlay_test ${ov_code})
 else()
   add_test(NAME guest_translated COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
   add_test(NAME guest_mixed COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
-  set_tests_properties(guest_translated guest_mixed PROPERTIES DISABLED TRUE)
+  add_test(NAME guest_overlays COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
+  set_tests_properties(guest_translated guest_mixed guest_overlays PROPERTIES DISABLED TRUE)
 endif()
 
 # The interpreter on its own needs only the ARM image.
