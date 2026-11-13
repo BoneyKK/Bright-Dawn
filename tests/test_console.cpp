@@ -127,10 +127,12 @@ TEST(console_runs_start_up_code) {
   CHECK(console.system_control().read(9, 1, 0) == 0x027E000A);
   CHECK(console.bus().read32(0x027E2FFC) == 0x12345678);
   CHECK(console.bus().read32(0x023E2FFC) == 0);  // Not into the main memory under it.
-  // Both hardware register accesses were recorded.
+  // The write to the interrupt master switch reached the interrupt
+  // controller (bit 0 of what was written is clear); the read of a register
+  // nobody implements was recorded.
   const auto& registers = console.io().unmodelled();
-  CHECK(registers.at(0x04000208).writes == 1 && registers.at(0x04000208).last_written == 0x04000000);
-  CHECK(registers.at(0x04000208).size == 4);
+  CHECK(!console.interrupts().master());
+  CHECK(registers.count(0x04000208) == 0);
   CHECK(registers.at(0x04000006).reads == 1 && registers.at(0x04000006).size == 2);
   CHECK(console.software_interrupts().empty());
   CHECK(console.machine().statistics().interpreted_instructions == 1000);

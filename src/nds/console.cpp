@@ -13,7 +13,16 @@ constexpr u32 kHeaderCopy = 0x027FFE00;
 }  // namespace
 
 Console::Console(const Program& program, const TranslatedEntry* translated)
-    : program_(program), bus_(io_), system_control_(bus_), machine_(bus_, *this, translated) {}
+    : program_(program),
+      bus_(io_),
+      system_control_(bus_),
+      second_processor_(bus_),
+      ipc_(interrupts_, second_processor_),
+      machine_(bus_, *this, translated) {
+  interrupts_.attach(io_);
+  ipc_.attach(io_);
+  second_processor_.connect(ipc_);
+}
 
 Status Console::direct_boot() {
   // What follows is the state a game finds when the firmware starts it, as

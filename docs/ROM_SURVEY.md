@@ -84,8 +84,8 @@ lines of C++ that compile and link against the runtime. None of it has been
 executed. More in FALLBACK_INTERPRETER.md.
 
 The program's start-up code has been run in the interpreter [code]. It
-completes, and the program then waits for the console's second processor.
-What it does on the way is in BOOT.md.
+completes, performs its handshake with the console's second processor, and
+goes on to its first BIOS call. What it does on the way is in BOOT.md.
 
 ### The owner's existing code translation
 

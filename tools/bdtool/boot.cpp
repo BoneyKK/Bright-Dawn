@@ -99,6 +99,23 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   for (const auto& [number, count] : console.software_interrupts())
     std::printf("  number 0x%02" PRIX32 ": %" PRIu64 "\n", number, count);
 
+  nds::Interrupts& irq = console.interrupts();
+  std::printf("\nInterrupts: master switch %s, enabled 0x%08" PRIX32 ", requested 0x%08" PRIX32
+              " (none is ever taken yet)\n",
+              irq.master() ? "on" : "off", irq.enabled(), irq.requested());
+
+  nds::SecondProcessor& second = console.second_processor();
+  std::printf("\nSecond processor: start-up handshake %s\n", second.handshake_done() ? "completed" : "not completed");
+  if (!second.words_by_service().empty()) std::printf("  words sent to it, which nothing answers yet:\n");
+  for (const auto& [service, count] : second.words_by_service())
+    std::printf("    service %2u: %" PRIu64 "\n", service, count);
+  if (!second.first_words().empty()) {
+    std::printf("  the first %zu, in order:", second.first_words().size());
+    for (std::size_t i = 0; i < second.first_words().size(); ++i)
+      std::printf("%s0x%08" PRIX32, i % 6 == 0 ? "\n    " : " ", second.first_words()[i]);
+    std::printf("\n");
+  }
+
   const auto& registers = console.io().unmodelled();
   std::printf("\nHardware registers used that have no model: %zu\n", registers.size());
   if (!registers.empty()) std::printf("  address     width  reads      writes     last value written\n");

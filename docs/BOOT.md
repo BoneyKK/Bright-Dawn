@@ -3,8 +3,9 @@
 How the game's main program is placed in a model of the console and started,
 what the model consists of so far, and how far the real program gets.
 
-**The game does not run.** Its start-up code does, in the interpreter, up to
-the first thing that needs the console's second processor.
+**The game does not run.** Its start-up code does, in the interpreter, through
+the handshake with the console's second processor and up to its first BIOS
+call.
 
 ## The model
 
@@ -14,13 +15,21 @@ In `src/nds`:
 | --- | --- |
 | Memory map of the main processor (`arm9_bus`) | Main memory, both fast memories, shared memory, palette, video and sprite memory, in their places and repeating as on the hardware. Video memory is plain memory, not banked. Accesses to addresses with nothing behind them are counted |
 | System coprocessor (`system_control`) | Places and enables the fast memories, including the mode in which one takes writes but not reads. Identification registers. Protection and cache registers are stored and have no effect. A request to wait for an interrupt is noted, not acted on |
-| Hardware registers (`arm9_io`) | None modelled. Each keeps the last value written, and every access is counted by address |
+| Hardware registers (`arm9_io`) | Parts of the hardware implement their registers here. A register nobody implements keeps the last value written, and every access to one is counted by address |
+| Interrupt controller (`interrupts`) | The master switch, enable and request registers. Sources can request an interrupt; **the processor never takes one yet** |
+| Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
+| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It performs the start-up handshake and marks its services as ready. Every word the main program sends afterwards is recorded and not answered |
 | BIOS calls | None. A software interrupt ends the run |
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
 
-Not present at all: interrupts, timing, the second processor, the cartridge,
-video, sound, input.
+Not present at all: taking interrupts, timing, DMA, the cartridge, video,
+sound, input.
+
+The handshake and the "services ready" value follow what NooDS does when it
+stands in for the second processor; the handshake also matches what the
+game's own code waits for, read from its instructions. Neither has been
+compared with a real console here.
 
 ## The state a game starts in
 
@@ -80,17 +89,22 @@ only: no translated game code has been executed.
 - No software interrupt is made on the way, no memory is accessed where
   nothing is mapped, and no coprocessor register is used that the model does
   not know.
-- It then stays in a loop that reads and writes register `0x04000180`: after
-  20 million instructions, 2.4 million reads and 2,422 writes. That register
-  is the synchronisation channel to the second processor. The program is
-  waiting for the other processor to answer, and nothing does.
-- Before that it writes `0xC408` to `0x04000184` (the control register of the
-  queue between the processors) and uses the interrupt registers
-  `0x04000208`, `0x04000210` and `0x04000214`.
+- It then sets the queue control register to `0xC408`, enables the "word
+  received" interrupt (and only that one), and performs the handshake with
+  the second processor on register `0x04000180`. With nothing answering, it
+  stayed in that loop: after 20 million instructions, 2.4 million reads and
+  2,422 writes. With the stand-in answering, it goes on.
+- After the handshake it writes to the registers of DMA channel 0, to the
+  memory control register `0x04000204` and to the shared-memory control
+  register `0x04000247`, and after 589,341 instructions makes its first BIOS
+  call: number `0x0B`, which copies or fills memory. The run ends there,
+  because there is no BIOS.
+- Up to that point it has sent nothing through the queue to the second
+  processor.
 
-So the next piece is the second processor's side of that conversation, and
-with it interrupts. The plan, from ASSESSMENT.md, is not to run the second
-processor's program but to answer the main program's requests natively.
+Next: BIOS calls, DMA, and taking interrupts. The plan for the second
+processor, from ASSESSMENT.md, is not to run its program but to answer the
+main program's requests natively.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.
