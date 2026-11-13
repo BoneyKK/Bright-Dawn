@@ -105,7 +105,10 @@ add_library(bd_nds STATIC
   src/nds/arm9_bus.cpp
   src/nds/arm9_io.cpp
   src/nds/console.cpp
+  src/nds/interrupts.cpp
+  src/nds/ipc.cpp
   src/nds/program.cpp
+  src/nds/second_processor.cpp
   src/nds/system_control.cpp)
 target_include_directories(bd_nds PUBLIC src)
 target_link_libraries(bd_nds PUBLIC bd_build_flags bd_runtime bd_rom)

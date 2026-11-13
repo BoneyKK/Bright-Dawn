@@ -2,9 +2,11 @@
 // coprocessor and hardware registers, put together and started the way the
 // console's firmware starts a game.
 //
-// This is a first assembly. There is no BIOS behind software interrupts, no
-// second processor, no interrupts and no timing; whatever the program asks
-// for that is not there is recorded, and a software interrupt stops the run.
+// This is a first assembly. There is no BIOS behind software interrupts and
+// no timing, interrupts are requested but never taken, and the second
+// processor's stand-in only answers the start-up handshake. Whatever the
+// program asks for that is not there is recorded, and a software interrupt
+// stops the run.
 #pragma once
 
 #include <cstdint>
@@ -13,7 +15,10 @@
 
 #include "nds/arm9_bus.h"
 #include "nds/arm9_io.h"
+#include "nds/interrupts.h"
+#include "nds/ipc.h"
 #include "nds/program.h"
+#include "nds/second_processor.h"
 #include "nds/system_control.h"
 #include "machine.h"
 
@@ -52,6 +57,9 @@ class Console : private runtime::System {
   Arm9Bus& bus() { return bus_; }
   Arm9Io& io() { return io_; }
   SystemControl& system_control() { return system_control_; }
+  Interrupts& interrupts() { return interrupts_; }
+  Ipc& ipc() { return ipc_; }
+  SecondProcessor& second_processor() { return second_processor_; }
   runtime::Machine& machine() { return machine_; }
 
   // Software interrupts the program made, by number.
@@ -69,6 +77,9 @@ class Console : private runtime::System {
   Arm9Io io_;
   Arm9Bus bus_;
   SystemControl system_control_;
+  Interrupts interrupts_;
+  SecondProcessor second_processor_;
+  Ipc ipc_;
   runtime::Machine machine_;
   std::map<std::uint32_t, std::uint64_t> software_interrupts_;
   bool stopped_ = false;
