@@ -13,6 +13,10 @@
 #include "guest_runner.h"
 #include "machine.h"
 
+extern "C" {
+#include "inputs.h"
+}
+
 namespace {
 
 class GuestBus : public bd::runtime::Bus {
@@ -85,6 +89,37 @@ class MixedExecutor : public guest::Executor {
       return "a fully translated test entered the interpreter";
     if (allowed && s.interpreter_entries.empty())
       return "expected to need the interpreter, but did not: remove it from the list";
+    return check_counters(test, s);
+  }
+
+  // The assembly tests are each built around one mechanism, so the number of
+  // times that mechanism fires per input is known. Checking it shows that
+  // the right path was taken, not merely that the answer was right.
+  static std::string check_counters(const std::string& test, const bd::runtime::Statistics& s) {
+    const std::uint64_t n = GUEST_PAIR_COUNT;
+    struct Expected {
+      const char* test;
+      std::uint64_t native_calls, native_jumps, returns_through_jumps, returns_elsewhere, abandoned;
+    };
+    // Per input: hand-back calls, hand-back jumps, jumps that were returns,
+    // calls that returned elsewhere, call sites abandoned.
+    static const Expected kExpected[] = {
+        {"handback", 1, 1, 0, 0, 0},  // One hidden helper calls, the other jumps.
+        {"retreg", 0, 0, 1, 0, 0},    // The return through a register.
+        {"v4call", 0, 0, 0, 0, 0},    // Recovered where the jump is dispatched.
+        {"inltab", 0, 0, 0, 0, 1},    // The caller of the helper is abandoned.
+        {"skipdata", 0, 0, 0, 1, 1},  // The helper returns past the data word.
+        {"svc", 0, 0, 0, 0, 0},
+        {"coro", 6, 0, 0, 6, 3},      // Three steps, each switching there and back.
+    };
+    for (const Expected& e : kExpected) {
+      if (test != e.test) continue;
+      if (s.native_calls_from_interpreter != e.native_calls * n) return "unexpected number of calls handed back to translated code";
+      if (s.native_jumps_from_interpreter != e.native_jumps * n) return "unexpected number of jumps handed back to translated code";
+      if (s.returns_through_jumps != e.returns_through_jumps * n) return "unexpected number of jumps recognised as returns";
+      if (s.returns_elsewhere != e.returns_elsewhere * n) return "unexpected number of calls that returned elsewhere";
+      if (s.call_sites_abandoned != e.abandoned * n) return "unexpected number of abandoned call sites";
+    }
     return std::string();
   }
 
