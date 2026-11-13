@@ -1,8 +1,8 @@
 # Architecture
 
 This describes the intended module structure and records the decisions made so
-far. Only `core`, `platform` and `rom` exist; the rest is the target that later
-milestones build towards. Modules are added when there is working code to put
+far. `core`, `platform`, `rom`, the code translator and the first part of
+`runtime` exist; the rest is the target that later milestones build towards. Modules are added when there is working code to put
 in them, not before.
 
 ## Data flow
@@ -42,8 +42,8 @@ in them, not before.
 | `rom` | The only code that reads the user's ROM: validation, file system, decompression | `core` |
 | `assets` | Decodes original formats into neutral descriptions (textures, meshes, skeletons, sequences); asset identifiers; cache in the user data directory | `core`, `rom` |
 | `mods` | Manifests, load order, override resolution on top of `assets` | `core`, `assets` |
-| `recompiler` | Offline: machine code to C++. The owner's existing translator is to be brought in here rather than rewritten (see ASSESSMENT.md) | `core`, `rom` |
-| `runtime` | What the recompiled game calls: guest memory, replaced SDK services, the fixed-rate simulation loop | `core`, and the *interfaces* of `gfx`, `audio`, `input` |
+| `tools/translator` | Offline: machine code to C++ (Python). The owner's translator, with the changes listed in its README | nothing in `src` |
+| `runtime` | What the translated game calls: the dispatcher and the fallback interpreter (built); guest memory, replaced SDK services, the fixed-rate simulation loop (to come) | `core`, `third_party/skyemu`, and the *interfaces* of `gfx`, `audio`, `input` |
 | `gfx` | Capture of DS-level graphics state, presentation rules, renderer backends | `core`, `assets`, `platform` |
 | `audio` | Sequence playback, mixing, replacement tracks | `core`, `assets`, `platform` |
 | `input` | Devices, mapping, touch replacements | `core`, `platform` |
@@ -67,22 +67,25 @@ calls and coprocessor access. `runtime` implements that interface. This is the
 seam that keeps game logic independent of everything else: nothing above it
 knows about ARM, and nothing below it knows about windows or graphics APIs.
 
-Three properties of the translated code shape the runtime:
+How the runtime executes translated code, including what happens where there
+is no translation, is described in FALLBACK_INTERPRETER.md. In short:
 
-- **Threads.** Calls and returns are native. Each game thread therefore runs
-  on its own native stack, and the SDK's thread switch is replaced by a switch
-  between those stacks.
+- **Translated code first.** An address with a translation always runs
+  natively. An interpreter runs everything else and hands back at every call
+  or jump to a translated function.
+- **Native frames are disposable.** Translated code keeps all state in the
+  processor model and guest memory, and every call site records what it is
+  waiting for. Control can therefore leave and re-enter native code by any
+  route, including a switch to another stack, and the runtime picks up
+  correctly.
+
+Still to be built at this boundary:
+
 - **Overlays.** Several overlays are translated for the same address. The
-  dispatcher chooses by comparing guest memory with the overlay images, so it
-  follows whatever the game's own loader does.
+  dispatcher will choose by comparing guest memory with the overlay images,
+  so it follows whatever the game's own loader does.
 - **Interrupts.** Translated code cannot be interrupted at an arbitrary
-  instruction. The runtime delivers interrupts at defined points.
-- **Untranslated code.** Where the dispatcher has no translation for an
-  address, an interpreter runs the code there, hands back to translated code
-  at the first opportunity, and reports the address. Translated code is always
-  preferred; see FALLBACK_INTERPRETER.md.
-
-These are design intentions, not tested code; see ASSESSMENT.md section 5.
+  instruction. The runtime will deliver interrupts at defined points.
 
 ## How the three headline features attach
 
@@ -122,7 +125,9 @@ metadata.
 | Decision | Reason |
 | --- | --- |
 | C++20, CMake | The recompiler's output is C; C++ is the common language for the surrounding runtime and for the graphics, audio and windowing libraries likely to be used. |
-| No third-party dependencies yet | None are needed for ROM handling. Each later dependency is assessed for need and GPL-3.0 compatibility when it is introduced; SDL 3 (zlib licence) is the expected choice for `platform`. |
+| One third-party source file so far | SkyEmu's `arm7.h` (MIT) is the fallback interpreter, chosen after comparing six candidates on licence and fit and then proving it on the test corpus. Each later dependency is assessed the same way; SDL 3 (zlib licence) is the expected choice for `platform`. |
+| The interpreter sits behind a C interface of its own | Nothing but one wrapper file includes the third-party header, so the interpreter can be replaced without touching the runtime. |
+| The translator stays in Python | It is the owner's tested code and runs once, offline. Rewriting it would discard its test history for no gain. |
 | Errors as values (`Result<T>`) in parsers | Input is untrusted and failures are expected; callers must handle them. |
 | Every read of ROM data is bounds-checked | A malformed or malicious file must produce an error message, not a crash. Enforced by the damage tests under AddressSanitizer. |
 | In-house test harness | A few dozen lines; avoids a dependency this early. |
