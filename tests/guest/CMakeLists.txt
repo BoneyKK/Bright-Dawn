@@ -116,7 +116,7 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   # return to their call site). It must still never give a wrong result.
   add_test(NAME guest_translated
     COMMAND guest_translated_test ${BD_GUEST_IMAGE}
-            indirect sw handback retreg v4call inltab nonlocal skipdata svc)
+            indirect sw handback retreg v4call inltab nonlocal skipdata svc coro)
 
   # The same translated code with the interpreter behind it: everything must
   # pass. Only the tests listed may enter the interpreter at all, and each of
@@ -126,7 +126,7 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   target_link_libraries(guest_mixed_test PRIVATE bd_guest_runner bd_guest_translated bd_runtime)
   add_test(NAME guest_mixed
     COMMAND guest_mixed_test ${BD_GUEST_IMAGE}
-            indirect sw handback v4call inltab nonlocal skipdata svc)
+            indirect sw handback v4call inltab nonlocal skipdata svc coro)
 else()
   add_test(NAME guest_translated COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
   add_test(NAME guest_mixed COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
