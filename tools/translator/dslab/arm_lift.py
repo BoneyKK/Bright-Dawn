@@ -28,8 +28,8 @@ has gone to an outer call site instead.
   * SWI (BIOS calls), coprocessor 15 (caches, memory protection) -> calls into
                                the platform layer.
 Not translated (written as a call to ds::unhandled with a comment): a few
-very rare forms (e.g. LDM/STM of user-mode registers) - they appear in the
-SDK's interrupt and mode-switch code.
+very rare forms (coprocessor instructions other than MRC and MCR, breakpoints,
+undefined instructions).
 """
 
 from .arm_analysis import is_return, writes_pc
@@ -262,8 +262,8 @@ class Emitter:
         if 8 <= op <= 11:
             body.append("(void)res;")
         elif rd == 15:                                  # "movs pc, lr" etc.: return from an exception
-            body.append("ds::return_from_exception(c);")
-            body += self.jump_to_value(i, "res", True)
+            body.append("u32 back = ds::return_from_exception(c, res);")
+            body += self.jump_to_value(i, "back", True)
             return self._wrap(body)
         else:
             body.append(f"c.r[{rd}] = res;")
@@ -359,8 +359,13 @@ class Emitter:
         start = {"ia": "base", "ib": "base + 4", "da": f"base - {4 * n - 4}", "db": f"base - {4 * n}"}[mode]
         end = f"base + {4 * n}" if mode in ("ia", "ib") else f"base - {4 * n}"
         body = [f"u32 base = c.r[{rn}];", f"u32 a = ({start}) & ~3u;"]
-        if f["user"] and not (f["load"] and 15 in regs):
-            body.append(f"ds::unhandled(c, {hexc(i.addr)}, \"LDM/STM of user-mode registers\");")
+        # "^" without pc in the list transfers the User mode registers, whatever the
+        # current mode is. (With pc in a load it means "return from exception" instead.)
+        user_bank = f["user"] and not (f["load"] and 15 in regs)
+
+        def reg(r: int) -> str:
+            return f"ds::user_reg(c, {r})" if user_bank else f"c.r[{r}]"
+
         if f["load"]:
             for k, r in enumerate(regs):
                 body.append(f"u32 v{r} = c.rd32(a + {4 * k});")
@@ -368,14 +373,16 @@ class Emitter:
                 body.append(f"c.r[{rn}] = {end};")
             for r in regs:
                 if r != 15:
-                    body.append(f"c.r[{r}] = v{r};")
+                    body.append(f"{reg(r)} = v{r};")
             if 15 in regs:
                 if f["user"]:
-                    body.append("ds::return_from_exception(c);")
-                body += self.jump_to_value(i, "v15", is_return(i) or f["user"])
+                    body.append("u32 back = ds::return_from_exception(c, v15);")
+                    body += self.jump_to_value(i, "back", True)
+                else:
+                    body += self.jump_to_value(i, "v15", is_return(i))
         else:
             for k, r in enumerate(regs):
-                v = hexc(i.pc_value + 4) if r == 15 else ("base" if r == rn else f"c.r[{r}]")
+                v = hexc(i.pc_value + 4) if r == 15 else ("base" if r == rn and not user_bank else reg(r))
                 body.append(f"c.wr32(a + {4 * k}, {v});")
             if f["wb"]:
                 body.append(f"c.r[{rn}] = {end};")
@@ -437,7 +444,13 @@ struct Cpu {
     u32 r[16] = {};                  // r13 = sp, r14 = lr, r15 = pc (not used by the translation)
     bool N = false, Z = false, C = false, V = false, Q = false;
     u32 cpsr_ctrl = 0x1F;            // mode, interrupt and Thumb bits of CPSR
-    u32 spsr = 0;
+    u32 spsr = 0;                    // of the current mode (User and System have none)
+    // The registers each processor mode has to itself. r[] and spsr always hold
+    // the current mode's; these hold the others' (the current mode's entries
+    // are stale). Bank 0 = User and System, 1 = FIQ, 2 = IRQ, 3 = Supervisor,
+    // 4 = Abort, 5 = Undefined. See switch_mode.
+    u32 bank_r13[6] = {}, bank_r14[6] = {}, bank_spsr[6] = {};
+    u32 bank_r8[2][5] = {};          // r8-r12: [1] = FIQ's, [0] = every other mode's
     u32 ret_to = 0;                  // where the last return went (checked by leave)
     int cpu = 9;                     // 9 = ARM9 (main CPU), 7 = ARM7
     void* platform = nullptr;        // the platform layer's own data
@@ -517,12 +530,60 @@ inline u32 get_cpsr(Cpu& c) {
     return ((u32)c.N << 31) | ((u32)c.Z << 30) | ((u32)c.C << 29) | ((u32)c.V << 28) | ((u32)c.Q << 27) |
            (c.cpsr_ctrl & 0x07FFFFFFu);
 }
-inline void set_cpsr(Cpu& c, u32 v, u32 mask) {
-    if (mask & 0xFF000000u) { c.N = v >> 31; c.Z = (v >> 30) & 1; c.C = (v >> 29) & 1; c.V = (v >> 28) & 1;
-                              c.Q = (v >> 27) & 1; }
-    if (mask & 0xFFu) c.cpsr_ctrl = (c.cpsr_ctrl & ~0xFFu) | (v & 0xFFu);
+inline void set_flags(Cpu& c, u32 v) {
+    c.N = v >> 31; c.Z = (v >> 30) & 1; c.C = (v >> 29) & 1; c.V = (v >> 28) & 1; c.Q = (v >> 27) & 1;
 }
-inline void return_from_exception(Cpu& c) { set_cpsr(c, c.spsr, 0xFF0000FFu); }
+// Which set of banked registers a mode uses (see Cpu::bank_r13).
+inline u32 mode_bank(u32 mode) {
+    switch (mode & 0x1Fu) {
+        case 0x11: return 1; case 0x12: return 2; case 0x13: return 3; case 0x17: return 4; case 0x1B: return 5;
+        default: return 0;
+    }
+}
+// Changes the processor mode: r13, r14 and SPSR of the old mode are put away and
+// those of the new mode brought in (and r8-r12 when entering or leaving FIQ).
+inline void switch_mode(Cpu& c, u32 mode) {
+    u32 from = mode_bank(c.cpsr_ctrl), to = mode_bank(mode);
+    if (from != to) {
+        c.bank_r13[from] = c.r[13]; c.bank_r14[from] = c.r[14]; c.bank_spsr[from] = c.spsr;
+        c.r[13] = c.bank_r13[to]; c.r[14] = c.bank_r14[to]; c.spsr = c.bank_spsr[to];
+        if ((from == 1) != (to == 1))
+            for (int n = 0; n < 5; n++) { c.bank_r8[from == 1][n] = c.r[8 + n]; c.r[8 + n] = c.bank_r8[to == 1][n]; }
+    }
+    c.cpsr_ctrl = (c.cpsr_ctrl & ~0x1Fu) | (mode & 0x1Fu);
+}
+// MSR to CPSR. User mode may change the flags only. The Thumb bit cannot be
+// changed this way (the processor leaves the result of trying undefined; here
+// it is ignored).
+inline void set_cpsr(Cpu& c, u32 v, u32 mask) {
+    if (mask & 0xFF000000u) set_flags(c, v);
+    if ((mask & 0xFFu) && (c.cpsr_ctrl & 0x1Fu) != 0x10u) {
+        switch_mode(c, v);
+        c.cpsr_ctrl = (c.cpsr_ctrl & ~0xC0u) | (v & 0xC0u);
+    }
+}
+// Register n of User mode, from whatever mode the processor is in ("ldm/stm ...^").
+inline u32& user_reg(Cpu& c, u32 n) {
+    u32 bank = mode_bank(c.cpsr_ctrl);
+    if (bank != 0) {
+        if (n == 13) return c.bank_r13[0];
+        if (n == 14) return c.bank_r14[0];
+        if (bank == 1 && n >= 8 && n <= 12) return c.bank_r8[0][n - 8];
+    }
+    return c.r[n];
+}
+// The return from an exception handler ("movs pc, lr", "ldm ..., {..., pc}^"):
+// CPSR := SPSR of the current mode. Returns where execution continues, given the
+// value written to pc: the instruction set comes from the restored status
+// register, not from bit 0 of that value. (The model's own Thumb bit is always
+// clear; the instruction set is carried by bit 0 of code addresses.)
+inline u32 return_from_exception(Cpu& c, u32 pc) {
+    u32 v = c.spsr;
+    set_flags(c, v);
+    switch_mode(c, v);
+    c.cpsr_ctrl = (c.cpsr_ctrl & ~0xC0u) | (v & 0xC0u);
+    return (v & 0x20u) ? (pc | 1u) : (pc & ~3u);
+}
 
 // Around every call: enter before it, leave after it. leave returns true when the
 // calling function must return at once, because control did not come back to this

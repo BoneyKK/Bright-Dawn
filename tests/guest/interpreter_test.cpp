@@ -62,11 +62,11 @@ class InterpreterExecutor : public guest::Executor {
       bd_arm_core_step(core);
       bd_arm_core_get_state(core, &state);
       if (state.r[15] == guest::kReturnAddress) break;
-      if ((state.cpsr & 0x1Fu) != 0x1Fu) break;  // An exception was taken.
+      if (state.r[15] < 0x20u) break;  // An exception was taken: this is a vector.
     }
     if (steps == kStepLimit) {
       out.detail = "did not return";
-    } else if ((state.cpsr & 0x1Fu) != 0x1Fu) {
+    } else if (state.r[15] < 0x20u) {
       // On its own the interpreter sends software interrupts to a BIOS that
       // is not there. The runtime intercepts them; here it is a known gap.
       out.outcome = guest::Outcome::Gap;
@@ -75,6 +75,8 @@ class InterpreterExecutor : public guest::Executor {
       out.detail = "used the coprocessor";
     } else if ((state.cpsr & 0x20u) != 0) {
       out.detail = "returned in Thumb state to an ARM-state caller";
+    } else if ((state.cpsr & 0x1Fu) != 0x1Fu) {
+      out.detail = "returned in another processor mode";
     } else {
       out.outcome = guest::Outcome::Completed;
       out.result = state.r[0];

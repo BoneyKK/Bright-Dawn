@@ -29,14 +29,24 @@ typedef struct bd_arm_host {
   void (*cp_write)(void* user, int cp, int opc1, int crn, int crm, int opc2, uint32_t value);
 } bd_arm_host;
 
-/* Processor state as the program sees it in its current mode.
- * r[15] is the address of the next instruction to execute, not the
+/* Processor state. r[] and spsr are what the program sees in its current
+ * mode. r[15] is the address of the next instruction to execute, not the
  * pipelined value. Bit 5 of cpsr selects Thumb state. spsr is meaningful only
- * in modes that have one (every mode but User and System). */
+ * in modes that have one (every mode but User and System).
+ *
+ * The bank_ members are the registers each mode has to itself, by bank:
+ * 0 = User and System, 1 = FIQ, 2 = IRQ, 3 = Supervisor, 4 = Abort,
+ * 5 = Undefined; bank_r8[1] is r8-r12 of FIQ mode and bank_r8[0] of all other
+ * modes. The entries of the current mode's bank are ignored by set_state (r[]
+ * and spsr are used) and equal r[] and spsr after get_state. */
 typedef struct bd_arm_state {
   uint32_t r[16];
   uint32_t cpsr;
   uint32_t spsr;
+  uint32_t bank_r13[6];
+  uint32_t bank_r14[6];
+  uint32_t bank_spsr[6];
+  uint32_t bank_r8[2][5];
 } bd_arm_state;
 
 typedef struct bd_arm_core bd_arm_core;
@@ -49,7 +59,13 @@ void bd_arm_core_destroy(bd_arm_core* core);
 void bd_arm_core_set_state(bd_arm_core* core, const bd_arm_state* state);
 void bd_arm_core_get_state(bd_arm_core* core, bd_arm_state* state);
 
-/* Executes exactly one instruction (a Thumb BL counts as two). */
+/* Executes exactly one instruction (a Thumb BL counts as two).
+ *
+ * Exceptions are taken the way the processor takes them, with the vectors at
+ * address 0: an undefined instruction enters Undefined mode and continues at
+ * 0x00000004, a software interrupt enters Supervisor mode and continues at
+ * 0x00000008. Nothing is expected to be at those addresses; the caller looks
+ * for the program counter arriving there. */
 void bd_arm_core_step(bd_arm_core* core);
 
 /* Non-zero if the last step changed the flow of control, i.e. the next

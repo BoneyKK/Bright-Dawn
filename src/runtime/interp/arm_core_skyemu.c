@@ -113,12 +113,29 @@ bd_arm_core* bd_arm_core_create(const bd_arm_host* host) {
 
 void bd_arm_core_destroy(bd_arm_core* core) { free(core); }
 
+/* Where the core keeps r13 of each bank (r14 follows it), and each bank's
+ * saved status register. Bank 0 (User and System) has no saved status
+ * register. The core's register file holds every mode's registers side by
+ * side; see the table at the top of arm7.h. */
+static const int kBankR13[6] = {13, R13_fiq, R13_irq, R13_svc, R13_abt, R13_und};
+static const int kBankSpsr[6] = {-1, SPSR_fiq, SPSR_irq, SPSR_svc, SPSR_abt, SPSR_und};
+enum { kFiqR8 = 17 }; /* r8-r12 of FIQ mode are registers 17-21. */
+
 void bd_arm_core_set_state(bd_arm_core* core, const bd_arm_state* state) {
   arm7_t* cpu = &core->cpu;
   int i;
   memset(cpu->registers, 0, sizeof cpu->registers);
-  /* The status register first: it selects which banked registers the
-   * following writes go to. */
+  for (i = 0; i < 6; ++i) {
+    cpu->registers[kBankR13[i]] = state->bank_r13[i];
+    cpu->registers[kBankR13[i] + 1] = state->bank_r14[i];
+    if (kBankSpsr[i] >= 0) cpu->registers[kBankSpsr[i]] = state->bank_spsr[i];
+  }
+  for (i = 0; i < 5; ++i) {
+    cpu->registers[8 + i] = state->bank_r8[0][i];
+    cpu->registers[kFiqR8 + i] = state->bank_r8[1][i];
+  }
+  /* Now the current mode's view over that. The status register first: it
+   * selects which banked registers the following writes go to. */
   cpu->registers[CPSR] = state->cpsr;
   for (i = 0; i < 15; ++i) arm7_reg_write(cpu, (unsigned)i, state->r[i]);
   if (mode_has_spsr(state->cpsr)) arm7_reg_write(cpu, SPSR, state->spsr);
@@ -135,16 +152,64 @@ void bd_arm_core_get_state(bd_arm_core* core, bd_arm_state* state) {
    * next instruction, both after a branch and in straight-line code. */
   state->r[15] = cpu->registers[PC] & ((state->cpsr & 0x20u) ? ~1u : ~3u);
   state->spsr = mode_has_spsr(state->cpsr) ? arm7_reg_read(cpu, SPSR) : 0;
+  for (i = 0; i < 6; ++i) {
+    state->bank_r13[i] = cpu->registers[kBankR13[i]];
+    state->bank_r14[i] = cpu->registers[kBankR13[i] + 1];
+    state->bank_spsr[i] = kBankSpsr[i] >= 0 ? cpu->registers[kBankSpsr[i]] : 0;
+  }
+  for (i = 0; i < 5; ++i) {
+    state->bank_r8[0][i] = cpu->registers[8 + i];
+    state->bank_r8[1][i] = cpu->registers[kFiqR8 + i];
+  }
+}
+
+/* "ldm rn!, {..., pc}^": an exception return that also updates its base
+ * register. Bits: 27-25 = 100, S (22), W (21), L (20) and pc in the list. */
+static bool is_exception_return_with_writeback(uint32_t opcode) {
+  return (opcode & 0x0E708000u) == 0x08708000u;
 }
 
 void bd_arm_core_step(bd_arm_core* core) {
   arm7_t* cpu = &core->cpu;
+  bool fix_writeback = false;
+  unsigned base = 0, index_before = 0;
+  uint32_t registers_before[37];
   /* After a branch the core refills its pipeline over several calls before
    * the next instruction executes. */
   while (cpu->phased_op_id == ARM_PHASED_FILL_PIPE) arm9_exec_instruction(cpu);
+
+  /* A defect in the core, corrected here because the core is kept unmodified.
+   * For "ldm rn!, {..., pc}^" it writes the updated base register once more
+   * after the status register has been restored. If that changed the mode and
+   * rn is a register the two modes do not share, the value lands in the new
+   * mode's register and destroys it. The usual victim is the stack pointer of
+   * the interrupted program, on "ldmfd sp!, {..., pc}^". The processor writes
+   * the base register in the mode the instruction started in. */
+  if ((cpu->registers[CPSR] & 0x20u) == 0) {
+    const uint32_t opcode = cpu->prefetch_opcode[0]; /* The instruction about to execute. */
+    if (is_exception_return_with_writeback(opcode)) {
+      base = (opcode >> 16) & 15u;
+      if (base != 15u) {
+        fix_writeback = true;
+        index_before = arm7_reg_index(cpu, base);
+        memcpy(registers_before, cpu->registers, sizeof registers_before);
+      }
+    }
+  }
+
   arm9_exec_instruction(cpu);
   /* A multi-register transfer moves one register per call. */
   while (cpu->phased_op_id == ARM_PHASED_BLOCK_TRANSFER) arm9_exec_instruction(cpu);
+
+  if (fix_writeback) {
+    /* If the instruction's condition failed, or the mode's registers are the
+     * same ones, the index is unchanged and there is nothing to correct. */
+    const unsigned index_after = arm7_reg_index(cpu, base);
+    if (index_after != index_before) {
+      cpu->registers[index_before] = cpu->registers[index_after];
+      cpu->registers[index_after] = registers_before[index_after];
+    }
+  }
 }
 
 int bd_arm_core_branched(const bd_arm_core* core) {

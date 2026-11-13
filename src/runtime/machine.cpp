@@ -103,6 +103,9 @@ void Machine::reset_cpu() {
   cpu_.N = cpu_.Z = cpu_.C = cpu_.V = cpu_.Q = false;
   cpu_.cpsr_ctrl = 0x1F;
   cpu_.spsr = 0;
+  for (int i = 0; i < 6; ++i) cpu_.bank_r13[i] = cpu_.bank_r14[i] = cpu_.bank_spsr[i] = 0;
+  for (auto& bank : cpu_.bank_r8)
+    for (u32& r : bank) r = 0;
   cpu_.ret_to = 0;
   cpu_.cpu = 9;
   cpu_.platform = this;
@@ -235,6 +238,8 @@ void Machine::run_from(u32 address) {
         arrive(site);
         return;
       }
+      // It went somewhere else: an exception return, for example.
+      ++statistics_.returns_elsewhere;
       address = cpu_.ret_to;
       continue;
     }
@@ -292,10 +297,6 @@ void Machine::call_function(u32 address, u32 return_address) {
 }
 
 // Copies the processor model into the interpreter, to continue at `address`.
-//
-// Limitation: the model has one set of registers, with no separate copies per
-// processor mode. Code that switches mode therefore does not see the banked
-// stack pointers a real processor has, whether translated or interpreted.
 void Machine::load_interpreter(u32 address, bd_arm_state* state) {
   for (int i = 0; i < 15; ++i) state->r[i] = cpu_.r[i];
   state->r[15] = address & ~1u;
@@ -306,6 +307,13 @@ void Machine::load_interpreter(u32 address, bd_arm_state* state) {
                 (static_cast<u32>(cpu_.Q) << 27) | (cpu_.cpsr_ctrl & 0xC0u) | mode |
                 ((address & 1u) ? kThumbBit : 0u);
   state->spsr = cpu_.spsr;
+  for (int i = 0; i < 6; ++i) {
+    state->bank_r13[i] = cpu_.bank_r13[i];
+    state->bank_r14[i] = cpu_.bank_r14[i];
+    state->bank_spsr[i] = cpu_.bank_spsr[i];
+  }
+  for (int bank = 0; bank < 2; ++bank)
+    for (int i = 0; i < 5; ++i) state->bank_r8[bank][i] = cpu_.bank_r8[bank][i];
   bd_arm_core_set_state(core_, state);
 }
 
@@ -318,6 +326,13 @@ void Machine::store_from_interpreter(const bd_arm_state& state) {
   cpu_.Q = (state.cpsr >> 27) & 1;
   cpu_.cpsr_ctrl = (cpu_.cpsr_ctrl & ~kControlMask) | (state.cpsr & kControlMask);
   if (mode_has_spsr(state.cpsr)) cpu_.spsr = state.spsr;
+  for (int i = 0; i < 6; ++i) {
+    cpu_.bank_r13[i] = state.bank_r13[i];
+    cpu_.bank_r14[i] = state.bank_r14[i];
+    cpu_.bank_spsr[i] = state.bank_spsr[i];
+  }
+  for (int bank = 0; bank < 2; ++bank)
+    for (int i = 0; i < 5; ++i) cpu_.bank_r8[bank][i] = state.bank_r8[bank][i];
 }
 
 // Interprets from `start` until control arrives at a waiting call site
@@ -366,7 +381,9 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     bd_arm_core_get_state(core_, &after);
     ++statistics_.interpreted_instructions;
 
-    if ((after.cpsr & kModeMask) == 0x1B && mode_before != 0x1B) {
+    // An undefined instruction: the interpreter took the exception. (Mode and
+    // vector together, because code may also enter that mode on purpose.)
+    if ((after.cpsr & kModeMask) == 0x1B && mode_before != 0x1B && after.r[15] == 0x00000004u) {
       store_from_interpreter(state);
       give_up(pc, "undefined instruction in interpreted code");
       return true;

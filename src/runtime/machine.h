@@ -68,7 +68,8 @@ struct Statistics {
   std::uint64_t native_jumps_from_interpreter = 0;
   // Computed jumps that turned out to be returns to a waiting call site.
   std::uint64_t returns_through_jumps = 0;
-  // Calls whose callee returned somewhere other than the call site.
+  // Translated functions that returned somewhere other than to the call site
+  // waiting for them.
   std::uint64_t returns_elsewhere = 0;
   // Call sites told to give up because control went to an outer one.
   std::uint64_t call_sites_abandoned = 0;

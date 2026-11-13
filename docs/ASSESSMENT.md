@@ -120,8 +120,8 @@ callbacks the runtime supplies). A call to a known function becomes a C++
 call; a call or jump to an address not known until run time goes through the
 runtime.
 
-Its own documentation listed the gaps below. The first four are now dealt
-with for the test corpus; the rest are the work ahead.
+Its own documentation listed the gaps below. Those marked solved or fixed are
+dealt with for the test corpus; the rest are the work ahead.
 
 | Gap | Status |
 | --- | --- |
@@ -133,7 +133,7 @@ with for the test corpus; the rest are the work ahead.
 | A call was bound directly to a function whenever only one module had found one at that address | **Fixed.** Another overlay could be loaded there. Direct binding now requires that only one module can ever occupy the address |
 | Functions reached only from another module were not found | **Fixed.** Call targets are fed between modules until nothing new turns up |
 | Nothing delivers interrupts | Open. The game's frame logic is driven by the vertical-blank interrupt |
-| The processor model has one set of registers, not one per processor mode | Open. Matters for the start-up code and interrupt handling |
+| The processor model has one set of registers, not one per processor mode | **Solved.** Each mode has its registers, in the model and across the boundary to the interpreter |
 | System calls, coprocessor access, hardware registers | Open. The runtime has the entry points; nothing answers them yet |
 | ARM7 program | Open. Plan: do not run it; answer the ARM9 side's requests natively |
 | Names are addresses | Open. Plan: identify SDK functions by signature against SDK 5.4 |
