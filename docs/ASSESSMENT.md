@@ -129,7 +129,9 @@ with for the test corpus; the rest are the work ahead.
 | Functions reached only through pointers may be missed; some jump tables are not recognised | **Solved by the fallback interpreter**, which runs what has no translation and reports each address |
 | A software interrupt overwrote the return register | **Fixed** in the translator |
 | A Thumb-state computed jump lost its instruction set | **Fixed** in the translator |
-| The dispatcher cannot tell which overlay is loaded | Open. 297 overlays share one address. Plan: decide by content, comparing guest memory with the overlay images |
+| The dispatcher cannot tell which overlay is loaded | **Solved.** A translation belonging to an overlay is used only while the bytes it was made from are in guest memory; otherwise the code is interpreted |
+| A call was bound directly to a function whenever only one module had found one at that address | **Fixed.** Another overlay could be loaded there. Direct binding now requires that only one module can ever occupy the address |
+| Functions reached only from another module were not found | **Fixed.** Call targets are fed between modules until nothing new turns up |
 | Nothing delivers interrupts | Open. The game's frame logic is driven by the vertical-blank interrupt |
 | The processor model has one set of registers, not one per processor mode | Open. Matters for the start-up code and interrupt handling |
 | System calls, coprocessor access, hardware registers | Open. The runtime has the entry points; nothing answers them yet |
@@ -151,8 +153,8 @@ step that touches the real game is run by the owner and reported back.
 | --- | --- | --- |
 | 0 | **ROM ingestion and survey** (done) | Validation, file system, decompression and survey tool pass their tests |
 | 1 | **Survey of the real game** (done) | Program code and the standard asset formats are accounted for on the real ROM; see ROM_SURVEY.md for the minor questions left |
-| 2 | **Bring in the translator** (done for test programs; whole-game driver pending) | Its source is in this repository; its output is compared with the guest test corpus in CI; a driver translates the whole game from `bdtool extract --code` output |
-| 3 | **Runtime core** (dispatcher and interpreter done; memory map and overlays pending) | The guest test corpus gives the reference results under translated code, under the interpreter, and under the two together (done). Guest memory map and overlay selection by content (pending) |
+| 2 | **Bring in the translator** (done) | Its source is in this repository; its output is compared with the guest test corpus in CI; a driver translates the whole game from `bdtool extract --code` output. The real game translates, compiles and links: 17,076 functions |
+| 3 | **Runtime core** (dispatcher, interpreter and overlay selection done; memory map pending) | The guest test corpus gives the reference results under translated code, under the interpreter, and under the two together; overlays sharing an address are told apart by content (done). Guest memory map (pending) |
 | 4 | **Boot without graphics** | With SDK services answered natively (threads, files, cartridge, timers, the ARM7's duties), the game's start-up runs on the owner's machine and its graphics commands are captured to a log |
 | 5 | **Platform shell and reference renderer** | Window, input and audio device via SDL; captured frames drawn correctly at native resolution (accuracy first) |
 | 6 | **Unified screen, high resolution, widescreen** | Per-situation layout rules replace the two-screen output; 3D renders at selectable resolution with corrected projection; effects catalogue started |

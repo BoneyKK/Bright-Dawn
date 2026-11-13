@@ -43,9 +43,15 @@ the fallback interpreter (`src/runtime`), and each covered by `tests/guest`:
 
 ## Use
 
-`translate_image.py` translates a flat memory image whose first words are a
-table of function addresses (bit 0 set for Thumb), ended by a zero. That is
-the form of the guest test image. A driver for a whole game (main program,
-autoload blocks and overlays) is not here yet.
+`translate_game.py <code directory> <output directory> [--jobs N]` translates
+a whole game from what `bdtool extract --code` writes: the main program, the
+overlay files and `manifest.txt`. Its header comment explains the two rules
+that matter when code is spread over modules that share addresses. It writes
+`report.txt` with what it found, module by module. The output is derived from
+the game: keep it out of any repository.
+
+`translate_image.py` translates a single flat memory image whose first words
+are a table of function addresses (bit 0 set for Thumb), ended by a zero. That
+is the form of the guest test image.
 
 Python 3.10 or later; no third-party packages.
