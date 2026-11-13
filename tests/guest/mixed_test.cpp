@@ -66,11 +66,16 @@ class MixedExecutor : public guest::Executor {
     static const Expected kExpected[] = {
         {"handback", 1, 1, 0, 0, 0},  // One hidden helper calls, the other jumps.
         {"retreg", 0, 0, 1, 0, 0},    // The return through a register.
-        {"v4call", 0, 0, 0, 0, 0},    // Recovered where the jump is dispatched.
+        {"v4call", 0, 0, 0, 1, 0},    // The callee returns into its caller, where no call site waits.
         {"inltab", 0, 0, 0, 0, 1},    // The caller of the helper is abandoned.
         {"skipdata", 0, 0, 0, 1, 1},  // The helper returns past the data word.
         {"svc", 0, 0, 0, 0, 0},
         {"coro", 6, 0, 0, 6, 3},      // Three steps, each switching there and back.
+        {"hidmodes", 0, 0, 0, 0, 0},  // The hidden code is called and returns; nothing unusual.
+        // Two exception returns, each leaving a translated function for somewhere
+        // other than its caller. The second function was called from interpreted
+        // code, and that call site is abandoned when the test finally returns.
+        {"excret", 1, 0, 0, 2, 1},
     };
     for (const Expected& e : kExpected) {
       if (test != e.test) continue;

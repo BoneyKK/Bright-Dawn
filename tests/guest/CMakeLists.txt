@@ -113,10 +113,11 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   # The translator alone cannot complete these: each one exercises something
   # it does not cover (functions reached only through pointers, unrecognised
   # jump tables, returns and calls made through registers, callees that do not
-  # return to their call site). It must still never give a wrong result.
+  # return to their call site, returns from exception handlers). It must still
+  # never give a wrong result.
   add_test(NAME guest_translated
     COMMAND guest_translated_test ${BD_GUEST_IMAGE}
-            indirect sw handback retreg v4call inltab nonlocal skipdata svc coro)
+            indirect sw handback retreg v4call inltab nonlocal skipdata svc coro hidmodes excret)
 
   # The same translated code with the interpreter behind it: everything must
   # pass. Only the tests listed may enter the interpreter at all, and each of
@@ -126,7 +127,7 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   target_link_libraries(guest_mixed_test PRIVATE bd_guest_runner bd_guest_translated bd_runtime)
   add_test(NAME guest_mixed
     COMMAND guest_mixed_test ${BD_GUEST_IMAGE}
-            indirect sw handback v4call inltab nonlocal skipdata svc coro)
+            indirect sw handback v4call inltab nonlocal skipdata svc coro hidmodes excret)
 
   # --- Overlays: a program in several modules, two of them at one address ---
   # Built, given a manifest and translated exactly as a real game would be,

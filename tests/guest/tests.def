@@ -1,2 +1,2 @@
 T(leaf) T(arith) T(shifts) T(mul) T(dsp) T(clz) T(loops) T(memory) T(stack) T(fib) T(calls) T(indirect) T(sw) T(div) T(wide)
-T(handback) T(retreg) T(v4call) T(inltab) T(nonlocal) T(skipdata) T(svc) T(coro)
+T(handback) T(retreg) T(v4call) T(inltab) T(nonlocal) T(skipdata) T(svc) T(coro) T(modes) T(hidmodes) T(excret)

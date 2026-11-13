@@ -125,24 +125,43 @@ What the wrapper has to deal with:
   sends them.
 - The breakpoint instruction is not implemented, and unimplemented cases
   print to standard output.
+- One defect, found by this project's tests and corrected in the wrapper
+  because the core is kept unmodified: for `ldm rn!, {..., pc}^`, an exception
+  return that also updates its base register, the core writes the base
+  register once more after the mode has changed. The value then lands in the
+  register of the mode being returned to. With `ldmfd sp!, {..., pc}^` that
+  destroys the stack pointer of the interrupted program.
+
+## Processor modes
+
+The processor has seven modes, and five of them have a stack pointer, a link
+register and a saved status register of their own; FIQ mode also has its own
+r8 to r12. The game's start-up code gives the interrupt, supervisor and system
+modes a stack each, and interrupt handlers run on theirs.
+
+The processor model keeps the current mode's registers where translated code
+uses them and the other modes' beside them, and exchanges them when the mode
+changes. The interpreter receives all of them when it takes over and hands
+all of them back. Tested in both directions: registers set by translated code
+are read by interpreted code and the reverse.
 
 ## What the tests show
 
-All on the guest corpus (`tests/guest`): 23 small programs, each built for
+All on the guest corpus (`tests/guest`): 26 small programs, each built for
 ARM state and for Thumb state, each run on 2,484 input pairs and compared
-with the same program built natively. Fifteen are compiled C; eight are
-hand-written assembly for the control flow in the table above and for
-software interrupts.
+with the same program built natively. Fifteen are compiled C; eleven are
+hand-written assembly for the control flow in the table above, software
+interrupts, processor modes and exception returns.
 
 | Test | What runs | Result |
 | --- | --- | --- |
-| `guest_interpreter` | The interpreter alone | All 46 cases give the reference result, except the software-interrupt test, which needs the runtime |
-| `guest_translated` | Translated code alone | 13 tests complete; 10 stop at something the translator does not cover; none gives a wrong result |
-| `guest_mixed` | Translated code with the interpreter behind it | All 46 cases give the reference result |
+| `guest_interpreter` | The interpreter alone | All 52 cases give the reference result, except the software-interrupt test, which needs the runtime |
+| `guest_translated` | Translated code alone | 14 tests complete; 12 stop at something the translator does not cover; none gives a wrong result |
+| `guest_mixed` | Translated code with the interpreter behind it | All 52 cases give the reference result |
 | `guest_overlays` | A program in four modules, two of them at one address, translated as a whole game is | Correct with either overlay loaded and when swapping between them; a function with one byte changed is interpreted, alone; an overlay with no registered image is interpreted |
 
-In `guest_mixed`, nine tests are allowed to enter the interpreter and each of
-them must; the other fourteen must not, and do not. For the assembly tests
+In `guest_mixed`, eleven tests are allowed to enter the interpreter and each
+of them must; the other fifteen must not, and do not. For the assembly tests
 the counters the runtime keeps (hand-backs to translated code, returns
 through jumps, calls that returned elsewhere, abandoned call sites) are
 checked against the exact number each test should produce.
@@ -161,6 +180,12 @@ Fixed in this repository, each with a test:
   wrong place. This was invisible while return addresses were not checked.
 - A callee that did not return to its call site let the caller continue as if
   it had. With call sites recorded, this is now detected and handled.
+- An exception return continued in the instruction set that bit 0 of the
+  return address suggested. The saved status register decides it.
+
+Missing from the translator and added, also with tests: registers per
+processor mode, and the forms of `ldm` and `stm` that move the User mode
+registers.
 
 ## On the real game
 
@@ -214,10 +239,11 @@ What the numbers say:
 - Comparing an overlay translation with memory reads the bytes one at a time
   through the memory interface. Correct, and not repeated while memory is
   unchanged, but slow for large functions on first use.
-- Processor modes: the processor model has one set of registers. Code that
-  switches mode does not see separate stack pointers per mode, translated or
-  interpreted.
 - Interrupts are not delivered.
+- An exception return in translated code leaves translated code: what follows
+  it is interpreted until the next call into translated code. Correct, and
+  the test checks it; what it costs depends on how interrupts are delivered,
+  which is not built.
 - At most 4,096 nested call sites are recorded; beyond that the runtime
   stops with an error.
 - The interpreter's search of the waiting call sites runs on every taken

@@ -40,6 +40,18 @@ the fallback interpreter (`src/runtime`), and each covered by `tests/guest`:
 - **A software interrupt no longer overwrites r14.** The processor saves the
   return address in the supervisor mode's own register; the usual wrapper
   (`swi n; bx lr`) depends on the program's r14 surviving.
+- **Each processor mode has its own registers.** The processor model had one
+  r13, r14 and SPSR for all modes. It now keeps a set per mode (and FIQ's
+  r8 to r12) and exchanges them when the mode changes, through `msr` or an
+  exception return. Start-up code gives each mode its stack this way.
+- **`ldm` and `stm` of the User mode registers (`^` without pc) are
+  translated.** They were emitted as "not translated". Interrupt handlers
+  that switch threads save and restore a whole context with them.
+- **An exception return takes its instruction set from the saved status
+  register.** `movs pc, lr` and `ldm ..., {..., pc}^` continued in the state
+  bit 0 of the address suggested, which is not what selects it.
+- **`msr` cannot change the Thumb bit, and does nothing to the control bits
+  in User mode.**
 
 ## Use
 
