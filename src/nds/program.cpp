@@ -1,5 +1,6 @@
 #include "nds/program.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -13,10 +14,16 @@ namespace {
 constexpr std::size_t kHeaderCopySize = 0x170;
 
 Result<std::vector<std::uint8_t>> read_file(const std::filesystem::path& path) {
+  std::error_code ec;
+  const std::uintmax_t size = std::filesystem::file_size(path, ec);
+  if (ec) return Error{ErrorCode::Io, "cannot open " + path.string()};
+  // Program files are a few megabytes at most; anything larger is a mistake.
+  if (size > (std::uintmax_t{64} << 20)) return Error{ErrorCode::Corrupt, path.string() + " is too large to be program code"};
   std::ifstream in(path, std::ios::binary);
   if (!in) return Error{ErrorCode::Io, "cannot open " + path.string()};
-  std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  if (in.bad()) return Error{ErrorCode::Io, "cannot read " + path.string()};
+  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+  if (size > 0 && !in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
+    return Error{ErrorCode::Io, "cannot read " + path.string()};
   return bytes;
 }
 
@@ -67,7 +74,8 @@ Result<Program> program_from_rom(const rom::Rom& rom) {
   program.arm9_load_address = rom.header().arm9.ram_address;
   program.arm9_entry = rom.header().arm9.entry_address;
   const ByteSpan bytes = rom.bytes();
-  program.header.assign(bytes.begin(), bytes.begin() + std::min(bytes.size(), kHeaderCopySize));
+  program.header.assign(bytes.begin(),
+                        bytes.begin() + static_cast<std::ptrdiff_t>(std::min(bytes.size(), kHeaderCopySize)));
   for (const rom::Overlay& overlay : rom.arm9_overlays()) {
     auto image = rom.load_overlay(overlay);
     if (!image) {

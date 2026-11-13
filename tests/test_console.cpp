@@ -1,6 +1,7 @@
 // The console runs small hand-assembled programs. The words were produced
 // with the same assembler as the guest tests; the source is beside each.
-#include <cstring>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 #include "nds/console.h"
