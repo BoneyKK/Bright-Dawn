@@ -19,9 +19,21 @@ Machine& machine_of(void* user) { return *static_cast<Machine*>(user); }
 u32 host_read32(void* user, u32 a) { return machine_of(user).bus().read32(a); }
 u32 host_read16(void* user, u32 a) { return machine_of(user).bus().read16(a); }
 std::uint8_t host_read8(void* user, u32 a) { return machine_of(user).bus().read8(a); }
-void host_write32(void* user, u32 a, u32 v) { machine_of(user).bus().write32(a, v); }
-void host_write16(void* user, u32 a, std::uint16_t v) { machine_of(user).bus().write16(a, v); }
-void host_write8(void* user, u32 a, std::uint8_t v) { machine_of(user).bus().write8(a, v); }
+void host_write32(void* user, u32 a, u32 v) {
+  Machine& m = machine_of(user);
+  m.watch_write(a);
+  m.bus().write32(a, v);
+}
+void host_write16(void* user, u32 a, std::uint16_t v) {
+  Machine& m = machine_of(user);
+  m.watch_write(a);
+  m.bus().write16(a, v);
+}
+void host_write8(void* user, u32 a, std::uint8_t v) {
+  Machine& m = machine_of(user);
+  m.watch_write(a);
+  m.bus().write8(a, v);
+}
 u32 host_cp_read(void* user, int cp, int opc1, int crn, int crm, int opc2) {
   Machine& m = machine_of(user);
   return m.system().coprocessor_read(m.cpu(), cp, opc1, crn, crm, opc2);
@@ -74,8 +86,9 @@ bool condition_holds(u32 cond, u32 status) {
 Machine::Machine(Bus& bus, System& system, const TranslatedEntry* table)
     : bus_(bus), system_(system) {
   for (const TranslatedEntry* e = table; e->function != nullptr; ++e) table_.push_back(*e);
-  std::sort(table_.begin(), table_.end(),
-            [](const TranslatedEntry& a, const TranslatedEntry& b) { return a.address < b.address; });
+  std::stable_sort(table_.begin(), table_.end(),
+                   [](const TranslatedEntry& a, const TranslatedEntry& b) { return a.address < b.address; });
+  checks_.resize(table_.size());
   const bd_arm_host host = {this,         host_read32,  host_read16,  host_read8, host_write32,
                             host_write16, host_write8,  host_cp_read, host_cp_write};
   core_ = bd_arm_core_create(&host);
@@ -97,11 +110,89 @@ void Machine::reset_cpu() {
   cpu_.unwind = 0;
 }
 
-Machine::Function Machine::lookup(u32 address) const {
-  const auto it = std::lower_bound(
+void Machine::add_overlay(int id, u32 load_address, const std::uint8_t* image, std::size_t size) {
+  overlays_[id] = Overlay{load_address, image, size};
+  // Watch writes over the whole range the overlays span.
+  u32 start = load_address, end = load_address + static_cast<u32>(size);
+  if (watch_size_ != 0) {
+    start = std::min(start, watch_start_);
+    end = std::max(end, watch_start_ + watch_size_);
+  }
+  watch_start_ = start & ~((u32{1} << kPageShift) - 1);
+  watch_size_ = end - watch_start_;
+  // Starting every page at a new generation makes all earlier comparisons stale.
+  std::uint64_t highest = 0;
+  for (std::uint64_t g : page_generation_) highest = std::max(highest, g);
+  page_generation_.assign((watch_size_ >> kPageShift) + 1, highest + 1);
+}
+
+void Machine::note_memory_written(u32 address, std::size_t size) {
+  if (size == 0 || watch_size_ == 0) return;
+  const u32 last = address + static_cast<u32>(size - 1);
+  for (u32 page = address >> kPageShift; page <= (last >> kPageShift); ++page) {
+    const u32 offset = (page << kPageShift) - watch_start_;
+    if ((page << kPageShift) >= watch_start_ && offset < watch_size_) ++page_generation_[offset >> kPageShift];
+    if (page == 0xFFFFF) break;
+  }
+}
+
+// A value that changes whenever a page holding the entry's code is written.
+// Generations only grow, so their sum identifies the state of those pages.
+std::uint64_t Machine::stamp_of(const TranslatedEntry& entry) const {
+  std::uint64_t stamp = 0;
+  for (u32 r = 0; r < entry.run_count; ++r) {
+    const u32 first = entry.runs[r].address, last = first + entry.runs[r].length - 1;
+    for (u32 page = first >> kPageShift; page <= (last >> kPageShift); ++page) {
+      const u32 offset = (page << kPageShift) - watch_start_;
+      if ((page << kPageShift) >= watch_start_ && offset < watch_size_) stamp += page_generation_[offset >> kPageShift];
+    }
+  }
+  return stamp;
+}
+
+// Whether the code this overlay translation was made from is in memory.
+bool Machine::in_memory(std::size_t index) {
+  const TranslatedEntry& entry = table_[index];
+  const auto found = overlays_.find(entry.overlay);
+  if (found == overlays_.end() || entry.run_count == 0) return false;
+  const Overlay& overlay = found->second;
+
+  Check& check = checks_[index];
+  const std::uint64_t stamp = stamp_of(entry);
+  if (check.stamp == stamp) return check.matches;  // Nothing was written since.
+
+  ++statistics_.translations_checked;
+  bool matches = true;
+  for (u32 r = 0; r < entry.run_count && matches; ++r) {
+    const TranslatedRun& run = entry.runs[r];
+    if (run.address < overlay.load_address || run.address - overlay.load_address > overlay.size ||
+        run.length > overlay.size - (run.address - overlay.load_address)) {
+      matches = false;  // The table and the image disagree; do not trust the translation.
+      break;
+    }
+    const std::uint8_t* expected = overlay.image + (run.address - overlay.load_address);
+    for (u32 i = 0; i < run.length; ++i) {
+      if (bus_.read8(run.address + i) != expected[i]) {
+        matches = false;
+        break;
+      }
+    }
+  }
+  if (!matches) ++statistics_.translations_rejected;
+  check.stamp = stamp;
+  check.matches = matches;
+  return matches;
+}
+
+Machine::Function Machine::lookup(u32 address) {
+  auto it = std::lower_bound(
       table_.begin(), table_.end(), address,
       [](const TranslatedEntry& e, u32 a) { return e.address < a; });
-  return (it != table_.end() && it->address == address) ? it->function : nullptr;
+  for (; it != table_.end() && it->address == address; ++it) {
+    if (it->overlay < 0) return it->function;
+    if (in_memory(static_cast<std::size_t>(it - table_.begin()))) return it->function;
+  }
+  return nullptr;
 }
 
 // The innermost call site that is waiting for control to come back to
@@ -330,9 +421,21 @@ bd::runtime::Machine& machine(Cpu& c) { return *static_cast<bd::runtime::Machine
 u8 Cpu::rd8(u32 a) { return machine(*this).bus().read8(a); }
 u16 Cpu::rd16(u32 a) { return machine(*this).bus().read16(a); }
 u32 Cpu::rd32(u32 a) { return machine(*this).bus().read32(a); }
-void Cpu::wr8(u32 a, u8 v) { machine(*this).bus().write8(a, v); }
-void Cpu::wr16(u32 a, u16 v) { machine(*this).bus().write16(a, v); }
-void Cpu::wr32(u32 a, u32 v) { machine(*this).bus().write32(a, v); }
+void Cpu::wr8(u32 a, u8 v) {
+  bd::runtime::Machine& m = machine(*this);
+  m.watch_write(a);
+  m.bus().write8(a, v);
+}
+void Cpu::wr16(u32 a, u16 v) {
+  bd::runtime::Machine& m = machine(*this);
+  m.watch_write(a);
+  m.bus().write16(a, v);
+}
+void Cpu::wr32(u32 a, u32 v) {
+  bd::runtime::Machine& m = machine(*this);
+  m.watch_write(a);
+  m.bus().write32(a, v);
+}
 
 void call(Cpu& c, u32 address) { machine(c).dispatch_call(address); }
 void jump(Cpu& c, u32 address) { machine(c).dispatch_jump(address); }
