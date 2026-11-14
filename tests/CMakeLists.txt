@@ -15,6 +15,7 @@ add_executable(bd_tests
   test_dma.cpp
   test_console.cpp
   test_program.cpp
+  test_save_memory.cpp
   test_second_processor.cpp
   test_system_control.cpp
   test_timing.cpp

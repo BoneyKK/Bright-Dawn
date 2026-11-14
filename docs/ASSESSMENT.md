@@ -135,7 +135,7 @@ dealt with for the test corpus; the rest are the work ahead.
 | Nothing delivers interrupts | Partly. Interpreted code takes interrupts, from the display's timing and the timers, and the real program runs on them (BOOT.md). Translated code is not interrupted yet |
 | The processor model has one set of registers, not one per processor mode | **Solved.** Each mode has its registers, in the model and across the boundary to the interpreter |
 | System calls, coprocessor access, hardware registers | Partly. The system coprocessor, the memory map, 12 of the game's 17 BIOS calls, DMA, timers, display timing, the cartridge slot and the console's settings are modelled, and the game's start-up code runs on them, on the real ROM (BOOT.md). Most hardware registers are not: they are recorded only |
-| ARM7 program | Open. Plan: do not run it; answer the ARM9 side's requests natively. Done so far: the start-up handshake, the console settings it leaves in memory, and the first two requests of the cartridge service. The game now waits for an answer about the save memory (BOOT.md) |
+| ARM7 program | Open. Plan: do not run it; answer the ARM9 side's requests natively. Done so far: the start-up handshake, the console settings it leaves in memory, and the cartridge service with the save memory. The game now asks for the touch screen and sound services (BOOT.md) |
 | Names are addresses | Open. Plan: identify SDK functions by signature against SDK 5.4 |
 
 ## 6. Roadmap

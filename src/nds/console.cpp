@@ -19,7 +19,7 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       system_control_(bus_),
       video_timing_(timeline_, interrupts_),
       timers_(timeline_, interrupts_),
-      second_processor_(bus_, Cartridge::kChipId),
+      second_processor_(bus_, Cartridge::kChipId, save_memory_),
       ipc_(interrupts_, second_processor_),
       machine_(bus_, *this, translated),
       watched_bus_(bus_, machine_),

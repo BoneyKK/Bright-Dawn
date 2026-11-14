@@ -1,8 +1,20 @@
 #include "nds/second_processor.h"
 
+#include <algorithm>
+
 namespace bd::nds {
 
-SecondProcessor::SecondProcessor(Arm9Bus& bus, std::uint32_t chip_id) : bus_(bus), chip_id_(chip_id) {}
+namespace {
+
+// Whether `size` bytes from `address` all lie in main memory.
+bool in_main_memory(std::uint32_t address, std::uint32_t size) {
+  return Arm9Bus::in_main_memory(address) && size <= 0x03000000u - address;
+}
+
+}  // namespace
+
+SecondProcessor::SecondProcessor(Arm9Bus& bus, std::uint32_t chip_id, SaveMemory& save)
+    : bus_(bus), chip_id_(chip_id), save_(save) {}
 
 void SecondProcessor::connect(Ipc& ipc) {
   ipc_ = &ipc;
@@ -117,13 +129,119 @@ void SecondProcessor::cartridge_request() {
       case 10:
         write(block + kCartridgeBlockResult, 4, kCartridgeRefused);
         break;
-      default:
-        // The requests that work on the save memory.
-        ++not_carried_out_[name + ", which is not implemented"];
-        return;
+      default: {
+        std::string why;
+        if (!save_request(block, &why)) {
+          ++not_carried_out_[name + ", " + why];
+          return;
+        }
+        break;
+      }
     }
   }
   send(word(kCartridgeService, true, 1));
+}
+
+// The requests on the save memory, each as the second-processor program's
+// routine for it uses the chip. Those routines also wait for the chip to
+// finish and give up after a time the block names; this chip is never busy.
+bool SecondProcessor::save_request(std::uint32_t block, std::string* why) {
+  const auto field = [&](std::uint32_t offset) { return bus_.main_read(block + offset, 4); };
+  if (field(kCartridgeBlockSaveKind) != kSaveKind || field(kCartridgeBlockSaveSize) != SaveMemory::kSize ||
+      field(kCartridgeBlockAddressBytes) != 3) {
+    *why = "for a kind of save memory other than this game's";
+    return false;
+  }
+  const std::uint32_t source = field(kCartridgeBlockSource);
+  const std::uint32_t destination = field(kCartridgeBlockDestination);
+  const std::uint32_t length = field(kCartridgeBlockLength);
+  std::uint32_t result = kCartridgeDone;
+
+  switch (cartridge_request_) {
+    case kCartridgePrepareSave: {
+      const std::uint32_t wanted = bus_.main_read(block + kCartridgeBlockStatusWanted, 1);
+      if (wanted == 0xFF || save_status_set_) break;
+      if (wanted != save_.status()) {
+        *why = "which would change the chip's status register: not implemented";
+        return false;
+      }
+      save_status_set_ = true;
+      break;
+    }
+    case kCartridgeReadSave:  // From the chip at `source` to memory at `destination`.
+      if (!in_main_memory(destination, length)) {
+        *why = "to memory that is not main memory";
+        return false;
+      }
+      for (std::uint32_t i = 0; i < length; ++i) bus_.main_write(destination + i, 1, save_.read(source + i));
+      if (length != 0 && on_memory_written) on_memory_written(destination, length);
+      break;
+    case kCartridgeWriteSave:    // From memory at `source` to the chip at `destination`,
+    case kCartridgeProgramSave: {  // a page at a time.
+      const std::uint32_t page = field(kCartridgeBlockPageSize);
+      if (page == 0 || (page & (page - 1)) != 0) {
+        *why = "with a page size that is not a power of two";
+        return false;
+      }
+      if (!in_main_memory(source, length)) {
+        *why = "from memory that is not main memory";
+        return false;
+      }
+      std::vector<std::uint8_t> bytes;
+      for (std::uint32_t done = 0; done < length;) {
+        const std::uint32_t at = destination + done;
+        const std::uint32_t count = std::min(page - (at & (page - 1)), length - done);
+        bytes.resize(count);
+        for (std::uint32_t i = 0; i < count; ++i)
+          bytes[i] = static_cast<std::uint8_t>(bus_.main_read(source + done + i, 1));
+        if (cartridge_request_ == kCartridgeWriteSave) {
+          save_.page_write(at, bytes.data(), count);
+        } else {
+          save_.page_program(at, bytes.data(), count);
+        }
+        done += count;
+      }
+      break;
+    }
+    case kCartridgeVerifySave:  // The chip at `destination` against memory at `source`.
+      if (!in_main_memory(source, length)) {
+        *why = "against memory that is not main memory";
+        return false;
+      }
+      for (std::uint32_t i = 0; i < length; ++i) {
+        if (save_.read(destination + i) != bus_.main_read(source + i, 1)) {
+          result = kCartridgeDiffers;
+          break;
+        }
+      }
+      break;
+    case kCartridgeEraseSectors: {  // `length` bytes from `destination`, in whole sectors.
+      const std::uint32_t sector = field(kCartridgeBlockSectorSize);
+      if (((destination | length) & (sector - 1)) != 0) {
+        result = kCartridgeBadArgument;
+        break;
+      }
+      // (A sector size of zero with a length has been turned away above.)
+      if (length != 0 && length / sector > 1024) {
+        *why = "for more sectors than any save memory has";
+        return false;
+      }
+      for (std::uint32_t done = 0; done < length; done += sector) save_.erase_sector(destination + done);
+      break;
+    }
+    case kCartridgeReadStatus:  // One byte, to memory at `destination`.
+      if (!in_main_memory(destination, 1)) {
+        *why = "to memory that is not main memory";
+        return false;
+      }
+      write(destination, 1, save_.status());
+      break;
+    default:
+      *why = "which is not implemented";
+      return false;
+  }
+  write(block + kCartridgeBlockResult, 4, result);
+  return true;
 }
 
 }  // namespace bd::nds

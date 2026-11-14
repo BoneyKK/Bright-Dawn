@@ -246,7 +246,8 @@ TEST(second_processor_answers_the_start_up_handshake) {
   bd::nds::Arm9Bus bus(no_io);
   Arm9Io io;
   Interrupts irq;
-  bd::nds::SecondProcessor second(bus, 0x00001FC2);
+  bd::nds::SaveMemory save;
+  bd::nds::SecondProcessor second(bus, 0x00001FC2, save);
   bd::nds::Ipc ipc(irq, second);
   ipc.attach(io);
   second.connect(ipc);

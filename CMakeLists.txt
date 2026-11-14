@@ -113,6 +113,7 @@ add_library(bd_nds STATIC
   src/nds/ipc.cpp
   src/nds/math_unit.cpp
   src/nds/program.cpp
+  src/nds/save_memory.cpp
   src/nds/second_processor.cpp
   src/nds/system_control.cpp
   src/nds/timeline.cpp
