@@ -138,19 +138,34 @@ TEST(console_runs_start_up_code) {
   CHECK(console.machine().statistics().interpreted_instructions == 1000);
 }
 
-TEST(console_stops_at_a_software_interrupt) {
+TEST(console_performs_bios_calls) {
+  //   02000000  mov r0, #16
+  //   02000004  svc 0x0D0000     the square root
+  //   02000008  add r0, r0, #1
+  //   0200000c  b   .
+  const bd::nds::Program program = program_of({0xE3A00010, 0xEF0D0000, 0xE2800001, 0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  const bd::nds::RunResult result = console.run(1000);
+  CHECK(result.reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(result.address == 0x0200000C);
+  CHECK(console.software_interrupts().at(0x0D) == 1);
+  CHECK(console.machine().cpu().r[0] == 5);
+}
+
+TEST(console_stops_at_a_bios_call_that_is_not_implemented) {
   //   02000000  mov r0, #1
-  //   02000004  svc 0x030000
+  //   02000004  svc 0x2A0000     no such call
   //   02000008  mov r0, #2
   //   0200000c  b   .
-  const bd::nds::Program program = program_of({0xE3A00001, 0xEF030000, 0xE3A00002, 0xEAFFFFFE});
+  const bd::nds::Program program = program_of({0xE3A00001, 0xEF2A0000, 0xE3A00002, 0xEAFFFFFE});
   bd::nds::Console console(program, kNoTranslations);
   CHECK(console.direct_boot().ok());
   const bd::nds::RunResult result = console.run(1000);
   CHECK(result.reason == bd::nds::StopReason::Unhandled);
   CHECK(result.address == 0x02000004);
-  CHECK(result.detail.find("software interrupt 3") != std::string::npos);
-  CHECK(console.software_interrupts().at(3) == 1);
+  CHECK(result.detail.find("BIOS call") != std::string::npos);
+  CHECK(console.software_interrupts().at(0x2A) == 1);
   CHECK(console.machine().cpu().r[0] == 1);  // Nothing after it ran.
   CHECK(console.machine().statistics().interpreted_instructions == 1);
 }

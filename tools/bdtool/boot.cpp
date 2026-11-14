@@ -95,9 +95,11 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   for (const auto& [key, count] : cp.unknown_writes())
     std::printf("  unknown register c%u,c%u,%u written %" PRIu64 " times\n", key >> 8, (key >> 4) & 15, key & 15, count);
 
-  std::printf("\nSoftware interrupts: %s\n", console.software_interrupts().empty() ? "none" : "");
-  for (const auto& [number, count] : console.software_interrupts())
-    std::printf("  number 0x%02" PRIX32 ": %" PRIu64 "\n", number, count);
+  std::printf("\nBIOS calls: %s\n", console.software_interrupts().empty() ? "none" : "");
+  for (const auto& [number, count] : console.software_interrupts()) {
+    const char* name = nds::Bios::name(number);
+    std::printf("  0x%02" PRIX32 " %-16s %" PRIu64 "\n", number, name ? name : "(unknown)", count);
+  }
 
   nds::Interrupts& irq = console.interrupts();
   std::printf("\nInterrupts: master switch %s, enabled 0x%08" PRIX32 ", requested 0x%08" PRIX32
@@ -114,6 +116,14 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
     for (std::size_t i = 0; i < second.first_words().size(); ++i)
       std::printf("%s0x%08" PRIX32, i % 6 == 0 ? "\n    " : " ", second.first_words()[i]);
     std::printf("\n");
+  }
+
+  const nds::Dma::Statistics& dma = console.dma().statistics();
+  std::printf("\nDMA: %" PRIu64 " transfers performed, %" PRIu64 " units moved\n", dma.transfers, dma.units);
+  for (int mode = 1; mode < 8; ++mode) {
+    if (dma.waiting_for_event[mode] != 0)
+      std::printf("  %" PRIu64 " started in mode %d, which waits for an event that never comes yet\n",
+                  dma.waiting_for_event[mode], mode);
   }
 
   const auto& registers = console.io().unmodelled();

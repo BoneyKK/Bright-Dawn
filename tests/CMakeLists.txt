@@ -10,6 +10,8 @@ add_executable(bd_tests
   test_compression.cpp
   test_arm9_bus.cpp
   test_arm9_io.cpp
+  test_bios.cpp
+  test_dma.cpp
   test_console.cpp
   test_program.cpp
   test_system_control.cpp

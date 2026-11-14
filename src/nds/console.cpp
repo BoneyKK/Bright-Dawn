@@ -18,9 +18,13 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       system_control_(bus_),
       second_processor_(bus_),
       ipc_(interrupts_, second_processor_),
-      machine_(bus_, *this, translated) {
+      machine_(bus_, *this, translated),
+      watched_bus_(bus_, machine_),
+      bios_(watched_bus_),
+      dma_(watched_bus_, interrupts_) {
   interrupts_.attach(io_);
   ipc_.attach(io_);
+  dma_.attach(io_);
   second_processor_.connect(ipc_);
 }
 
@@ -102,12 +106,14 @@ void Console::stop(u32 address, const std::string& what) {
   stop_detail_ = what;
 }
 
-void Console::software_interrupt(ds::Cpu&, u32 number, u32 return_address) {
+void Console::software_interrupt(ds::Cpu& cpu, u32 number, u32 return_address) {
   ++software_interrupts_[number];
-  // There is no BIOS yet. Carrying on with registers the call should have
-  // changed would only produce nonsense further down, so the run ends here.
+  const Bios::Result result = bios_.call(cpu, number);
+  if (result.done) return;
+  // Carrying on with registers the call should have changed would only
+  // produce nonsense further down, so the run ends here.
   const u32 size = (return_address & 1u) ? 2 : 4;
-  stop((return_address & ~1u) - size, "software interrupt " + std::to_string(number) + " (the BIOS is not implemented)");
+  stop((return_address & ~1u) - size, result.problem);
   machine_.stop();
 }
 

@@ -104,7 +104,9 @@ target_link_libraries(bd_runtime PUBLIC bd_build_flags PRIVATE bd_arm_core)
 add_library(bd_nds STATIC
   src/nds/arm9_bus.cpp
   src/nds/arm9_io.cpp
+  src/nds/bios.cpp
   src/nds/console.cpp
+  src/nds/dma.cpp
   src/nds/interrupts.cpp
   src/nds/ipc.cpp
   src/nds/program.cpp
