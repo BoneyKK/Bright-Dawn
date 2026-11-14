@@ -2,11 +2,11 @@
 // coprocessor and hardware registers, put together and started the way the
 // console's firmware starts a game.
 //
-// This is a first assembly. There is no BIOS behind software interrupts and
-// no timing, interrupts are requested but never taken, and the second
+// This is a first assembly. Some BIOS calls are implemented (bios.h); there
+// is no timing, interrupts are requested but never taken, and the second
 // processor's stand-in only answers the start-up handshake. Whatever the
-// program asks for that is not there is recorded, and a software interrupt
-// stops the run.
+// program asks for that is not there is recorded, and a BIOS call that is
+// not implemented stops the run.
 #pragma once
 
 #include <cstdint>
@@ -15,6 +15,8 @@
 
 #include "nds/arm9_bus.h"
 #include "nds/arm9_io.h"
+#include "nds/bios.h"
+#include "nds/dma.h"
 #include "nds/interrupts.h"
 #include "nds/ipc.h"
 #include "nds/program.h"
@@ -59,6 +61,7 @@ class Console : private runtime::System {
   SystemControl& system_control() { return system_control_; }
   Interrupts& interrupts() { return interrupts_; }
   Ipc& ipc() { return ipc_; }
+  Dma& dma() { return dma_; }
   SecondProcessor& second_processor() { return second_processor_; }
   runtime::Machine& machine() { return machine_; }
 
@@ -81,6 +84,34 @@ class Console : private runtime::System {
   SecondProcessor second_processor_;
   Ipc ipc_;
   runtime::Machine machine_;
+  // Memory as the BIOS and DMA write it: like the program's own writes, theirs
+  // must be seen by the machine, which watches for code being replaced.
+  class WatchedBus : public runtime::Bus {
+   public:
+    WatchedBus(Arm9Bus& bus, runtime::Machine& machine) : bus_(bus), machine_(machine) {}
+    std::uint8_t read8(std::uint32_t a) override { return bus_.read8(a); }
+    std::uint16_t read16(std::uint32_t a) override { return bus_.read16(a); }
+    std::uint32_t read32(std::uint32_t a) override { return bus_.read32(a); }
+    void write8(std::uint32_t a, std::uint8_t v) override {
+      machine_.watch_write(a);
+      bus_.write8(a, v);
+    }
+    void write16(std::uint32_t a, std::uint16_t v) override {
+      machine_.watch_write(a);
+      bus_.write16(a, v);
+    }
+    void write32(std::uint32_t a, std::uint32_t v) override {
+      machine_.watch_write(a);
+      bus_.write32(a, v);
+    }
+
+   private:
+    Arm9Bus& bus_;
+    runtime::Machine& machine_;
+  };
+  WatchedBus watched_bus_;
+  Bios bios_;
+  Dma dma_;
   std::map<std::uint32_t, std::uint64_t> software_interrupts_;
   bool stopped_ = false;
   std::uint32_t stop_address_ = 0;

@@ -1,0 +1,78 @@
+#include "nds/dma.h"
+
+namespace bd::nds {
+namespace {
+
+using u32 = std::uint32_t;
+
+constexpr u32 kAddressMask = 0x0FFFFFFF;
+constexpr u32 kCountMask = 0x001FFFFF;  // A count of zero means the maximum, 0x200000.
+constexpr unsigned kDestinationShift = 21;  // 0 up, 1 down, 2 fixed, 3 up (and reloaded on repeat).
+constexpr unsigned kSourceShift = 23;       // 0 up, 1 down, 2 fixed.
+constexpr u32 kWords = 1u << 26;
+constexpr unsigned kStartShift = 27;        // 0 = at once; the rest wait for an event.
+constexpr u32 kInterrupt = 1u << 30;
+constexpr u32 kEnable = 1u << 31;
+
+}  // namespace
+
+Dma::Dma(runtime::Bus& bus, Interrupts& interrupts) : bus_(bus), interrupts_(interrupts) {}
+
+void Dma::attach(Arm9Io& io) {
+  for (int n = 0; n < kChannels; ++n) {
+    const u32 base = 0x040000B0 + 12 * static_cast<u32>(n);
+    io.add(base, 4, [this, n] { return channels_[n].source; },
+           [this, n](u32 v, u32 m) { channels_[n].source = ((channels_[n].source & ~m) | (v & m)) & kAddressMask; });
+    io.add(base + 4, 4, [this, n] { return channels_[n].destination; },
+           [this, n](u32 v, u32 m) {
+             channels_[n].destination = ((channels_[n].destination & ~m) | (v & m)) & kAddressMask;
+           });
+    io.add(base + 8, 4, [this, n] { return channels_[n].control; },
+           [this, n](u32 v, u32 m) { write_control(n, v, m); });
+    io.add(0x040000E0 + 4 * static_cast<u32>(n), 4, [this, n] { return fill_[n]; },
+           [this, n](u32 v, u32 m) { fill_[n] = (fill_[n] & ~m) | (v & m); });
+  }
+}
+
+void Dma::write_control(int channel, u32 value, u32 mask) {
+  Channel& c = channels_[channel];
+  const bool was_enabled = (c.control & kEnable) != 0;
+  c.control = (c.control & ~mask) | (value & mask);
+  // A transfer starts when the enable bit goes from 0 to 1.
+  if (was_enabled || (c.control & kEnable) == 0) return;
+  const unsigned start = (c.control >> kStartShift) & 7u;
+  if (start != 0) {
+    ++statistics_.waiting_for_event[start];
+    return;
+  }
+  run(channel);
+}
+
+void Dma::run(int channel) {
+  Channel& c = channels_[channel];
+  u32 count = c.control & kCountMask;
+  if (count == 0) count = kCountMask + 1;
+  const bool words = (c.control & kWords) != 0;
+  const u32 size = words ? 4 : 2;
+  const unsigned source_mode = (c.control >> kSourceShift) & 3u;
+  const unsigned destination_mode = (c.control >> kDestinationShift) & 3u;
+  // Unsigned arithmetic: "down" is adding the two's complement.
+  const u32 source_step = source_mode == 0 ? size : source_mode == 1 ? 0u - size : 0;
+  const u32 destination_step = destination_mode == 1 ? 0u - size : destination_mode == 2 ? 0 : size;
+  u32 source = c.source & ~(size - 1), destination = c.destination & ~(size - 1);
+  for (u32 i = 0; i < count; ++i) {
+    if (words) {
+      bus_.write32(destination, bus_.read32(source));
+    } else {
+      bus_.write16(destination, bus_.read16(source));
+    }
+    source += source_step;
+    destination += destination_step;
+  }
+  ++statistics_.transfers;
+  statistics_.units += count;
+  c.control &= ~kEnable;
+  if (c.control & kInterrupt) interrupts_.request(8 + static_cast<unsigned>(channel));
+}
+
+}  // namespace bd::nds
