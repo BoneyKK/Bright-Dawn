@@ -19,7 +19,7 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       system_control_(bus_),
       video_timing_(timeline_, interrupts_),
       timers_(timeline_, interrupts_),
-      second_processor_(bus_),
+      second_processor_(bus_, Cartridge::kChipId),
       ipc_(interrupts_, second_processor_),
       machine_(bus_, *this, translated),
       watched_bus_(bus_, machine_),
@@ -48,6 +48,10 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
     }
   };
   second_processor_.connect(ipc_);
+  second_processor_.on_memory_written = [this](std::uint32_t address, std::size_t size) {
+    // By the address the memory has in its first copy, where programs are.
+    machine_.note_memory_written(0x02000000u | (address & (Arm9Bus::kMainRamSize - 1)), size);
+  };
 }
 
 Status Console::direct_boot() {

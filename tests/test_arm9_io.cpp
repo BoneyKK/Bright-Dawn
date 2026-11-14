@@ -246,7 +246,7 @@ TEST(second_processor_answers_the_start_up_handshake) {
   bd::nds::Arm9Bus bus(no_io);
   Arm9Io io;
   Interrupts irq;
-  bd::nds::SecondProcessor second(bus);
+  bd::nds::SecondProcessor second(bus, 0x00001FC2);
   bd::nds::Ipc ipc(irq, second);
   ipc.attach(io);
   second.connect(ipc);
@@ -261,7 +261,8 @@ TEST(second_processor_answers_the_start_up_handshake) {
   }
   CHECK(second.handshake_done());
   CHECK((seen == std::vector<unsigned>{7, 6, 5, 4, 3, 2, 1, 0}));
-  CHECK(bus.read32(bd::nds::SecondProcessor::kServicesReady) == 0x0003FFF0);
+  // The services the game's second-processor program has: 4 to 14, 16, 17.
+  CHECK(bus.read32(bd::nds::SecondProcessor::kServicesReady) == 0x00037FF0);
 
   // Afterwards the value no longer moves, and what is sent is recorded.
   io.write(0x04000180, 2, 0x0500);
@@ -269,8 +270,10 @@ TEST(second_processor_answers_the_start_up_handshake) {
   io.write(0x04000184, 2, 0x8000);
   io.write(0x04000188, 4, 0x00000046);
   io.write(0x04000188, 4, 0x00000106);
-  io.write(0x04000188, 4, 0x0000000B);
-  CHECK(second.words_by_service().at(6) == 2 && second.words_by_service().at(11) == 1);
+  io.write(0x04000188, 4, 0x00000007);
+  CHECK(second.words_by_service().at(6) == 2 && second.words_by_service().at(7) == 1);
   CHECK(second.first_words().size() == 3 && second.first_words()[1] == 0x106);
-  CHECK(ipc.waiting_words() == 0);  // Nothing is answered yet.
+  // These services have no stand-in yet: nothing is answered.
+  CHECK(second.unanswered_by_service().at(6) == 2 && second.unanswered_by_service().at(7) == 1);
+  CHECK(ipc.waiting_words() == 0 && second.words_answered() == 0);
 }
