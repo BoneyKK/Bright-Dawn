@@ -106,13 +106,20 @@ from its storage (language, names, calibration) at `0x027FFC80`.
 bdtool boot path/to/your-rom.nds
 ```
 
-`bdtool boot` runs the start-up code in the interpreter for a number of
-instructions (`--instructions N`, default ten million) and reports where it
-stopped, the processor's registers, the system coprocessor's state, every
-software interrupt, every hardware register used that has no model with its
-access counts, and memory accessed where nothing is mapped. It accepts a ROM
-or an extracted code directory. Its output contains addresses and counts, no
-game content.
+`bdtool boot` runs the start-up code in the interpreter until a number of
+instructions have run or a number of frames have passed (`--instructions N`,
+`--frames F`; by default a thousand million and 600, which is ten seconds of
+console time and can take a minute to run). It reports where it stopped and
+why, the time that passed, the processor's registers, the system
+coprocessor's state, BIOS calls, interrupts and timers, what was sent to the
+second processor, DMA, what was read from the cartridge, every hardware
+register used that has no model with its access counts, and memory accessed
+where nothing is mapped.
+
+Given a ROM it puts the ROM in the cartridge slot and has the ROM header.
+Given a directory of extracted code it has neither, so a program that reads
+files cannot get far. Its output contains addresses and counts, no game
+content.
 
 It is a development diagnostic: the list of unmodelled registers, ordered by
 use, is the work queue for the hardware model.
