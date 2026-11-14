@@ -70,6 +70,11 @@ void SecondProcessor::word_sent(std::uint32_t word) {
   if (first_words_.size() < kFirstWordsKept) first_words_.push_back(word);
 
   if (service == 0) return;
+  if (service == kTouchService) {
+    // Its handler takes no notice of words with the flag.
+    if (!flag) touch_word(data);
+    return;
+  }
   if (service == kCartridgeService) {
     // Its handler takes no notice of words without the flag.
     if (flag) cartridge_word(data);
@@ -81,6 +86,64 @@ void SecondProcessor::word_sent(std::uint32_t word) {
   }
   // No handler: the word goes back marked, unless it came marked.
   if (!flag) send(word | 0x20u);
+}
+
+void SecondProcessor::set_touch(bool touched, unsigned x, unsigned y) {
+  touched_ = touched;
+  touch_x_ = x > 255 ? 255 : x;
+  touch_y_ = y > 191 ? 191 : y;
+}
+
+// The touch screen service's handler, and what its thread then does.
+void SecondProcessor::touch_word(std::uint32_t data) {
+  if (data & kPieceFirst) {
+    for (std::uint16_t& piece : touch_pieces_) piece = 0;
+  }
+  touch_pieces_[(data >> 16) & 0xFu] = static_cast<std::uint16_t>(data);
+  if ((data & kPieceLast) == 0) return;
+
+  const unsigned request = touch_pieces_[0] >> 8;
+  const unsigned argument = touch_pieces_[0] & 0xFFu;
+  switch (request) {
+    case kTouchSampleOnce: {
+      // A touched screen is read five times in each direction and the
+      // readings combined; with no noise that gives the reading itself, less
+      // its low three bits, which the program clears.
+      // (The top five bits of a sample are whatever the program's stack
+      // held; here they are zero.)
+      std::uint32_t sample = 0x06000000;  // Not touched: no reading, neither direction usable.
+      if (touched_) {
+        const std::uint32_t x = (touch_x_ * kTouchReadingPerPixel) & 0xFF8u;
+        const std::uint32_t y = (touch_y_ * kTouchReadingPerPixel) & 0xFF8u;
+        sample = x | (y << 12) | 0x01000000;
+      }
+      write(kTouchSample, 2, sample & 0xFFFFu);
+      write(kTouchSample + 2, 2, sample >> 16);
+      send(group_answer(request, kTouchDone));
+      break;
+    }
+    case kTouchSampleRegularly: {
+      // Samples per frame (1 to 4) and the display line to start on.
+      if (argument == 0 || argument > 4 || touch_pieces_[1] >= 263) {
+        send(group_answer(request, kTouchBadArgument));
+        break;
+      }
+      ++not_carried_out_["service 6: sampling at regular intervals, which is not implemented"];
+      break;
+    }
+    case kTouchStopSampling:
+      // Regular sampling is never running here.
+      send(group_answer(request, kTouchWrongState));
+      break;
+    case kTouchSetTolerance:
+      // How far apart readings may lie and still count as one. Without noise
+      // it makes no difference; it is accepted as the program accepts it.
+      send(group_answer(request, argument == 0 ? kTouchBadArgument : kTouchDone));
+      break;
+    default:
+      send(group_answer(request, kTouchUnknownRequest));
+      break;
+  }
 }
 
 // The cartridge service's handler. A request is one word, its number. The

@@ -22,6 +22,10 @@
 //   chip takes (save_memory.h) are carried out, and the three requests the
 //   program refuses are refused the same way. Anything else is recorded and
 //   not answered.
+// - Service 6, the touch screen: a request for one sample is answered with
+//   the state set through set_touch, and the request that sets how far apart
+//   readings may lie is accepted. Sampling at regular intervals is not
+//   implemented.
 //
 // Words for the other services the program handles are recorded and not
 // answered. An answer is sent the moment the request arrives; on a console
@@ -49,6 +53,43 @@ class SecondProcessor : public IpcPeer {
   // The services the game's second-processor program registers a handler
   // for: numbers 4 to 14, 16 and 17.
   static constexpr std::uint32_t kServices = 0x00037FF0;
+
+  // A word as both programs put it on the channel.
+  static constexpr std::uint32_t word(unsigned service, bool flag, std::uint32_t data) {
+    return (service & 0x1Fu) | (flag ? 0x20u : 0u) | (data << 6);
+  }
+
+  static constexpr unsigned kTouchService = 6;
+  // Requests to the touch screen service.
+  static constexpr unsigned kTouchSampleOnce = 0;
+  static constexpr unsigned kTouchSampleRegularly = 1;
+  static constexpr unsigned kTouchStopSampling = 2;
+  static constexpr unsigned kTouchSetTolerance = 3;
+  // Results of a touch screen request, in the answer's low byte.
+  static constexpr unsigned kTouchDone = 0;
+  static constexpr unsigned kTouchUnknownRequest = 1;
+  static constexpr unsigned kTouchBadArgument = 2;
+  static constexpr unsigned kTouchWrongState = 3;
+  // Where a sample is left for the main program: 32 bits, as two 16-bit
+  // halves. Bits 0-11 the horizontal reading, 12-23 the vertical, bit 24 set
+  // while the screen is touched, bits 25-26 set for a reading that is not
+  // usable (both when the screen is not touched).
+  static constexpr std::uint32_t kTouchSample = 0x027FFFAA;
+  // A request to this group of services is built from 16-bit pieces, one per
+  // word: the piece in the data's low 16 bits, its position in bits 16-19,
+  // bit 25 on the first word and bit 24 on the last. The request's number is
+  // the high byte of piece 0. The answer has both bits, the request's number
+  // with its top bit set in bits 8-15, and the result in the low byte. It
+  // goes out on the service the request's number belongs to, whichever
+  // service the request came in on: 0x00-0x1F touch screen (6), 0x20-0x3F
+  // firmware storage (4), 0x40-0x5F microphone (9), 0x60-0x7F power (8).
+  static constexpr std::uint32_t kPieceFirst = 0x02000000;
+  static constexpr std::uint32_t kPieceLast = 0x01000000;
+  static constexpr std::uint32_t group_answer(unsigned request, unsigned result) {
+    const unsigned group = (request >> 5) & 3u;
+    const unsigned service = group == 0 ? 6u : group == 1 ? 4u : group == 2 ? 9u : 8u;
+    return word(service, false, kPieceFirst | kPieceLast | (((request & 0xFFu) | 0x80u) << 8) | (result & 0xFFu));
+  }
 
   static constexpr unsigned kCartridgeService = 11;
   // Requests to the cartridge service that are carried out here.
@@ -83,11 +124,6 @@ class SecondProcessor : public IpcPeer {
   // 2 to the 18th bytes.
   static constexpr std::uint32_t kSaveKind = 0x1202;
 
-  // A word as both programs put it on the channel.
-  static constexpr std::uint32_t word(unsigned service, bool flag, std::uint32_t data) {
-    return (service & 0x1Fu) | (flag ? 0x20u : 0u) | (data << 6);
-  }
-
   // `chip_id` is what the cartridge answers when asked what it is; `save` is
   // the cartridge's save memory. Both must outlive this object.
   SecondProcessor(Arm9Bus& bus, std::uint32_t chip_id, SaveMemory& save);
@@ -101,6 +137,13 @@ class SecondProcessor : public IpcPeer {
   // network address and the wireless channels go to their places in main
   // memory. Fails, writing nothing, if the settings are not valid.
   Status start_up(const UserSettings& settings);
+
+  // The touch screen as the next sample will find it: whether it is being
+  // touched, and where, in pixels of the touch screen (0-255 across, 0-191
+  // down). The readings handed to the main program are the ones a console
+  // with the calibration in the settings block (user_settings.h) would give
+  // for that pixel, with no noise.
+  void set_touch(bool touched, unsigned x, unsigned y);
 
   // Called when the stand-in has changed main memory: the address and the
   // number of bytes.
@@ -132,6 +175,7 @@ class SecondProcessor : public IpcPeer {
 
   void send(std::uint32_t word);
   void write(std::uint32_t address, unsigned size, std::uint32_t value);
+  void touch_word(std::uint32_t data);
   void cartridge_word(std::uint32_t data);
   void cartridge_request();
   // A request on the save memory. Returns false, with the reason in *why,
@@ -144,6 +188,10 @@ class SecondProcessor : public IpcPeer {
   bool save_status_set_ = false;
   Ipc* ipc_ = nullptr;
   bool handshake_done_ = false;
+  // The touch screen service: the pieces of the request being received.
+  std::uint16_t touch_pieces_[16] = {};
+  bool touched_ = false;
+  unsigned touch_x_ = 0, touch_y_ = 0;
   // The cartridge service's two words of state, as the program keeps them.
   std::uint32_t cartridge_block_ = kNoCartridgeBlock;
   std::uint32_t cartridge_request_ = 0;
