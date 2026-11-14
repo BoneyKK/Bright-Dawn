@@ -56,8 +56,9 @@ void print_usage(std::FILE* out) {
       "                                   Run the game's start-up code in the interpreter\n"
       "                                   and report what it asks of the machine (a\n"
       "                                   development diagnostic; stops after N\n"
-      "                                   instructions or F frames, default 10000000\n"
-      "                                   and 300)\n"
+      "                                   instructions or F frames, default one\n"
+      "                                   thousand million and 600, whichever\n"
+      "                                   comes first; that can take a minute)\n"
       "\n"
       "You must supply your own legally obtained ROM. Nothing is downloaded.\n",
       out);
@@ -553,7 +554,9 @@ int main(int argc, char** argv) {
   std::filesystem::path out_dir;
   bool with_code = false;
   std::size_t top = 20;
-  std::uint64_t instructions = 10000000, frames = 300;
+  // Ten seconds of console time, which a busy program fills with a few
+  // hundred million instructions.
+  std::uint64_t instructions = 1000000000, frames = 600;
   std::vector<std::string> positional;
   for (std::size_t i = 1; i < args.size(); ++i) {
     const std::string& arg = args[i];
