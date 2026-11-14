@@ -239,6 +239,11 @@ What the numbers say:
 - The game does not run yet, and no translated game code has been executed.
   The interpreter has run the game's start-up code (BOOT.md).
 - Code that rewrites itself in place is not detected (see Overlays).
+- The DS's main memory repeats through its address range, and a write is
+  matched against an overlay's pages by the address it was made at. A write
+  to overlay code through one of the repeats would therefore go unnoticed,
+  and a stale translation could be used. No such write has been seen; to be
+  closed before translated game code is run.
 - Comparing an overlay translation with memory reads the bytes one at a time
   through the memory interface. Correct, and not repeated while memory is
   unchanged, but slow for large functions on first use.

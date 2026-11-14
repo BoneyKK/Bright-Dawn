@@ -51,6 +51,16 @@ bool Arm9Bus::load(u32 address, const std::uint8_t* data, std::size_t size) {
   return true;
 }
 
+u32 Arm9Bus::main_read(u32 address, unsigned size) const {
+  u32 value = 0;
+  std::memcpy(&value, main_ram_.data() + (address & (kMainRamSize - 1)), size);
+  return value;
+}
+
+void Arm9Bus::main_write(u32 address, unsigned size, u32 value) {
+  std::memcpy(main_ram_.data() + (address & (kMainRamSize - 1)), &value, size);
+}
+
 std::uint8_t* Arm9Bus::locate(u32 address, bool write) {
   if (itcm_map_.claims(address, write)) return itcm_.data() + (address & (kItcmSize - 1));
   if (dtcm_map_.claims(address, write)) return dtcm_.data() + ((address - dtcm_map_.base) & (kDtcmSize - 1));

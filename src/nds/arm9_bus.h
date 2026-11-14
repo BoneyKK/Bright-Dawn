@@ -67,6 +67,14 @@ class Arm9Bus : public runtime::Bus {
   // program starts. Returns false if the range is not inside main memory.
   bool load(std::uint32_t address, const std::uint8_t* data, std::size_t size);
 
+  // Main memory as the second processor sees it: the same 4 MiB, repeating
+  // from 0x02000000 to 0x02FFFFFF, with neither fast memory in front of it.
+  // `size` is 1, 2 or 4 and `address` is aligned to it.
+  static bool in_main_memory(std::uint32_t address) { return (address >> 24) == 0x02; }
+  // `address` must be in main memory.
+  std::uint32_t main_read(std::uint32_t address, unsigned size) const;
+  void main_write(std::uint32_t address, unsigned size, std::uint32_t value);
+
   const BusStatistics& statistics() const { return statistics_; }
 
  private:

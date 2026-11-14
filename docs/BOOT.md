@@ -7,8 +7,10 @@ what the model consists of so far, and how far the real program gets.
 owner's ROM: through the handshake with the console's second processor, the
 initialisation of graphics and sound registers, the first interrupts, reading
 its file tables and overlays from the cartridge, and past the check that stops
-the game on a machine that does not look like a console. It then waits for the
-second processor to answer a request, which nothing does yet.
+the game on a machine that does not look like a console, and through its
+first request to the second processor. It then waits for the answer to its
+second request, which concerns the cartridge's save memory and which nothing
+gives yet.
 
 ## The model
 
@@ -25,7 +27,7 @@ In `src/nds`:
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
-| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake and marks its services as ready. Every word the main program sends afterwards is recorded and not answered |
+| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, one is begun: requests to the cartridge (service 11), where "initialise" and "read the chip identifier" are carried out. Its requests on the save memory, and every word for another service, are recorded and not answered. See below |
 | Console settings (`user_settings`) | Language, the owner's name, message, birthday and favourite colour, the console's network address and its wireless channels. See below |
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
 | BIOS code (`bios_rom.S`) | Three more calls, Halt, IntrWait and VBlankIntrWait, and the interrupt entry. See below |
@@ -39,10 +41,42 @@ Not present at all: video, sound, input, the cartridge's save memory.
 Interrupts in translated code are not present either: the tool that exists
 runs everything in the interpreter.
 
-The handshake and the "services ready" value follow what NooDS does when it
-stands in for the second processor; the handshake also matches what the
-game's own code waits for, read from its instructions. Neither has been
-compared with a real console here.
+The handshake follows what NooDS does when it stands in for the second
+processor, and matches what the game's own code waits for, read from its
+instructions. It has not been compared with a real console here.
+
+## Talking to the second processor
+
+The two programs exchange 32-bit words: a service number in the low five
+bits, a flag in the next, and 26 bits of data. Everything the stand-in does
+with them was read from the game's own second-processor program, which is
+not run but is the reference for what the main program expects:
+
+- Which services exist. That program registers a handler for services 4 to
+  14, 16 and 17, and marks each as ready in a word in main memory, which the
+  stand-in sets to `0x00037FF0` once the handshake is done. (All at once: on
+  a console each bit appears as the program gets to it.)
+- What happens to a word nobody handles: it is sent back with its flag set,
+  or dropped if the flag was set already. Words for service 0 are dropped.
+- Service 11, requests to the cartridge. The first request, "initialise",
+  is two words: the request number, then the address of a block of memory
+  the two programs share from then on. Each later request is one word. The
+  second processor carries the request out, writes a result into the block
+  and sends one word back. A request whose bit is not set in the block's
+  list of allowed requests is refused, with result 3; so are requests 4, 5
+  and 10, always. "Read the chip identifier" (request 3) leaves the
+  identifier in the block. The other requests work on the save memory, which
+  is not modelled: they are recorded and get no answer.
+
+The stand-in answers the moment a request arrives. On a console the second
+processor needs time, during which the main program's thread sleeps. In the
+run below the main program took the immediate answer and went on; whether
+every request tolerates one has not been checked. The second
+processor takes a lock on the cartridge while it works on a request; the
+stand-in does not, and would not notice if the main program held it.
+
+The stand-in reads and writes main memory as the second processor sees it,
+without the main processor's fast memories in front.
 
 ## The code where the BIOS would be
 
@@ -231,13 +265,18 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   touches no memory where nothing is mapped.
 - It reads register `0x04004000` six times. That register exists only on the
   DSi; here it reads as zero.
-- It sends four words to the second processor: one to service 13, one to
-  service 7 (sound), and two to service 11. Nothing answers. After the two to
-  service 11 the program's threads wait, and only the idle loop and the
-  interrupt handlers run: 4.6 million instructions in those ten seconds.
+- It sends words to the second processor: one to service 13, one to service
+  7 (sound), which nothing answers, and then to service 11, the cartridge.
+- Without an answer from service 11 the program's threads waited there, and
+  only the idle loop and the interrupt handlers ran.
+- With "initialise" answered, the main program at once sends request 2 to
+  the same service, the first of those that work on the save memory. That
+  one is not implemented, and the program waits again: 4.6 million
+  instructions in those ten seconds, nearly all of them the idle loop and
+  the interrupt handlers.
 
-Next: answers from the second processor, beginning with service 11, which is
-what the program is waiting for. Then interrupts in translated code.
+Next: the cartridge's save memory, which is what the program is waiting for.
+Then the other services, and interrupts in translated code.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

@@ -121,9 +121,15 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
 
   nds::SecondProcessor& second = console.second_processor();
   std::printf("\nSecond processor: start-up handshake %s\n", second.handshake_done() ? "completed" : "not completed");
-  if (!second.words_by_service().empty()) std::printf("  words sent to it, which nothing answers yet:\n");
-  for (const auto& [service, count] : second.words_by_service())
-    std::printf("    service %2u: %" PRIu64 "\n", service, count);
+  if (!second.words_by_service().empty()) std::printf("  words sent to it, by service:\n");
+  for (const auto& [service, count] : second.words_by_service()) {
+    const auto unanswered = second.unanswered_by_service().find(service);
+    std::printf("    service %2u: %" PRIu64 "%s\n", service, count,
+                unanswered != second.unanswered_by_service().end() ? ", which nothing answers yet" : "");
+  }
+  std::printf("  words it sent back: %" PRIu64 "\n", second.words_answered());
+  for (const auto& [what, count] : second.not_carried_out())
+    std::printf("  not carried out and not answered, %" PRIu64 " times: %s\n", count, what.c_str());
   if (!second.first_words().empty()) {
     std::printf("  the first %zu, in order:", second.first_words().size());
     for (std::size_t i = 0; i < second.first_words().size(); ++i)
