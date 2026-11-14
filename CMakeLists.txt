@@ -111,6 +111,7 @@ add_library(bd_nds STATIC
   src/nds/dma.cpp
   src/nds/interrupts.cpp
   src/nds/ipc.cpp
+  src/nds/math_unit.cpp
   src/nds/program.cpp
   src/nds/second_processor.cpp
   src/nds/system_control.cpp

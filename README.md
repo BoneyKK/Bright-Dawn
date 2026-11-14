@@ -45,7 +45,7 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | Memory map, system coprocessor, the state a game starts in | Done, tested. Video memory is not banked yet |
 | Running the game's start-up code (`bdtool boot`) | Works in the interpreter: the real program sets up the machine, takes interrupts and goes on to its first file read |
 | Interrupts, in interpreted code | Done, tested: the display's and timers' interrupts are taken, and the processor sleeps until one comes |
-| Console time, display timing, hardware timers | Done, tested. Time per instruction is a coarse figure |
+| Console time, display timing, hardware timers, hardware divider and square root | Done, tested. Time per instruction is a coarse figure |
 | Channel to the second processor, start-up handshake | Done, tested |
 | BIOS calls | 12 of the 17 the game has wrappers for, tested: 9 natively, 3 that wait for interrupts as this project's own code on the processor |
 | DMA | Transfers that start at once and transfers fed by the cartridge: done, tested. Transfers started by other hardware events: not yet |
