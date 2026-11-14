@@ -6,8 +6,9 @@ what the model consists of so far, and how far the real program gets.
 **The game does not run.** Its start-up code does, in the interpreter: through
 the handshake with the console's second processor, the initialisation of
 graphics and sound registers and the first interrupts, into the program's
-first attempt to read a file. There the model runs out: reading files needs
-the cartridge, which is not modelled yet.
+first attempt to read a file. That is as far as it can be taken in the
+development environment, where there is program code but no cartridge. The
+next step is a run of `bdtool boot` on the owner's ROM.
 
 ## The model
 
@@ -27,13 +28,14 @@ In `src/nds`:
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
 | BIOS code (`bios_rom.S`) | Three more calls, Halt, IntrWait and VBlankIntrWait, and the interrupt entry. See below |
 | Sleeping | The system coprocessor's "wait for interrupt" puts the processor to sleep until an enabled source requests an interrupt. A sleep of more than ten seconds of console time ends the run |
-| DMA (`dma`) | Transfers that start at once, in every direction mode, with the fill registers and the completion interrupt request. A transfer set to start on a hardware event stays pending and is counted |
+| DMA (`dma`) | Transfers that start at once, and transfers fed by the cartridge, in every direction mode, with the fill registers, repeat and the completion interrupt request. A transfer set to start on any other hardware event stays pending and is counted |
+| Cartridge (`cartridge`) | The slot as a running game uses it: the "read data" and "read chip identifier" commands, the block sizes, the part of a cartridge that cannot be read, the completion interrupt, and delivery to a DMA channel. A transfer takes no console time. The encrypted exchange before a game starts is not needed and not modelled; the save memory is not modelled. **Tested on generated data only: no real program has used it yet** |
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
 
-Not present at all: the cartridge, video, sound, input. Interrupts in
-translated code are not present either: the tool that exists runs everything
-in the interpreter.
+Not present at all: video, sound, input, the cartridge's save memory.
+Interrupts in translated code are not present either: the tool that exists
+runs everything in the interpreter.
 
 The handshake and the "services ready" value follow what NooDS does when it
 stands in for the second processor; the handshake also matches what the
@@ -156,20 +158,25 @@ only: no translated game code has been executed.
   divider, makes more DMA transfers, and enters file system code: it reads a
   file in blocks and unpacks what it reads with a routine it keeps in the
   fast instruction memory.
-- There is no cartridge behind those reads, and this run had no ROM header
-  either, so what it unpacks is not data. After 79.7 million instructions and
-  2.4 seconds of console time it jumps to an address where there is no
-  memory, and the run ends there.
+- This run had neither a cartridge nor the ROM header the program reads its
+  file tables from, so what it unpacks is not data. After 79.7 million
+  instructions and 2.4 seconds of console time it jumps to an address where
+  there is no memory, and the run ends there.
+- It never sent a command to the cartridge slot on the way. Whether that is
+  because the missing header stops the file system before it gets that far,
+  or because this program reads files some other way, cannot be told without
+  the ROM.
 
 The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
 0x06, 0x09 and 0x0B to 0x15. That bounds the BIOS work.
 
-Next: the cartridge, so that file reads return the game's data. From there
-on the program cannot be run in the development environment at all, because
-the cartridge's contents exist only on the owner's machine: `bdtool boot`
-with the ROM, and its report, is how each further step will be found.
-After that: the second processor's answers, and interrupts in translated
-code.
+Next: a run on the real ROM. The cartridge slot is modelled now, and
+`bdtool boot` given a ROM puts the ROM in it and has the header, so file
+reads can return the game's data. That cannot be tried in the development
+environment, because the cartridge's contents exist only on the owner's
+machine: the report of `bdtool boot` on the ROM is how each further step
+will be found. After that: the second processor's answers, and interrupts in
+translated code.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

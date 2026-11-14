@@ -11,6 +11,7 @@ add_executable(bd_tests
   test_arm9_bus.cpp
   test_arm9_io.cpp
   test_bios.cpp
+  test_cartridge.cpp
   test_dma.cpp
   test_console.cpp
   test_program.cpp
@@ -94,12 +95,12 @@ set_tests_properties(cli_extract_missing_path PROPERTIES
 # must load, run to its limit or to something unimplemented, and report.
 bd_cli_test(cli_boot_rom boot ${BD_TEST_DIR}/dark_dawn_like.nds --instructions 2000)
 set_tests_properties(cli_boot_rom PROPERTIES
-  PASS_REGULAR_EXPRESSION "Program: ARM9 [0-9]+ bytes at 0x02000000, entry 0x02000800, 5 overlays, header available.*Stopped: ")
+  PASS_REGULAR_EXPRESSION "Program: ARM9 [0-9]+ bytes at 0x02000000, entry 0x02000800, 5 overlays, header available.*Stopped: .*Cartridge: inserted")
 
 # The same from the directory `extract --code` wrote.
 bd_cli_test(cli_boot_directory boot ${BD_TEST_DIR}/out/code --instructions 2000)
 set_tests_properties(cli_boot_directory PROPERTIES FIXTURES_REQUIRED extracted_code
-  PASS_REGULAR_EXPRESSION "Program: ARM9 [0-9]+ bytes at 0x02000000, entry 0x02000800, 5 overlays, header not available.*Stopped: ")
+  PASS_REGULAR_EXPRESSION "Program: ARM9 [0-9]+ bytes at 0x02000000, entry 0x02000800, 5 overlays, header not available.*Stopped: .*Cartridge: none")
 
 bd_cli_test(cli_boot_missing boot ${BD_TEST_DIR}/does_not_exist.nds)
 set_tests_properties(cli_boot_missing PROPERTIES PASS_REGULAR_EXPRESSION "does not exist")
