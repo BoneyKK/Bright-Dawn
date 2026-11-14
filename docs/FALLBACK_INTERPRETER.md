@@ -242,7 +242,9 @@ What the numbers say:
 - Comparing an overlay translation with memory reads the bytes one at a time
   through the memory interface. Correct, and not repeated while memory is
   unchanged, but slow for large functions on first use.
-- Interrupts are not delivered.
+- Interrupts are taken in interpreted code only. Translated code is not yet
+  interrupted: the plan is to take them at call sites and at the back edges
+  of loops, where the address to come back to is known.
 - An exception return in translated code leaves translated code: what follows
   it is interpreted until the next call into translated code. Correct, and
   the test checks it; what it costs depends on how interrupts are delivered,

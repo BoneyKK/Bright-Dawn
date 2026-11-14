@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 #include "nds/arm9_io.h"
 
@@ -30,7 +31,13 @@ class Interrupts {
   // (0x04000214, where writing a one clears the bit).
   void attach(Arm9Io& io);
 
-  void request(unsigned source) { requested_ |= 1u << source; }
+  void request(unsigned source) {
+    requested_ |= 1u << source;
+    changed();
+  }
+
+  // Called whenever pending() may have changed.
+  std::function<void()> on_change;
 
   // Whether an enabled source is waiting and the master switch is on. The
   // processor's own interrupt mask is not considered here.
@@ -43,6 +50,9 @@ class Interrupts {
   std::uint32_t requested() const { return requested_; }
 
  private:
+  void changed() {
+    if (on_change) on_change();
+  }
   bool master_ = false;
   std::uint32_t enabled_ = 0, requested_ = 0;
 };

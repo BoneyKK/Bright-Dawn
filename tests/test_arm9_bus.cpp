@@ -154,10 +154,10 @@ TEST(arm9_bus_small_regions_repeat) {
 TEST(arm9_bus_counts_unmapped_accesses) {
   RecordingIo io;
   bd::nds::Arm9Bus bus(io);
-  CHECK(bus.read32(0xFFFF0000) == 0);
+  CHECK(bus.read32(0xFFFE0000) == 0);
   CHECK(bus.read8(0x08000000) == 0);
   bus.write32(0x0A000000, 1);
-  CHECK(bus.statistics().unmapped_reads.at(0xFFFF) == 1);
+  CHECK(bus.statistics().unmapped_reads.at(0xFFFE) == 1);
   CHECK(bus.statistics().unmapped_reads.at(0x0800) == 1);
   CHECK(bus.statistics().unmapped_writes.at(0x0A00) == 1);
 }
@@ -172,4 +172,21 @@ TEST(arm9_bus_load_checks_its_range) {
   CHECK(!bus.load(0x023FFFFC, data.data(), data.size()));  // Would run past the end.
   CHECK(!bus.load(0x01FF8000, data.data(), data.size()));
   CHECK(!bus.load(0x03000000, data.data(), data.size()));
+}
+
+TEST(arm9_bus_bios_region_is_read_only) {
+  RecordingIo io;
+  bd::nds::Arm9Bus bus(io);
+  const std::vector<std::uint8_t> code = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+  bus.set_bios(code.data(), code.size());
+  CHECK(bus.read32(0xFFFF0000) == 0x44332211);
+  CHECK(bus.read16(0xFFFF0006) == 0x8877);
+  CHECK(bus.read32(0xFFFF0008) == 0);       // The rest of its 4 KiB reads as zero.
+  CHECK(bus.read32(0xFFFF0FFC) == 0);
+  CHECK(bus.statistics().unmapped_reads.empty());
+  bus.write32(0xFFFF0000, 0xDEADBEEF);      // Cannot be written.
+  CHECK(bus.read32(0xFFFF0000) == 0x44332211);
+  CHECK(bus.statistics().unmapped_writes.at(0xFFFF) == 1);
+  CHECK(bus.read32(0xFFFF1000) == 0);       // Beyond it: nothing.
+  CHECK(bus.statistics().unmapped_reads.at(0xFFFF) == 1);
 }

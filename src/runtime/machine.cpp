@@ -223,6 +223,14 @@ void Machine::give_up(u32 address, const char* what) {
   stop();
 }
 
+void Machine::enter_exception(u32 mode, u32 link, bool thumb) {
+  const u32 status = ds::get_cpsr(cpu_) | (thumb ? kThumbBit : 0u);
+  ds::switch_mode(cpu_, mode);
+  cpu_.spsr = status;
+  cpu_.r[14] = link;
+  cpu_.cpsr_ctrl |= 0x80u;
+}
+
 void Machine::stop() {
   stopped_ = true;
   // Every waiting call site gives up, the outermost one included.
@@ -359,6 +367,11 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     return true;
   }
 
+  if (!bus_.has_code_memory(start & ~1u)) {
+    give_up(start & ~1u, "execution reached an address where there is no memory");
+    return true;
+  }
+
   bd_arm_state state;
   load_interpreter(start, &state);
   for (;;) {
@@ -366,6 +379,17 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     const bool thumb = (state.cpsr & kThumbBit) != 0;
     const u32 size = thumb ? 2 : 4;
     const u32 next = (pc + size) | (thumb ? 1u : 0u);  // As a return address.
+
+    // An interrupt is taken between instructions. The link register gets the
+    // address of the instruction that was about to run, plus 4, in either
+    // instruction set; handlers return with "subs pc, lr, #4".
+    if (interrupt_line_ && (state.cpsr & 0x80u) == 0) {
+      store_from_interpreter(state);
+      enter_exception(0x12, pc + 4, thumb);
+      ++statistics_.interrupts_taken;
+      load_interpreter(system_.exception_vectors() + 0x18, &state);
+      continue;
+    }
 
     // Software interrupts go to the runtime, exactly as from translated code.
     // The interpreter would jump to a BIOS that is not there.
@@ -375,9 +399,9 @@ bool Machine::interpret(u32 start, u32* continue_at) {
                                  condition_holds(opcode >> 28, state.cpsr));
     if (is_swi) {
       store_from_interpreter(state);
-      system_.software_interrupt(cpu_, thumb ? (opcode & 0xFFu) : ((opcode >> 16) & 0xFFu), next);
+      const u32 go = system_.software_interrupt(cpu_, thumb ? (opcode & 0xFFu) : ((opcode >> 16) & 0xFFu), next);
       if (stopped_) return true;
-      load_interpreter(next, &state);
+      load_interpreter(go, &state);
       continue;
     }
 
@@ -392,6 +416,10 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     bd_arm_core_step(core_);
     bd_arm_core_get_state(core_, &after);
     ++statistics_.interpreted_instructions;
+    if (statistics_.interpreted_instructions >= alarm_at_) {
+      alarm_at_ = ~std::uint64_t{0};
+      system_.alarm();
+    }
     if (stopped_) {  // A handler called during the instruction ended the run.
       store_from_interpreter(after);
       return true;
@@ -438,7 +466,13 @@ bool Machine::interpret(u32 start, u32* continue_at) {
       continue;
     }
 
-    // 3. Somewhere with no translation: keep interpreting.
+    // 3. Somewhere with no translation: keep interpreting, if there is
+    // anything there to interpret.
+    if (!bus_.has_code_memory(after.r[15])) {
+      store_from_interpreter(after);
+      give_up(after.r[15], "execution reached an address where there is no memory");
+      return true;
+    }
     state = after;
   }
 }
@@ -474,7 +508,16 @@ void call(Cpu& c, u32 address) { machine(c).dispatch_call(address); }
 void jump(Cpu& c, u32 address) { machine(c).dispatch_jump(address); }
 bool leave_slow(Cpu& c, u32 ret) { return machine(c).leave_slow(ret); }
 void swi(Cpu& c, u32 number, u32 return_address) {
-  machine(c).system().software_interrupt(c, number, return_address);
+  bd::runtime::Machine& m = machine(c);
+  const u32 go = m.system().software_interrupt(c, number, return_address);
+  if (go != return_address && !m.stopped()) {
+    // The call is dealt with by code at `go`, which translated code cannot
+    // yet be left for and come back from.
+    const u32 size = (return_address & 1u) ? 2 : 4;
+    m.system().unhandled(c, (return_address & ~1u) - size,
+                         "a BIOS call that runs as code was made from translated code");
+    m.stop();
+  }
 }
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value) {
   machine(c).system().coprocessor_write(c, cp, opc1, crn, crm, opc2, value);

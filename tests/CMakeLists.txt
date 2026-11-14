@@ -15,6 +15,7 @@ add_executable(bd_tests
   test_console.cpp
   test_program.cpp
   test_system_control.cpp
+  test_timing.cpp
   test_formats.cpp
   test_narc.cpp
   test_rom.cpp

@@ -105,13 +105,17 @@ add_library(bd_nds STATIC
   src/nds/arm9_bus.cpp
   src/nds/arm9_io.cpp
   src/nds/bios.cpp
+  src/nds/bios_rom.cpp
   src/nds/console.cpp
   src/nds/dma.cpp
   src/nds/interrupts.cpp
   src/nds/ipc.cpp
   src/nds/program.cpp
   src/nds/second_processor.cpp
-  src/nds/system_control.cpp)
+  src/nds/system_control.cpp
+  src/nds/timeline.cpp
+  src/nds/timers.cpp
+  src/nds/video_timing.cpp)
 target_include_directories(bd_nds PUBLIC src)
 target_link_libraries(bd_nds PUBLIC bd_build_flags bd_runtime bd_rom)
 

@@ -128,12 +128,11 @@ TEST(console_runs_start_up_code) {
   CHECK(console.bus().read32(0x027E2FFC) == 0x12345678);
   CHECK(console.bus().read32(0x023E2FFC) == 0);  // Not into the main memory under it.
   // The write to the interrupt master switch reached the interrupt
-  // controller (bit 0 of what was written is clear); the read of a register
-  // nobody implements was recorded.
-  const auto& registers = console.io().unmodelled();
+  // controller (bit 0 of what was written is clear), and the line counter
+  // was read: after 17 instructions the display is still on its first line.
   CHECK(!console.interrupts().master());
-  CHECK(registers.count(0x04000208) == 0);
-  CHECK(registers.at(0x04000006).reads == 1 && registers.at(0x04000006).size == 2);
+  CHECK(console.io().unmodelled().empty());
+  CHECK(c.r[5] == 0);
   CHECK(console.software_interrupts().empty());
   CHECK(console.machine().statistics().interpreted_instructions == 1000);
 }
@@ -191,4 +190,154 @@ TEST(console_stops_at_an_undefined_instruction) {
   CHECK(result.reason == bd::nds::StopReason::Unhandled);
   CHECK(result.address == 0x02000004);
   CHECK(result.detail.find("undefined instruction") != std::string::npos);
+}
+
+namespace {
+
+// A program for the interrupt tests. It installs a handler, enables the
+// vertical blank interrupt and then does one of eight things, chosen by r7:
+//
+//   0  counts in a loop                       4  calls Halt in a loop
+//   1  sleeps (system coprocessor) in a loop  5  waits for an interrupt that never comes
+//   2  calls VBlankIntrWait in a loop         6  as 0, in Thumb state
+//   3  as 2, in Thumb state                   7  as 1, with no interrupt enabled
+//
+// Each loop adds one to r8 per round (r8, because the BIOS calls leave it
+// alone even while they are waiting). The handler acknowledges the
+// interrupt, records it where IntrWait looks, and adds one to the word at
+// 0x02001000.
+//
+//   02000000  mov r0, #0x04000000; ldr r1, =handler; ldr r2, =0x03003FFC; str r1, [r2]
+//   02000010  mov r1, #8; strh r1, [r0, #4]            vertical blank interrupt on
+//   02000018  add r2, r0, #0x200; mov r1, #1; cmp r7, #7; moveq r1, #0
+//   02000028  str r1, [r2, #0x10]                      enable register
+//   0200002c  mov r1, #1; str r1, [r2, #8]             master switch
+//   02000034  mov r1, #0x1F; msr cpsr_c, r1            System mode, interrupts unmasked
+//   0200003c  mov r8, #0; add pc, pc, r7, lsl #2; nop; eight branches
+//   02000068  busy:        add r8, r8, #1; b busy
+//   02000070  sleep:       mov r0, #0; mcr p15, 0, r0, c7, c0, 4; add r8, r8, #1; b sleep
+//   02000080  vblank_wait: svc 0x050000; add r8, r8, #1; b vblank_wait
+//   0200008c  halt_call:   svc 0x060000; add r8, r8, #1; b halt_call
+//   02000098  wait_other:  mov r0, #1; mov r1, #2; svc 0x040000; add r8, r8, #1; b wait_other
+//   020000ac  two jumps into Thumb state
+//   020000bc  t_wait (Thumb): svc 5; movs r0, #1; add r8, r0; b t_wait
+//   020000c4  t_busy (Thumb): movs r0, #1; add r8, r0; b t_busy
+//   020000cc  handler: mov r0, #0x04000000; add r0, r0, #0x200; ldr r1, [r0, #0x14]; str r1, [r0, #0x14]
+//             ldr r2, =0x03003FF8; ldr r3, [r2]; orr r3, r3, r1; str r3, [r2]
+//             ldr r2, =0x02001000; ldr r3, [r2]; add r3, r3, #1; str r3, [r2]; bx lr
+const std::vector<std::uint32_t> kInterrupts = {
+    0xE3A00301, 0xE59F10F4, 0xE59F20F4, 0xE5821000, 0xE3A01008, 0xE1C010B4, 0xE2802C02,
+    0xE3A01001, 0xE3570007, 0x03A01000, 0xE5821010, 0xE3A01001, 0xE5821008, 0xE3A0101F,
+    0xE121F001, 0xE3A08000, 0xE08FF107, 0xE1A00000, 0xEA000006, 0xEA000007, 0xEA00000A,
+    0xEA000014, 0xEA00000B, 0xEA00000D, 0xEA000013, 0xEA000001, 0xE2888001, 0xEAFFFFFD,
+    0xE3A00000, 0xEE070F90, 0xE2888001, 0xEAFFFFFB, 0xEF050000, 0xE2888001, 0xEAFFFFFC,
+    0xEF060000, 0xE2888001, 0xEAFFFFFC, 0xE3A00001, 0xE3A01002, 0xEF040000, 0xE2888001,
+    0xEAFFFFFA, 0xE28F0009, 0xE12FFF10, 0xE28F0009, 0xE12FFF10, 0x2001DF05, 0xE7FB4480,
+    0x44802001, 0x0000E7FC, 0xE3A00301, 0xE2800C02, 0xE5901014, 0xE5801014, 0xE59F2024,
+    0xE5923000, 0xE1833001, 0xE5823000, 0xE59F2018, 0xE5923000, 0xE2833001, 0xE5823000,
+    0xE12FFF1E, 0x020000CC, 0x03003FFC, 0x03003FF8, 0x02001000,
+};
+
+// When the fourth vertical blank begins: line 192 of the first frame, and
+// three whole frames more.
+constexpr std::uint64_t kFourthVerticalBlank = 192 * 2130 + 3 * (263 * 2130);
+
+struct InterruptRun {
+  bd::nds::Program program = program_of(kInterrupts);
+  bd::nds::Console console{program, kNoTranslations};
+  bd::nds::RunResult result;
+  // Runs variant `variant` until the fourth vertical blank begins. Three
+  // have been and gone by then; the run stops before the fourth is taken.
+  explicit InterruptRun(std::uint32_t variant, std::uint64_t frames = 4) {
+    if (!console.direct_boot().ok()) return;
+    console.machine().cpu().r[7] = variant;
+    console.machine().cpu().r[9] = 0xC0FFEE;  // Something for the handler to leave alone.
+    result = console.run(50000000, frames);
+  }
+  std::uint32_t handled() { return console.bus().read32(0x02001000); }
+  std::uint32_t rounds() { return console.machine().cpu().r[8]; }
+};
+
+}  // namespace
+
+TEST(console_takes_interrupts_in_a_busy_program) {
+  InterruptRun run(0);
+  CHECK(run.result.reason == bd::nds::StopReason::FrameLimit);
+  CHECK(run.handled() == 3);
+  CHECK(run.console.machine().statistics().interrupts_taken == 3);
+  CHECK(run.console.video_timing().frames() == 4);
+  CHECK(run.console.sleeps() == 0);
+  // The loop ran all the while. A round is two instructions and the run is
+  // 2,089,530 cycles long at one instruction per cycle.
+  CHECK(run.rounds() > 1040000 && run.rounds() < 1045000);
+  // The interrupted program's registers came back as they were.
+  CHECK(run.console.machine().cpu().r[9] == 0xC0FFEE);
+  CHECK((ds::get_cpsr(run.console.machine().cpu()) & 0xFF) == 0x1F);
+  CHECK(run.console.io().unmodelled().empty());
+}
+
+TEST(console_takes_interrupts_in_thumb_state) {
+  InterruptRun run(6);
+  CHECK(run.result.reason == bd::nds::StopReason::FrameLimit);
+  CHECK(run.handled() == 3);
+  CHECK(run.rounds() > 693000 && run.rounds() < 697000);  // Three instructions a round here.
+}
+
+TEST(console_sleeps_until_an_interrupt) {
+  InterruptRun run(1);
+  CHECK(run.result.reason == bd::nds::StopReason::FrameLimit);
+  CHECK(run.handled() == 3);
+  CHECK(run.rounds() == 3);  // One round per interrupt: asleep in between.
+  CHECK(run.console.sleeps() == 4);
+  // Time jumped from one vertical blank to the next: the run ends exactly
+  // when the fourth begins.
+  CHECK(run.console.timeline().now() == kFourthVerticalBlank);
+  CHECK(run.console.machine().statistics().interpreted_instructions < 200);
+}
+
+TEST(console_bios_calls_that_wait) {
+  for (std::uint32_t variant : {2u, 3u, 4u}) {  // VBlankIntrWait in ARM and Thumb, Halt.
+    InterruptRun run(variant);
+    CHECK(run.result.reason == bd::nds::StopReason::FrameLimit);
+    CHECK(run.handled() == 3);
+    CHECK(run.rounds() == 3);
+    CHECK(run.console.timeline().now() == kFourthVerticalBlank);
+    CHECK(run.console.software_interrupts().at(variant == 4 ? 6 : 5) == 4);
+    CHECK(run.console.machine().cpu().r[9] == 0xC0FFEE);
+  }
+}
+
+TEST(console_interrupt_wait_ignores_other_interrupts) {
+  // IntrWait for an interrupt that never comes: the vertical blank interrupts
+  // are handled meanwhile, and the call does not return.
+  InterruptRun run(5);
+  CHECK(run.result.reason == bd::nds::StopReason::FrameLimit);
+  CHECK(run.handled() == 3);
+  CHECK(run.rounds() == 0);
+  CHECK(run.console.software_interrupts().at(4) == 1);
+}
+
+TEST(console_gives_up_on_a_sleep_that_never_ends) {
+  // No interrupt is enabled, so nothing can wake the processor.
+  InterruptRun run(7, 0);
+  CHECK(run.result.reason == bd::nds::StopReason::Unhandled);
+  CHECK(run.result.detail.find("ten seconds") != std::string::npos);
+  CHECK(run.handled() == 0 && run.rounds() == 0);
+  // It gave up at the first event more than ten seconds on, no later.
+  const std::uint64_t ten_seconds = 10 * bd::nds::Timeline::kCyclesPerSecond;
+  CHECK(run.console.timeline().now() <= ten_seconds);
+  CHECK(run.console.timeline().now() > ten_seconds - 2 * 2130);
+}
+
+TEST(console_stops_when_execution_leaves_memory) {
+  //   02000000  mov r0, #0x08000000
+  //   02000004  bx  r0               nothing is mapped there
+  const bd::nds::Program program = program_of({0xE3A00302, 0xE12FFF10});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  const bd::nds::RunResult result = console.run(1000);
+  CHECK(result.reason == bd::nds::StopReason::Unhandled);
+  CHECK(result.address == 0x08000000);
+  CHECK(result.detail.find("no memory") != std::string::npos);
+  CHECK(console.machine().statistics().interpreted_instructions == 2);
 }

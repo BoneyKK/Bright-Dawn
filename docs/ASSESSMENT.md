@@ -132,9 +132,9 @@ dealt with for the test corpus; the rest are the work ahead.
 | The dispatcher cannot tell which overlay is loaded | **Solved.** A translation belonging to an overlay is used only while the bytes it was made from are in guest memory; otherwise the code is interpreted |
 | A call was bound directly to a function whenever only one module had found one at that address | **Fixed.** Another overlay could be loaded there. Direct binding now requires that only one module can ever occupy the address |
 | Functions reached only from another module were not found | **Fixed.** Call targets are fed between modules until nothing new turns up |
-| Nothing delivers interrupts | Open. The game's frame logic is driven by the vertical-blank interrupt |
+| Nothing delivers interrupts | Partly. Interpreted code takes interrupts, from the display's timing and the timers, and the real program runs on them (BOOT.md). Translated code is not interrupted yet |
 | The processor model has one set of registers, not one per processor mode | **Solved.** Each mode has its registers, in the model and across the boundary to the interpreter |
-| System calls, coprocessor access, hardware registers | Partly. The system coprocessor and the memory map are modelled, and the game's start-up code runs on them (BOOT.md). BIOS calls and hardware registers are not: registers are recorded only |
+| System calls, coprocessor access, hardware registers | Partly. The system coprocessor, the memory map, 12 of the game's 17 BIOS calls, DMA, timers and display timing are modelled, and the game's start-up code runs on them (BOOT.md). Most hardware registers are not: they are recorded only |
 | ARM7 program | Open. Plan: do not run it; answer the ARM9 side's requests natively |
 | Names are addresses | Open. Plan: identify SDK functions by signature against SDK 5.4 |
 

@@ -85,8 +85,9 @@ executed. More in FALLBACK_INTERPRETER.md.
 
 The program's start-up code has been run in the interpreter [code]. It
 completes, performs its handshake with the console's second processor, sets
-up the display, 3D and sound hardware, and comes to rest waiting for an
-interrupt. What it does on the way is in BOOT.md.
+up the display, 3D and sound hardware, takes its first interrupts and starts
+reading a file, which needs the cartridge. What it does on the way is in
+BOOT.md.
 
 ### The owner's existing code translation
 
