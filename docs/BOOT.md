@@ -3,12 +3,12 @@
 How the game's main program is placed in a model of the console and started,
 what the model consists of so far, and how far the real program gets.
 
-**The game does not run.** Its start-up code does, in the interpreter: through
-the handshake with the console's second processor, the initialisation of
-graphics and sound registers and the first interrupts, into the program's
-first attempt to read a file. That is as far as it can be taken in the
-development environment, where there is program code but no cartridge. The
-next step is a run of `bdtool boot` on the owner's ROM.
+**The game does not run.** Its start-up code does, in the interpreter, on the
+owner's ROM: through the handshake with the console's second processor, the
+initialisation of graphics and sound registers, the first interrupts, reading
+its file tables and overlays from the cartridge, and past the check that stops
+the game on a machine that does not look like a console. It then waits for the
+second processor to answer a request, which nothing does yet.
 
 ## The model
 
@@ -25,12 +25,13 @@ In `src/nds`:
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
-| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It performs the start-up handshake and marks its services as ready. Every word the main program sends afterwards is recorded and not answered |
+| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake and marks its services as ready. Every word the main program sends afterwards is recorded and not answered |
+| Console settings (`user_settings`) | Language, the owner's name, message, birthday and favourite colour, the console's network address and its wireless channels. See below |
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
 | BIOS code (`bios_rom.S`) | Three more calls, Halt, IntrWait and VBlankIntrWait, and the interrupt entry. See below |
 | Sleeping | The system coprocessor's "wait for interrupt" puts the processor to sleep until an enabled source requests an interrupt. A sleep of more than ten seconds of console time ends the run |
 | DMA (`dma`) | Transfers that start at once, and transfers fed by the cartridge, in every direction mode, with the fill registers, repeat and the completion interrupt request. A transfer set to start on any other hardware event stays pending and is counted |
-| Cartridge (`cartridge`) | The slot as a running game uses it: the "read data" and "read chip identifier" commands, the block sizes, the part of a cartridge that cannot be read, the completion interrupt, and delivery to a DMA channel. A transfer takes no console time. The encrypted exchange before a game starts is not needed and not modelled; the save memory is not modelled. **Tested on generated data only: no real program has used it yet** |
+| Cartridge (`cartridge`) | The slot as a running game uses it: the "read data" and "read chip identifier" commands, the block sizes, the part of a cartridge that cannot be read, the completion interrupt, and delivery to a DMA channel. A transfer takes no console time. The encrypted exchange before a game starts is not needed and not modelled; the save memory is not modelled. The real program reads its file tables and overlays through it, and an overlay read this way passes the game's own check of its code |
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
 
@@ -97,8 +98,41 @@ Where the values come from: they are what emulators set when they skip the
 firmware, checked against the source of NooDS, and what GBATEK documents. They
 have not been compared with a real console here.
 
-Known to be missing from that state: the user settings the firmware copies
-from its storage (language, names, calibration) at `0x027FFC80`.
+## The console's settings
+
+A console keeps its owner's settings and its wireless network address in its
+firmware. A game's main program never reads the firmware: the game's
+second-processor program does, as it starts, and leaves what it read near the
+top of main memory. Read from that program's start-up routine in this game:
+
+- the settings block, `0x74` bytes, at `0x027FFC80`: language, favourite
+  colour, birthday, name, message, touch screen calibration, then an update
+  count and a checksum;
+- the network address, six bytes, at `0x027FFCF4`;
+- the wireless channels it picked from the ones the firmware allows, 16 bits,
+  at `0x027FFCFA`.
+
+This project has no firmware image, so the stand-in writes all three from
+values of its own (`UserSettings`): English, a player called "Player" born on
+1 January, an invented network address, channels 1 to 13. The language will
+become a setting; for now it can be changed in code only. Values the firmware
+would not hold are refused, not corrected.
+
+How this was checked: the block passes the two tests the second-processor
+program applies before it uses one (checksum and update count), by reading
+that code. The choice of channels was compared with the game's own routine,
+run in the interpreter, for all 65,536 possible inputs: no difference. The
+touch screen calibration is a guess that emulators also make (raw reading =
+pixel times 16) and has to be looked at again when the touch screen is
+modelled.
+
+**Why it matters.** The game looks at these early. An overlay it loads in its
+first frames, whose code is stored encrypted and decrypts itself as it runs,
+checks its own code, fetches the network address and the owner's details, and
+when the network address is all zeros erases part of its stack and its own
+code and ends the program: interrupts masked, waiting for ever. No console
+has that address; a model with empty memory there does. With the settings in
+place the game goes on.
 
 ## The trace tool
 
@@ -126,9 +160,11 @@ use, is the work queue for the hardware model.
 
 ## What the real program does
 
-Run in the development session on the program files the owner supplied
-(European release; the files are kept outside the repository). Interpreter
-only: no translated game code has been executed.
+Run in the development session on the owner's own files (European release;
+kept outside the repository): first on the extracted program code alone, then
+on the ROM. Interpreter only: no translated game code has been executed.
+
+### From extracted code, without a cartridge
 
 - The start-up code completes. It masks interrupts, waits for the vertical
   counter to read zero, configures the system coprocessor, gives the
@@ -178,13 +214,30 @@ only: no translated game code has been executed.
 The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
 0x06, 0x09 and 0x0B to 0x15. That bounds the BIOS work.
 
-Next: a run on the real ROM. The cartridge slot is modelled now, and
-`bdtool boot` given a ROM puts the ROM in it and has the header, so file
-reads can return the game's data. That cannot be tried in the development
-environment, because the cartridge's contents exist only on the owner's
-machine: the report of `bdtool boot` on the ROM is how each further step
-will be found. After that: the second processor's answers, and interrupts in
-translated code.
+### From the ROM
+
+- Everything above up to the idle loop happens as before. With the header and
+  a cartridge, the file system code then reads from the slot: file tables,
+  and overlays, which it unpacks.
+- Without console settings the run ended after 1.47 million instructions,
+  about a twentieth of a second of console time: the check described under "The console's settings"
+  found a network address of zeros and ended the program. Seen from outside,
+  that is a program asleep with interrupts masked; `bdtool boot` reported
+  millions of sleeps and one interrupt taken.
+- With the settings it passes the check and goes on. In ten seconds of
+  console time (600 frames) it reads 120,832 bytes from the cartridge in 236
+  commands, between `0x00008000` and `0x0D6723FF`, asks for the chip
+  identifier 103 times, makes 19 DMA transfers, takes 676 interrupts, and
+  touches no memory where nothing is mapped.
+- It reads register `0x04004000` six times. That register exists only on the
+  DSi; here it reads as zero.
+- It sends four words to the second processor: one to service 13, one to
+  service 7 (sound), and two to service 11. Nothing answers. After the two to
+  service 11 the program's threads wait, and only the idle loop and the
+  interrupt handlers run: 4.6 million instructions in those ten seconds.
+
+Next: answers from the second processor, beginning with service 11, which is
+what the program is waiting for. Then interrupts in translated code.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

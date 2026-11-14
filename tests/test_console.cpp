@@ -71,6 +71,32 @@ TEST(console_direct_boot_sets_the_firmware_state) {
   CHECK(console.io().unmodelled().at(0x04000300).writes == 0);  // Set by the firmware, not the program.
 }
 
+TEST(console_direct_boot_leaves_the_user_settings_in_memory) {
+  const bd::nds::Program program = program_of(kStartUp);
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  // The defaults: English, and a network address that is not all zeros.
+  CHECK(console.bus().read16(0x027FFC80) == 5);
+  CHECK((console.bus().read16(0x027FFCE4) & 7) == 1);
+  std::uint32_t address_bytes = 0;
+  for (std::uint32_t i = 0; i < 6; ++i) address_bytes |= console.bus().read8(0x02FFFCF4 + i);
+  CHECK(address_bytes != 0);
+
+  bd::nds::UserSettings settings;
+  settings.language = bd::nds::UserSettings::Language::French;
+  settings.nickname = u"Isaac";
+  bd::nds::Console french(program, kNoTranslations);
+  french.set_user_settings(settings);
+  CHECK(french.direct_boot().ok());
+  CHECK((french.bus().read16(0x027FFCE4) & 7) == 2);
+  CHECK(french.bus().read16(0x027FFC86) == 'I' && french.bus().read16(0x027FFC9A) == 5);
+
+  settings.nickname = u"Far too long a name";
+  bd::nds::Console invalid(program, kNoTranslations);
+  invalid.set_user_settings(settings);
+  CHECK(!invalid.direct_boot().ok());
+}
+
 TEST(console_direct_boot_rejects_a_program_that_does_not_fit) {
   bd::nds::Program program = program_of(kStartUp);
   program.arm9_load_address = 0x023FFFF0;

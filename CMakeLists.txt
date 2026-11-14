@@ -117,6 +117,7 @@ add_library(bd_nds STATIC
   src/nds/system_control.cpp
   src/nds/timeline.cpp
   src/nds/timers.cpp
+  src/nds/user_settings.cpp
   src/nds/video_timing.cpp)
 target_include_directories(bd_nds PUBLIC src)
 target_link_libraries(bd_nds PUBLIC bd_build_flags bd_runtime bd_rom)

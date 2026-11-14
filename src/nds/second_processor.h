@@ -6,8 +6,10 @@
 // ipc.h. That program is not run here. This class answers the main program's
 // side of the conversation directly instead.
 //
-// So far it does one thing: the handshake at start-up. Everything else the
-// main program sends is recorded and not answered.
+// So far it does two things: it leaves the console's settings in memory the
+// way that program does as it starts (user_settings.h), and it performs the
+// handshake at start-up. Everything else the main program sends is recorded
+// and not answered.
 #pragma once
 
 #include <cstdint>
@@ -16,6 +18,7 @@
 
 #include "nds/arm9_bus.h"
 #include "nds/ipc.h"
+#include "nds/user_settings.h"
 
 namespace bd::nds {
 
@@ -30,6 +33,12 @@ class SecondProcessor : public IpcPeer {
   // Must be called once, with the channel this is the other end of, before
   // the program starts.
   void connect(Ipc& ipc);
+
+  // What the second-processor program does with the console's settings when
+  // it starts, before the main program can look: the settings block, the
+  // network address and the wireless channels go to their places in main
+  // memory. Fails, writing nothing, if the settings are not valid.
+  Status start_up(const UserSettings& settings);
 
   void sync_written(unsigned value) override;
   void interrupt_requested() override;

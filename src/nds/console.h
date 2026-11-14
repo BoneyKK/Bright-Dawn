@@ -6,9 +6,10 @@
 // the timers, DMA and the channel to the second processor; time passes with
 // the instructions interpreted and jumps ahead when the processor sleeps.
 // Some BIOS calls are implemented (bios.h, bios_rom.S). The second
-// processor's stand-in only answers the start-up handshake. Whatever the
-// program asks for that is not there is recorded, and a BIOS call that is
-// not implemented stops the run.
+// processor's stand-in leaves the console's settings in memory and answers
+// the start-up handshake, nothing more. Whatever the program asks for that
+// is not there is recorded, and a BIOS call that is not implemented stops
+// the run.
 #pragma once
 
 #include <cstdint>
@@ -28,6 +29,7 @@
 #include "nds/system_control.h"
 #include "nds/timeline.h"
 #include "nds/timers.h"
+#include "nds/user_settings.h"
 #include "nds/video_timing.h"
 #include "machine.h"
 
@@ -56,8 +58,14 @@ class Console : private runtime::System {
   // empty) must outlive the console.
   Console(const Program& program, const TranslatedEntry* translated);
 
+  // The console's language, its owner's details and its network address
+  // (user_settings.h). Takes effect at the next direct_boot.
+  void set_user_settings(const UserSettings& settings) { user_settings_ = settings; }
+  const UserSettings& user_settings() const { return user_settings_; }
+
   // Places the program in memory and sets registers and memory the way the
-  // firmware leaves them. Returns an error if the program does not fit.
+  // firmware leaves them. Returns an error if the program does not fit or the
+  // user settings are not valid.
   Status direct_boot();
 
   // How much console time one interpreted instruction is taken to use, in
@@ -113,6 +121,7 @@ class Console : private runtime::System {
   void stop(std::uint32_t address, const std::string& what);
 
   const Program& program_;
+  UserSettings user_settings_;
   Arm9Io io_;
   Arm9Bus bus_;
   SystemControl system_control_;
