@@ -200,3 +200,27 @@ else()
   add_test(NAME guest_interpreter COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image")
   set_tests_properties(guest_interpreter PROPERTIES DISABLED TRUE)
 endif()
+
+# The code the console puts where the BIOS would be is embedded in the program
+# as numbers. Where the assembler is available, check that those numbers are
+# what its source assembles to.
+if(BD_GUEST_IMAGE_OK)
+  set(bios_dir ${CMAKE_CURRENT_BINARY_DIR}/bios_rom)
+  set(bios_src ${CMAKE_SOURCE_DIR}/src/nds/bios_rom.S)
+  add_custom_command(
+    OUTPUT ${bios_dir}/bios_rom.bin
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${bios_dir}
+    COMMAND ${BD_ARM_CLANG} --target=armv5te-none-eabi -mcpu=arm946e-s -c ${bios_src} -o ${bios_dir}/bios_rom.o
+    COMMAND ${BD_ARM_LLD} -Ttext=0xFFFF0000 -e 0xFFFF0000 ${bios_dir}/bios_rom.o -o ${bios_dir}/bios_rom.elf
+    COMMAND ${BD_ARM_OBJCOPY} -O binary ${bios_dir}/bios_rom.elf ${bios_dir}/bios_rom.bin
+    DEPENDS ${bios_src}
+    COMMENT "Assembling the BIOS stand-in to compare with the embedded copy"
+    VERBATIM)
+  add_custom_target(bios_rom_binary ALL DEPENDS ${bios_dir}/bios_rom.bin)
+  add_executable(bios_rom_check bios_rom_check.cpp)
+  target_link_libraries(bios_rom_check PRIVATE bd_nds)
+  add_test(NAME bios_rom_matches_source COMMAND bios_rom_check ${bios_dir}/bios_rom.bin)
+else()
+  add_test(NAME bios_rom_matches_source COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM assembler")
+  set_tests_properties(bios_rom_matches_source PROPERTIES DISABLED TRUE)
+endif()

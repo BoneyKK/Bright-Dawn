@@ -1,5 +1,6 @@
 #include "nds/console.h"
 
+#include "nds/bios_rom.h"
 #include "rom/arm9.h"
 
 namespace bd::nds {
@@ -16,6 +17,8 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
     : program_(program),
       bus_(io_),
       system_control_(bus_),
+      video_timing_(timeline_, interrupts_),
+      timers_(timeline_, interrupts_),
       second_processor_(bus_),
       ipc_(interrupts_, second_processor_),
       machine_(bus_, *this, translated),
@@ -25,6 +28,17 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   interrupts_.attach(io_);
   ipc_.attach(io_);
   dma_.attach(io_);
+  video_timing_.attach(io_);
+  timers_.attach(io_);
+  interrupts_.on_change = [this] { machine_.set_interrupt_line(interrupts_.pending()); };
+  timeline_.on_refresh = [this] { catch_up(); };
+  timeline_.on_rescheduled = [this] { set_alarm(); };
+  video_timing_.on_vertical_blank = [this] {
+    if (frame_limit_ != 0 && video_timing_.frames() >= frame_limit_ && !frame_limit_reached_) {
+      frame_limit_reached_ = true;
+      machine_.stop();
+    }
+  };
   second_processor_.connect(ipc_);
 }
 
@@ -45,6 +59,13 @@ Status Console::direct_boot() {
     const std::size_t field = params->offset + 0x14;
     if (field + 4 <= arm9.size()) arm9[field] = arm9[field + 1] = arm9[field + 2] = arm9[field + 3] = 0;
   }
+  // This project's own code where the BIOS would be (bios_rom.S).
+  std::vector<std::uint8_t> bios(kBiosRomWords * 4);
+  for (std::size_t i = 0; i < kBiosRomWords; ++i) {
+    for (int b = 0; b < 4; ++b) bios[i * 4 + b] = static_cast<std::uint8_t>(kBiosRom[i] >> (8 * b));
+  }
+  bus_.set_bios(bios.data(), bios.size());
+
   if (!bus_.load(program_.arm9_load_address, arm9.data(), arm9.size()))
     return Error{ErrorCode::Corrupt, "the ARM9 program does not fit in main memory at its load address"};
   machine_.note_memory_written(program_.arm9_load_address, arm9.size());
@@ -80,24 +101,75 @@ Status Console::direct_boot() {
   return {};
 }
 
-RunResult Console::run(std::uint64_t instruction_limit) {
+RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limit) {
   stopped_ = false;
   stop_detail_.clear();
+  frame_limit_ = frame_limit;
+  frame_limit_reached_ = false;
   machine_.set_instruction_limit(instruction_limit);
+  accounted_instructions_ = machine_.statistics().interpreted_instructions;
+  set_alarm();
   machine_.call_function(program_.arm9_entry, kResetVector);
   RunResult result;
-  if (machine_.instruction_limit_reached() && instruction_limit != 0) {
-    result.reason = StopReason::InstructionLimit;
-    result.address = stop_address_;
-  } else if (stopped_) {
+  if (stopped_) {
     result.reason = StopReason::Unhandled;
     result.address = stop_address_;
     result.detail = stop_detail_;
+  } else if (frame_limit_reached_) {
+    result.reason = StopReason::FrameLimit;
+  } else if (machine_.instruction_limit_reached() && instruction_limit != 0) {
+    result.reason = StopReason::InstructionLimit;
+    result.address = limit_address_;
   } else {
     result.reason = StopReason::Returned;
   }
   return result;
 }
+
+void Console::catch_up() {
+  const std::uint64_t instructions = machine_.statistics().interpreted_instructions;
+  const std::uint64_t passed = instructions - accounted_instructions_;
+  accounted_instructions_ = instructions;
+  if (passed != 0) timeline_.advance(passed * kCyclesPerInstruction);
+  set_alarm();
+}
+
+void Console::set_alarm() {
+  const Timeline::Time next = timeline_.next_event();
+  if (next == Timeline::kNever) return;
+  // Time not yet accounted for counts towards the event too.
+  const std::uint64_t pending = machine_.statistics().interpreted_instructions - accounted_instructions_;
+  const Timeline::Time now = timeline_.now() + pending * kCyclesPerInstruction;
+  const Timeline::Time wait = next > now ? next - now : 0;
+  machine_.set_alarm(wait / kCyclesPerInstruction + 1);
+}
+
+void Console::alarm() { catch_up(); }
+
+void Console::wait_for_interrupt() {
+  ++sleeps_;
+  catch_up();
+  const Timeline::Time began = timeline_.now();
+  // What ends the sleep is a request from an enabled source; the master
+  // switch and the processor's mask decide only whether it is then taken.
+  while (!interrupts_.any_enabled_requested() && !machine_.stopped()) {
+    const Timeline::Time next = timeline_.next_event();
+    if (next == Timeline::kNever) {
+      stop(0, "the processor is waiting for an interrupt and nothing is going to raise one");
+      machine_.stop();
+      return;
+    }
+    if (next - began > kLongestSleep) {
+      stop(0, "the processor waited ten seconds of console time for an interrupt that did not come");
+      machine_.stop();
+      return;
+    }
+    timeline_.advance_to(next);
+  }
+  set_alarm();
+}
+
+u32 Console::exception_vectors() { return system_control_.high_vectors() ? 0xFFFF0000u : 0u; }
 
 void Console::stop(u32 address, const std::string& what) {
   if (stopped_) return;  // Keep the first cause.
@@ -106,15 +178,23 @@ void Console::stop(u32 address, const std::string& what) {
   stop_detail_ = what;
 }
 
-void Console::software_interrupt(ds::Cpu& cpu, u32 number, u32 return_address) {
+u32 Console::software_interrupt(ds::Cpu& cpu, u32 number, u32 return_address) {
   ++software_interrupts_[number];
+  // The three calls that wait for an interrupt run as code on the processor
+  // (bios_rom.S), because the program's interrupt handler runs in the middle
+  // of them. The processor takes the software interrupt exception for real.
+  if (number == 0x04 || number == 0x05 || number == 0x06) {
+    machine_.enter_exception(0x13, return_address & ~1u, (return_address & 1u) != 0);
+    return exception_vectors() + 0x08;
+  }
   const Bios::Result result = bios_.call(cpu, number);
-  if (result.done) return;
+  if (result.done) return return_address;
   // Carrying on with registers the call should have changed would only
   // produce nonsense further down, so the run ends here.
   const u32 size = (return_address & 1u) ? 2 : 4;
   stop((return_address & ~1u) - size, result.problem);
   machine_.stop();
+  return return_address;
 }
 
 u32 Console::coprocessor_read(ds::Cpu&, int cp, int opc1, int crn, int crm, int opc2) {
@@ -133,8 +213,18 @@ void Console::coprocessor_write(ds::Cpu&, int cp, int opc1, int crn, int crm, in
     return;
   }
   system_control_.write(crn, crm, opc2, value);
+  if (system_control_.wait_requested()) {
+    system_control_.clear_wait_request();
+    wait_for_interrupt();
+  }
 }
 
-void Console::unhandled(ds::Cpu&, u32 address, const char* what) { stop(address, what); }
+void Console::unhandled(ds::Cpu&, u32 address, const char* what) {
+  if (machine_.instruction_limit_reached()) {
+    limit_address_ = address;
+    return;
+  }
+  stop(address, what);
+}
 
 }  // namespace bd::nds

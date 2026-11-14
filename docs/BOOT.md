@@ -4,9 +4,10 @@ How the game's main program is placed in a model of the console and started,
 what the model consists of so far, and how far the real program gets.
 
 **The game does not run.** Its start-up code does, in the interpreter: through
-the handshake with the console's second processor and the initialisation of
-graphics and sound registers, until the program has nothing to do but wait
-for an interrupt. Interrupts are not taken yet.
+the handshake with the console's second processor, the initialisation of
+graphics and sound registers and the first interrupts, into the program's
+first attempt to read a file. There the model runs out: reading files needs
+the cartridge, which is not modelled yet.
 
 ## The model
 
@@ -17,21 +18,58 @@ In `src/nds`:
 | Memory map of the main processor (`arm9_bus`) | Main memory, both fast memories, shared memory, palette, video and sprite memory, in their places and repeating as on the hardware. Video memory is plain memory, not banked. Accesses to addresses with nothing behind them are counted |
 | System coprocessor (`system_control`) | Places and enables the fast memories, including the mode in which one takes writes but not reads. Identification registers. Protection and cache registers are stored and have no effect. A request to wait for an interrupt is noted, not acted on |
 | Hardware registers (`arm9_io`) | Parts of the hardware implement their registers here. A register nobody implements keeps the last value written, and every access to one is counted by address |
-| Interrupt controller (`interrupts`) | The master switch, enable and request registers. Sources can request an interrupt; **the processor never takes one yet** |
+| Interrupt controller (`interrupts`) | The master switch, enable and request registers. When an enabled source has requested an interrupt, the master switch is on and the processor's mask is clear, the processor takes it before its next instruction. **Only interpreted code is interrupted so far** |
+| Time (`timeline`) | Console time in system clock cycles. Each interpreted instruction is taken to use one cycle, which is coarse. When the processor sleeps, time jumps to the next event |
+| Display timing (`video_timing`) | The line counter, the blanking flags, and the vertical blank, horizontal blank and line-match interrupts, at 263 lines of 2,130 cycles a frame. Nothing is drawn |
+| Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
 | Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It performs the start-up handshake and marks its services as ready. Every word the main program sends afterwards is recorded and not answered |
-| BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
+| BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
+| BIOS code (`bios_rom.S`) | Three more calls, Halt, IntrWait and VBlankIntrWait, and the interrupt entry. See below |
+| Sleeping | The system coprocessor's "wait for interrupt" puts the processor to sleep until an enabled source requests an interrupt. A sleep of more than ten seconds of console time ends the run |
 | DMA (`dma`) | Transfers that start at once, in every direction mode, with the fill registers and the completion interrupt request. A transfer set to start on a hardware event stays pending and is counted |
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
 
-Not present at all: taking interrupts, timing, the cartridge, video, sound,
-input.
+Not present at all: the cartridge, video, sound, input. Interrupts in
+translated code are not present either: the tool that exists runs everything
+in the interpreter.
 
 The handshake and the "services ready" value follow what NooDS does when it
 stands in for the second processor; the handshake also matches what the
 game's own code waits for, read from its instructions. Neither has been
 compared with a real console here.
+
+## The code where the BIOS would be
+
+Most BIOS calls compute something and return, and are done natively. Four
+things cannot be: the program's own interrupt handler runs in the middle of
+them. They are the entry into an interrupt, which calls that handler, and the
+three calls that wait for an interrupt.
+
+For those the console has 304 bytes of code at the address of the real BIOS,
+`0xFFFF0000`, and the processor takes the exception for real: it changes mode
+and continues at the vector, as on hardware. The code is this project's own
+(`src/nds/bios_rom.S`); it is not Nintendo's BIOS and contains none of it. It
+does what those parts of a BIOS are known to do:
+
+- An interrupt: save r0-r3, r12 and the return address, call the handler whose
+  address the program keeps in the last word of the data memory, restore,
+  return.
+- Halt: sleep until an interrupt is requested.
+- IntrWait and VBlankIntrWait: sleep until the program's handler has recorded
+  one of the wanted interrupts in the word before its own address, then clear
+  it. As on the console's main processor, asking not to discard interrupts
+  already recorded does not return at once: at least one interrupt is waited
+  for.
+
+Its numbers are embedded in the program, and a test assembles the source and
+fails if they differ.
+
+What this rests on: the source of NooDS, which does the same natively, and
+recollection of GBATEK, which could not be reached from the development
+environment for this part. One detail is from recollection alone and marked
+so in the source: that IntrWait turns the interrupt master switch on.
 
 ## The state a game starts in
 
@@ -109,17 +147,29 @@ only: no translated game code has been executed.
 - It turns the interrupt master switch on, enables four sources (vertical
   blank, timer 0, source 13 and "word received") and unmasks interrupts in
   the processor.
-- It ends in its idle loop: a thread that does nothing but ask the system
-  coprocessor to wait for an interrupt, over and over. The thread that was
-  doing the work is waiting for something that only an interrupt can bring.
+- It then comes to rest in its idle loop: a thread that does nothing but ask
+  the system coprocessor to wait for an interrupt. Without interrupts the run
+  stayed there.
+- With interrupts it sleeps once, is woken, and goes on. In 2.4 seconds of
+  console time it takes 159 interrupts, from the vertical blank and from
+  timer 0, which the program runs as its own clock. It uses the hardware
+  divider, makes more DMA transfers, and enters file system code: it reads a
+  file in blocks and unpacks what it reads with a routine it keeps in the
+  fast instruction memory.
+- There is no cartridge behind those reads, and this run had no ROM header
+  either, so what it unpacks is not data. After 79.7 million instructions and
+  2.4 seconds of console time it jumps to an address where there is no
+  memory, and the run ends there.
 
 The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
 0x06, 0x09 and 0x0B to 0x15. That bounds the BIOS work.
 
-Next: taking interrupts, the events that raise them (vertical blank, timers,
-replies from the second processor), and waiting for one. The plan for the
-second processor, from ASSESSMENT.md, is not to run its program but to answer
-the main program's requests natively.
+Next: the cartridge, so that file reads return the game's data. From there
+on the program cannot be run in the development environment at all, because
+the cartridge's contents exist only on the owner's machine: `bdtool boot`
+with the ROM, and its report, is how each further step will be found.
+After that: the second processor's answers, and interrupts in translated
+code.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

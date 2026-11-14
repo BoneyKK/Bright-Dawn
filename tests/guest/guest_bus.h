@@ -28,12 +28,13 @@ class Bus : public bd::runtime::Bus {
 // processor; any other request is recorded as a problem.
 class System : public bd::runtime::System {
  public:
-  void software_interrupt(ds::Cpu& cpu, std::uint32_t number, std::uint32_t) override {
+  std::uint32_t software_interrupt(ds::Cpu& cpu, std::uint32_t number, std::uint32_t return_address) override {
     if (number == kTestSoftwareInterrupt) {
       cpu.r[0] = test_software_interrupt(cpu.r[0], cpu.r[1]);
     } else {
       note("software interrupt %u", number);
     }
+    return return_address;
   }
   std::uint32_t coprocessor_read(ds::Cpu&, int, int, int, int, int) override { note("coprocessor read%.0u", 0); return 0; }
   void coprocessor_write(ds::Cpu&, int, int, int, int, int, std::uint32_t) override { note("coprocessor write%.0u", 0); }

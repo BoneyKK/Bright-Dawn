@@ -1,5 +1,6 @@
 #include "nds/arm9_bus.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace bd::nds {
@@ -14,6 +15,8 @@ constexpr u32 kSpriteSize = 2 * 1024;
 // them. Until that is modelled the whole address range is backed by plain
 // memory, so that what the program writes can at least be read back.
 constexpr u32 kVideoSize = 16 * 1024 * 1024;
+constexpr u32 kBiosAddress = 0xFFFF0000;
+constexpr u32 kBiosSize = 4 * 1024;
 
 }  // namespace
 
@@ -25,7 +28,13 @@ Arm9Bus::Arm9Bus(Io& io)
       shared_ram_(kSharedRamSize),
       palette_(kPaletteSize),
       video_(kVideoSize),
-      sprites_(kSpriteSize) {}
+      sprites_(kSpriteSize),
+      bios_(kBiosSize) {}
+
+void Arm9Bus::set_bios(const std::uint8_t* data, std::size_t size) {
+  std::fill(bios_.begin(), bios_.end(), std::uint8_t{0});
+  std::memcpy(bios_.data(), data, std::min<std::size_t>(size, kBiosSize));
+}
 
 void Arm9Bus::map_itcm(bool readable, bool writable, std::uint64_t size) {
   itcm_map_ = FastMemory{readable, writable, 0, size};
@@ -53,6 +62,9 @@ std::uint8_t* Arm9Bus::locate(u32 address, bool write) {
     case 0x05: return palette_.data() + (address & (kPaletteSize - 1));
     case 0x06: return video_.data() + (address & (kVideoSize - 1));
     case 0x07: return sprites_.data() + (address & (kSpriteSize - 1));
+    case 0xFF:
+      if (!write && address - kBiosAddress < kBiosSize) return bios_.data() + (address - kBiosAddress);
+      return nullptr;
     default: return nullptr;
   }
 }

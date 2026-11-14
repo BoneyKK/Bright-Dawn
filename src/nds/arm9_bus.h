@@ -44,6 +44,7 @@ class Arm9Bus : public runtime::Bus {
   void write8(std::uint32_t address, std::uint8_t value) override;
   void write16(std::uint32_t address, std::uint16_t value) override;
   void write32(std::uint32_t address, std::uint32_t value) override;
+  bool has_code_memory(std::uint32_t address) override { return locate(address, false) != nullptr; }
 
   // The two small fast memories are placed and switched on by the program
   // through the system coprocessor. Until then nothing is mapped there.
@@ -56,6 +57,11 @@ class Arm9Bus : public runtime::Bus {
   // everything else.
   void map_itcm(bool readable, bool writable, std::uint64_t size);
   void map_dtcm(bool readable, bool writable, std::uint32_t base, std::uint64_t size);
+
+  // Puts read-only code at the top of the address space, where the
+  // processor's exception vectors are (0xFFFF0000, at most 4 KiB). Writes
+  // there are counted as going nowhere.
+  void set_bios(const std::uint8_t* data, std::size_t size);
 
   // Copies bytes into main memory, as the console's loader does before the
   // program starts. Returns false if the range is not inside main memory.
@@ -80,7 +86,7 @@ class Arm9Bus : public runtime::Bus {
   void write(std::uint32_t address, unsigned size, std::uint32_t value);
 
   Io& io_;
-  std::vector<std::uint8_t> main_ram_, itcm_, dtcm_, shared_ram_, palette_, video_, sprites_;
+  std::vector<std::uint8_t> main_ram_, itcm_, dtcm_, shared_ram_, palette_, video_, sprites_, bios_;
   FastMemory itcm_map_, dtcm_map_;
   BusStatistics statistics_;
 };

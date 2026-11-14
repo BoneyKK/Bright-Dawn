@@ -2,8 +2,10 @@
 // coprocessor and hardware registers, put together and started the way the
 // console's firmware starts a game.
 //
-// This is a first assembly. Some BIOS calls are implemented (bios.h); there
-// is no timing, interrupts are requested but never taken, and the second
+// This is a first assembly. Interrupts are taken, from the display's timing,
+// the timers, DMA and the channel to the second processor; time passes with
+// the instructions interpreted and jumps ahead when the processor sleeps.
+// Some BIOS calls are implemented (bios.h, bios_rom.S). The second
 // processor's stand-in only answers the start-up handshake. Whatever the
 // program asks for that is not there is recorded, and a BIOS call that is
 // not implemented stops the run.
@@ -22,6 +24,9 @@
 #include "nds/program.h"
 #include "nds/second_processor.h"
 #include "nds/system_control.h"
+#include "nds/timeline.h"
+#include "nds/timers.h"
+#include "nds/video_timing.h"
 #include "machine.h"
 
 namespace bd::nds {
@@ -29,6 +34,7 @@ namespace bd::nds {
 enum class StopReason {
   Returned,          // Control came back to where the entry point was called from.
   InstructionLimit,  // The requested number of interpreted instructions ran.
+  FrameLimit,        // The requested number of frames passed.
   Unhandled,         // The program needs something that is not implemented.
 };
 
@@ -52,9 +58,21 @@ class Console : private runtime::System {
   // firmware leaves them. Returns an error if the program does not fit.
   Status direct_boot();
 
+  // How much console time one interpreted instruction is taken to use, in
+  // system clock cycles. A coarse figure: the real cost depends on the
+  // instruction and on what memory it touches. What the program sees of time
+  // is mostly the display's rhythm, which this keeps steady.
+  static constexpr Timeline::Time kCyclesPerInstruction = 1;
+
+  // How long the processor may sleep waiting for an interrupt before the run
+  // is ended, in console time. A program that waits this long is waiting for
+  // something that will not come.
+  static constexpr Timeline::Time kLongestSleep = 10 * Timeline::kCyclesPerSecond;
+
   // Runs from the entry point. `instruction_limit` bounds the instructions
-  // interpreted (0 = no bound); translated code is not counted.
-  RunResult run(std::uint64_t instruction_limit);
+  // interpreted and `frame_limit` the frames displayed (0 = no bound);
+  // translated code is not counted.
+  RunResult run(std::uint64_t instruction_limit, std::uint64_t frame_limit = 0);
 
   Arm9Bus& bus() { return bus_; }
   Arm9Io& io() { return io_; }
@@ -62,6 +80,11 @@ class Console : private runtime::System {
   Interrupts& interrupts() { return interrupts_; }
   Ipc& ipc() { return ipc_; }
   Dma& dma() { return dma_; }
+  Timeline& timeline() { return timeline_; }
+  VideoTiming& video_timing() { return video_timing_; }
+  Timers& timers() { return timers_; }
+  // Times the processor slept waiting for an interrupt.
+  std::uint64_t sleeps() const { return sleeps_; }
   SecondProcessor& second_processor() { return second_processor_; }
   runtime::Machine& machine() { return machine_; }
 
@@ -69,7 +92,15 @@ class Console : private runtime::System {
   const std::map<std::uint32_t, std::uint64_t>& software_interrupts() const { return software_interrupts_; }
 
  private:
-  void software_interrupt(ds::Cpu& cpu, std::uint32_t number, std::uint32_t return_address) override;
+  std::uint32_t software_interrupt(ds::Cpu& cpu, std::uint32_t number, std::uint32_t return_address) override;
+  std::uint32_t exception_vectors() override;
+  void alarm() override;
+  // Accounts for the instructions interpreted since the last call as time
+  // passed, and sets the alarm for the next event.
+  void catch_up();
+  void set_alarm();
+  // The processor sleeps until an enabled interrupt is requested.
+  void wait_for_interrupt();
   std::uint32_t coprocessor_read(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2) override;
   void coprocessor_write(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2,
                          std::uint32_t value) override;
@@ -81,6 +112,9 @@ class Console : private runtime::System {
   Arm9Bus bus_;
   SystemControl system_control_;
   Interrupts interrupts_;
+  Timeline timeline_;
+  VideoTiming video_timing_;
+  Timers timers_;
   SecondProcessor second_processor_;
   Ipc ipc_;
   runtime::Machine machine_;
@@ -113,8 +147,13 @@ class Console : private runtime::System {
   Bios bios_;
   Dma dma_;
   std::map<std::uint32_t, std::uint64_t> software_interrupts_;
+  std::uint64_t accounted_instructions_ = 0;
+  std::uint64_t frame_limit_ = 0;
+  bool frame_limit_reached_ = false;
+  std::uint64_t sleeps_ = 0;
   bool stopped_ = false;
   std::uint32_t stop_address_ = 0;
+  std::uint32_t limit_address_ = 0;
   std::string stop_detail_;
 };
 

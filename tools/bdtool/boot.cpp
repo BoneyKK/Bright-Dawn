@@ -31,7 +31,7 @@ const char* mode_name(std::uint32_t mode) {
 
 }  // namespace
 
-int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit) {
+int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit) {
   using namespace bd;
   std::printf("bdtool %s\n", BD_VERSION);
 
@@ -59,7 +59,7 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
     std::fprintf(stderr, "error: %s\n", s.error().message.c_str());
     return 1;
   }
-  const nds::RunResult result = console.run(instruction_limit);
+  const nds::RunResult result = console.run(instruction_limit, frame_limit);
 
   std::printf("Boot trace. Every instruction is interpreted; this tool contains no translated code.\n");
   std::printf("Program: ARM9 %zu bytes at 0x%08" PRIX32 ", entry 0x%08" PRIX32 ", %zu overlays, header %s\n",
@@ -75,10 +75,18 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
     case nds::StopReason::InstructionLimit:
       std::printf("Stopped: instruction limit reached, at 0x%08" PRIX32 "\n", result.address);
       break;
+    case nds::StopReason::FrameLimit:
+      std::printf("Stopped: frame limit reached\n");
+      break;
     case nds::StopReason::Unhandled:
       std::printf("Stopped: at 0x%08" PRIX32 ": %s\n", result.address, result.detail.c_str());
       break;
   }
+
+  const double seconds = static_cast<double>(console.timeline().now()) / static_cast<double>(nds::Timeline::kCyclesPerSecond);
+  std::printf("Console time passed: %.3f s, %" PRIu64 " frames; the processor slept %" PRIu64
+              " times and took %" PRIu64 " interrupts\n",
+              seconds, console.video_timing().frames(), console.sleeps(), stats.interrupts_taken);
 
   const ds::Cpu& c = console.machine().cpu();
   const std::uint32_t status = ds::get_cpsr(const_cast<ds::Cpu&>(c));
@@ -102,9 +110,10 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   }
 
   nds::Interrupts& irq = console.interrupts();
-  std::printf("\nInterrupts: master switch %s, enabled 0x%08" PRIX32 ", requested 0x%08" PRIX32
-              " (none is ever taken yet)\n",
+  std::printf("\nInterrupts: master switch %s, enabled 0x%08" PRIX32 ", requested 0x%08" PRIX32 "\n",
               irq.master() ? "on" : "off", irq.enabled(), irq.requested());
+  std::printf("Timer overflows: %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n", console.timers().overflows(0),
+              console.timers().overflows(1), console.timers().overflows(2), console.timers().overflows(3));
 
   nds::SecondProcessor& second = console.second_processor();
   std::printf("\nSecond processor: start-up handshake %s\n", second.handshake_done() ? "completed" : "not completed");

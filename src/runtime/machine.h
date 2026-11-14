@@ -41,6 +41,12 @@ class Bus {
   virtual void write8(std::uint32_t address, std::uint8_t value) = 0;
   virtual void write16(std::uint32_t address, std::uint16_t value) = 0;
   virtual void write32(std::uint32_t address, std::uint32_t value) = 0;
+  // Whether there is memory at `address` that code could be in. The
+  // interpreter stops when control goes where there is none.
+  virtual bool has_code_memory(std::uint32_t address) {
+    (void)address;
+    return true;
+  }
 };
 
 // What lies outside the processor. Handlers receive the processor model;
@@ -50,14 +56,23 @@ class System {
  public:
   virtual ~System() = default;
   // `return_address` is the instruction after the software interrupt (bit 0
-  // set = Thumb), where the program continues.
-  virtual void software_interrupt(ds::Cpu& cpu, std::uint32_t number, std::uint32_t return_address) = 0;
+  // set = Thumb). Returns where execution continues: `return_address` when
+  // the call has been dealt with here, or the address of code that deals with
+  // it, after Machine::enter_exception. (The second is only possible from
+  // interpreted code so far; from translated code it ends the run.)
+  virtual std::uint32_t software_interrupt(ds::Cpu& cpu, std::uint32_t number,
+                                           std::uint32_t return_address) = 0;
   virtual std::uint32_t coprocessor_read(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2) = 0;
   virtual void coprocessor_write(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2,
                                  std::uint32_t value) = 0;
   // Something that cannot be executed correctly. The run ends: see
   // Machine::stop.
   virtual void unhandled(ds::Cpu& cpu, std::uint32_t address, const char* what) = 0;
+  // Where the processor's exception vectors are.
+  virtual std::uint32_t exception_vectors() { return 0; }
+  // The alarm set with Machine::set_alarm went off. The processor model is
+  // not current here: do not read or change it.
+  virtual void alarm() {}
 };
 
 struct Statistics {
@@ -75,6 +90,8 @@ struct Statistics {
   std::uint64_t returns_elsewhere = 0;
   // Call sites told to give up because control went to an outer one.
   std::uint64_t call_sites_abandoned = 0;
+  // Interrupts the processor took.
+  std::uint64_t interrupts_taken = 0;
   // Overlay translations compared with memory, and how many of those
   // comparisons found that memory held something else.
   std::uint64_t translations_checked = 0;
@@ -113,6 +130,26 @@ class Machine {
   // Arguments and results are exchanged through cpu().
   void call_function(std::uint32_t address, std::uint32_t return_address);
 
+  // The interrupt request line. While it is set and the processor's
+  // interrupt mask is clear, the processor takes the interrupt exception
+  // before its next instruction: IRQ mode, and on to the vector. Only
+  // interpreted code is interrupted so far; translated code runs on.
+  void set_interrupt_line(bool on) { interrupt_line_ = on; }
+  bool interrupt_line() const { return interrupt_line_; }
+
+  // Puts the processor model into exception mode `mode` the way the processor
+  // enters an exception: the status register is saved for that mode,
+  // interrupts are masked, and the mode's link register becomes `link`.
+  // `thumb` is the instruction set being left. The caller sees to it that
+  // execution continues at the vector.
+  void enter_exception(std::uint32_t mode, std::uint32_t link, bool thumb);
+
+  // Calls System::alarm once the interpreter has executed `instructions` more
+  // instructions. There is one alarm; setting it again replaces it.
+  void set_alarm(std::uint64_t instructions) {
+    alarm_at_ = statistics_.interpreted_instructions + instructions;
+  }
+
   // Ends the run: the outermost call_function returns as soon as it can. The
   // interpreter stops before its next instruction. Translated functions that
   // are in progress stop at their next call or return, not before, and what
@@ -125,7 +162,13 @@ class Machine {
   bool is_translated(std::uint32_t address) { return lookup(address) != nullptr; }
 
   const Statistics& statistics() const { return statistics_; }
-  void clear_statistics() { statistics_ = Statistics(); }
+  void clear_statistics() {
+    // The alarm counts from the instruction counter; keep it where it was.
+    const std::uint64_t until_alarm =
+        alarm_at_ == ~std::uint64_t{0} ? alarm_at_ : alarm_at_ - statistics_.interpreted_instructions;
+    statistics_ = Statistics();
+    alarm_at_ = until_alarm;
+  }
 
   // Stops interpretation, as unhandled, after this many instructions within
   // one call_function. 0 means no limit. For tests and traces: translated
@@ -189,6 +232,8 @@ class Machine {
   std::uint64_t instructions_this_call_ = 0;
   bool limit_reached_ = false;
   bool stopped_ = false;
+  bool interrupt_line_ = false;
+  std::uint64_t alarm_at_ = ~std::uint64_t{0};
 };
 
 }  // namespace bd::runtime
