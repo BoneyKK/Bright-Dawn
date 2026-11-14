@@ -8,9 +8,11 @@ owner's ROM: through the handshake with the console's second processor, the
 initialisation of graphics and sound registers, the first interrupts, reading
 its file tables and overlays from the cartridge, and past the check that stops
 the game on a machine that does not look like a console, and through its
-first requests to the second processor: it finds its save memory, reads it
-(a blank one), and goes on to ask the touch screen and sound services for
-something, which nothing answers yet.
+requests to the second processor for its save memory and the touch screen.
+It reaches its frame loop: every frame it reads the buttons and samples the
+touch screen. No keypad is modelled yet, so every button reads as held down,
+and after 165 frames the game takes that for its soft-reset combination and
+asks to be restarted.
 
 ## The model
 
@@ -27,7 +29,7 @@ In `src/nds`:
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
-| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, one is done: requests to the cartridge (service 11), including those on the save memory. Every word for another service is recorded and not answered. See below |
+| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, two are there: requests to the cartridge (service 11), including those on the save memory, and one-off samples of the touch screen (service 6). Every word for another service is recorded and not answered. See below |
 | Save memory (`save_memory`) | The cartridge's 256 KiB serial flash chip, by what its commands do: read, write, program, erase a sector. Blank at the start; nothing keeps it in a file between runs yet. Every operation completes at once |
 | Console settings (`user_settings`) | Language, the owner's name, message, birthday and favourite colour, the console's network address and its wireless channels. See below |
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
@@ -81,6 +83,24 @@ not run but is the reference for what the main program expects:
   time limits in those routines never come into play. A block that
   describes any other kind of save memory, or points outside main memory,
   is not acted on: the request is recorded and not answered.
+
+- Service 6, the touch screen, shares a handler with the firmware storage,
+  microphone and power services (4, 9, 8). A request to these is put
+  together from 16-bit pieces, one per word, with marks on the first and
+  last; its number is the high byte of the first piece. The answer carries
+  the request's number and a result, and goes out on the service the
+  request's number belongs to. "Sample once" (request 0) leaves a sample at
+  `0x027FFFAA`: the two readings, whether the screen is touched, and
+  whether each reading is usable. The second-processor program reads a
+  touched screen five times in each direction and settles on a value from
+  readings that agree; the stand-in has no noise, so it reports the reading
+  for the touched pixel directly, with the low three bits cleared as the
+  program clears them, and for an untouched screen what the program
+  reports: no readings, neither usable. The touch state comes from
+  `set_touch`; nothing sets it yet, so the screen is never touched. Setting
+  the tolerance (request 3) is accepted. Sampling at regular intervals
+  (request 1) is not implemented; stopping it (request 2) is answered as
+  the program answers when it is not running.
 
 The stand-in answers the moment a request arrives. On a console the second
 processor needs time, during which the main program's thread sleeps. In the
@@ -287,13 +307,30 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   memory (request 2) and reads it: 17 read requests, 513 bytes in all. The
   chip is blank, as in a cartridge that has never been saved to. Nothing is
   written.
-- It then sends a word to service 6 (the touch screen) and a second one to
-  service 7 (sound), which nothing answers, and no longer comes to rest: in
-  the ten seconds it runs 336 million instructions, sleeps twice and takes
-  695 interrupts. What it is doing there has not been looked at yet.
+- It then asks the touch screen for a sample and waits for it in a loop
+  that does nothing else. Without an answer the run stayed there, 336
+  million instructions in ten seconds.
+- With the sample answered it reaches its frame loop. Each frame it reads
+  the button register, asks for a touch sample and sleeps until the next
+  vertical blank. It writes to the registers of the 3D engine, starts DMA
+  transfers timed by the horizontal blank and by the cartridge, and reads
+  on from the cartridge: 851,456 bytes in the ten seconds.
+- It writes to its save memory: 16 times a write followed by a verify, 512
+  bytes in all, with reads in between. A blank chip is being given its first
+  contents.
+- After 165 frames it sends a word to service 12 with the value `0x1000`,
+  masks every interrupt but "word received" and waits. That is a request to
+  restart the game. The cause is on this side: no keypad is modelled, the
+  button register reads as zero, and zero means every button is held down,
+  the game's soft-reset combination among them. With the register and the
+  second processor's button word set by hand to "nothing pressed", the
+  request is not made and the frame loop runs for the whole ten seconds:
+  555 touch samples, 56 million instructions, the processor asleep for most
+  of each frame.
 
-Next: the touch screen and sound services, and a look at what the program
-is busy with. Then interrupts in translated code.
+Next: the keypad, and with it the buttons the second processor reports.
+Then the other services (sound first), the display's remaining timed
+events, and interrupts in translated code.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

@@ -46,8 +46,8 @@ Result<std::array<std::uint8_t, kUserSettingsBlockSize>> user_settings_block(con
   put16(block, 0x5A, 0x0000);
   block[0x5C] = 0;             // First point, pixel.
   block[0x5D] = 0;
-  put16(block, 0x5E, 255 << 4);  // Second point, raw.
-  put16(block, 0x60, 191 << 4);
+  put16(block, 0x5E, 255 * kTouchReadingPerPixel);  // Second point, raw.
+  put16(block, 0x60, 191 * kTouchReadingPerPixel);
   block[0x62] = 255;             // Second point, pixel.
   block[0x63] = 191;
 

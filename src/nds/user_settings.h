@@ -61,6 +61,10 @@ constexpr std::uint32_t kUserSettingsAddress = 0x027FFC80;     // The block belo
 constexpr std::uint32_t kNetworkAddressAddress = 0x027FFCF4;   // Six bytes.
 constexpr std::uint32_t kWirelessChannelsAddress = 0x027FFCFA; // 16 bits: see chosen_wireless_channels.
 
+// The touch screen calibration the settings block holds: a reading is the
+// pixel times this, in both directions.
+constexpr unsigned kTouchReadingPerPixel = 16;
+
 // The settings block as the firmware stores it: 0x70 bytes of settings, a
 // 16-bit update count and the block's checksum. Fails if a value is outside
 // what the firmware allows; nothing is cut short or corrected.

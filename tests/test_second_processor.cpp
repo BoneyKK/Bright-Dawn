@@ -384,3 +384,99 @@ TEST(second_processor_returns_words_for_services_it_does_not_have) {
   CHECK(f.second.unanswered_by_service().empty() && f.second.not_carried_out().empty());
   CHECK(f.second.words_by_service().at(15) == 2 && f.second.words_by_service().at(0) == 2);
 }
+
+TEST(second_processor_samples_an_untouched_screen) {
+  Fixture f;
+  f.bus.write32(0x027FFFA8, 0xEEEEEEEE);
+  f.bus.write32(0x027FFFAC, 0xEEEEEEEE);
+  // The word the game's main program sends: one piece, first and last,
+  // request 0. And the answer it waits for.
+  CHECK(SecondProcessor::word(6, false, 0x03000000) == 0xC0000006);
+  f.send(0xC0000006);
+  CHECK(f.receive() == 0xC0200006);
+  CHECK(SecondProcessor::group_answer(0, 0) == 0xC0200006);
+  // The sample: nothing touched, neither reading usable.
+  CHECK(f.bus.read16(0x027FFFAA) == 0x0000 && f.bus.read16(0x027FFFAC) == 0x0600);
+  CHECK(f.bus.read16(0x027FFFA8) == 0xEEEE && f.bus.read16(0x027FFFAE) == 0xEEEE);
+  CHECK(f.bus.read16(0x02FFFFAC) == 0x0600);  // Where the game reads it.
+  CHECK(f.second.unanswered_by_service().empty() && f.second.not_carried_out().empty());
+  CHECK(f.written.size() == 2);
+}
+
+TEST(second_processor_samples_a_touched_screen) {
+  Fixture f;
+  f.second.set_touch(true, 100, 50);
+  f.send(0xC0000006);
+  CHECK(f.receive() == 0xC0200006);
+  // Readings are the pixel times 16: 0x640 across, 0x320 down; touched; both usable.
+  const std::uint32_t sample = f.bus.read16(0x027FFFAA) | (static_cast<std::uint32_t>(f.bus.read16(0x027FFFAC)) << 16);
+  CHECK((sample & 0xFFF) == 0x640);
+  CHECK(((sample >> 12) & 0xFFF) == 0x320);
+  CHECK(((sample >> 24) & 1) == 1);
+  CHECK(((sample >> 25) & 3) == 0);
+  CHECK((sample >> 27) == 0);
+  // The corners, and positions off the screen, which are brought back onto it.
+  f.second.set_touch(true, 255, 191);
+  f.send(0xC0000006);
+  CHECK(f.receive() == 0xC0200006);
+  CHECK(f.bus.read16(0x027FFFAA) == (0xFF0 | ((0xBF0 & 0xF) << 12)) && f.bus.read16(0x027FFFAC) == (0x0100 | (0xBF0 >> 4)));
+  f.second.set_touch(true, 9999, 9999);
+  f.send(0xC0000006);
+  CHECK(f.receive() == 0xC0200006);
+  CHECK(f.bus.read16(0x027FFFAA) == (0xFF0 | ((0xBF0 & 0xF) << 12)) && f.bus.read16(0x027FFFAC) == (0x0100 | (0xBF0 >> 4)));
+  f.second.set_touch(true, 0, 0);
+  f.send(0xC0000006);
+  CHECK(f.receive() == 0xC0200006);
+  CHECK(f.bus.read16(0x027FFFAA) == 0 && f.bus.read16(0x027FFFAC) == 0x0100);
+  // Lifted again.
+  f.second.set_touch(false, 100, 50);
+  f.send(0xC0000006);
+  CHECK(f.receive() == 0xC0200006);
+  CHECK(f.bus.read16(0x027FFFAA) == 0 && f.bus.read16(0x027FFFAC) == 0x0600);
+}
+
+TEST(second_processor_touch_requests_are_built_from_pieces) {
+  Fixture f;
+  // Request 3 (how far apart readings may lie) with its argument in the low
+  // byte of the only piece.
+  f.send(SecondProcessor::word(6, false, 0x03000000 | 0x0314));
+  CHECK(f.receive() == SecondProcessor::group_answer(3, 0));
+  f.send(SecondProcessor::word(6, false, 0x03000000 | 0x0300));  // Zero is refused.
+  CHECK(f.receive() == SecondProcessor::group_answer(3, 2));
+  // Two pieces: nothing happens until the last one arrives.
+  f.send(SecondProcessor::word(6, false, 0x02000000 | 0x0105));  // Request 1, five samples a frame: too many.
+  CHECK(f.ipc.waiting_words() == 0);
+  f.send(SecondProcessor::word(6, false, 0x01010000 | 0x0000));
+  CHECK(f.receive() == SecondProcessor::group_answer(1, 2));
+  f.send(SecondProcessor::word(6, false, 0x02000000 | 0x0102));
+  f.send(SecondProcessor::word(6, false, 0x01010000 | 263));     // A display line that does not exist.
+  CHECK(f.receive() == SecondProcessor::group_answer(1, 2));
+  // A valid request for regular sampling is not implemented: recorded, not answered.
+  f.send(SecondProcessor::word(6, false, 0x02000000 | 0x0102));
+  f.send(SecondProcessor::word(6, false, 0x01010000 | 100));
+  CHECK(f.ipc.waiting_words() == 0 && f.second.not_carried_out().size() == 1);
+  // Stopping what never started is the wrong state.
+  f.send(SecondProcessor::word(6, false, 0x03000000 | 0x0200));
+  CHECK(f.receive() == SecondProcessor::group_answer(2, 3));
+  // A first piece clears what an abandoned request left behind.
+  f.send(SecondProcessor::word(6, false, 0x02000000 | 0x0314));  // Never finished.
+  f.send(SecondProcessor::word(6, false, 0x03010000 | 0x0000));  // A new request: piece 1 only, so piece 0 is zero,
+  CHECK(f.receive() == 0xC0200006);                              // which is "sample once".
+}
+
+TEST(second_processor_answers_unknown_touch_requests_as_the_program_does) {
+  Fixture f;
+  f.send(SecondProcessor::word(6, false, 0x03000000 | 0x0400));
+  CHECK(f.receive() == SecondProcessor::group_answer(4, 1));
+  // The answer goes out on the service the request's number belongs to,
+  // even though it came in on the touch screen's.
+  f.send(SecondProcessor::word(6, false, 0x03000000 | 0x4500));
+  const std::uint32_t answer = f.receive();
+  CHECK((answer & 0x1F) == 9);
+  CHECK(answer == SecondProcessor::word(9, false, 0x03000000 | 0xC500 | 1));
+  CHECK((SecondProcessor::group_answer(0x25, 1) & 0x1F) == 4 && (SecondProcessor::group_answer(0x7F, 1) & 0x1F) == 8);
+  CHECK((SecondProcessor::group_answer(0x1F, 1) & 0x1F) == 6 && (SecondProcessor::group_answer(0xE0, 1) & 0x1F) == 8);
+  // Words with the flag set are not for this handler.
+  f.send(SecondProcessor::word(6, true, 0x03000000));
+  CHECK(f.ipc.waiting_words() == 0);
+}
