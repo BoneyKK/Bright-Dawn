@@ -22,6 +22,7 @@
 #include "nds/dma.h"
 #include "nds/interrupts.h"
 #include "nds/ipc.h"
+#include "nds/math_unit.h"
 #include "nds/program.h"
 #include "nds/second_processor.h"
 #include "nds/system_control.h"
@@ -151,6 +152,7 @@ class Console : private runtime::System {
   Bios bios_;
   Dma dma_;
   Cartridge cartridge_;
+  MathUnit math_unit_;
   std::map<std::uint32_t, std::uint64_t> software_interrupts_;
   std::uint64_t accounted_instructions_ = 0;
   std::uint64_t frame_limit_ = 0;

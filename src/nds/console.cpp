@@ -32,6 +32,7 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   video_timing_.attach(io_);
   timers_.attach(io_);
   cartridge_.attach(io_);
+  math_unit_.attach(io_);
   // A DMA channel can be set to take each word the cartridge delivers.
   cartridge_.on_word_ready = [this] { return dma_.trigger(Dma::kStartCartridge); };
   dma_.on_waiting = [this](unsigned mode) {
