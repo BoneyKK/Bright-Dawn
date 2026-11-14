@@ -91,6 +91,10 @@ Status Console::direct_boot() {
   for (std::size_t i = 0; i < program_.header.size() && i < 0x170; ++i)
     bus_.write8(kHeaderCopy + static_cast<u32>(i), program_.header[i]);
 
+  // The second processor's program starts alongside the main one, and has
+  // the console's settings in place before the main program can ask for them.
+  if (auto s = second_processor_.start_up(user_settings_); !s) return s;
+
   for (const OverlayCode& overlay : program_.overlays)
     machine_.add_overlay(overlay.id, overlay.load_address, overlay.image.data(), overlay.image.size());
 

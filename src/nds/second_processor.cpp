@@ -12,6 +12,17 @@ void SecondProcessor::connect(Ipc& ipc) {
   ipc_->peer_set_sync(7);
 }
 
+Status SecondProcessor::start_up(const UserSettings& settings) {
+  const auto block = user_settings_block(settings);
+  if (!block) return block.error();
+  for (std::size_t i = 0; i < block.value().size(); ++i)
+    bus_.write8(kUserSettingsAddress + static_cast<std::uint32_t>(i), block.value()[i]);
+  for (std::size_t i = 0; i < settings.network_address.size(); ++i)
+    bus_.write8(kNetworkAddressAddress + static_cast<std::uint32_t>(i), settings.network_address[i]);
+  bus_.write16(kWirelessChannelsAddress, chosen_wireless_channels(settings.wireless_channels));
+  return {};
+}
+
 void SecondProcessor::sync_written(unsigned value) {
   if (handshake_done_ || ipc_ == nullptr) return;
   if (value > 0) {
