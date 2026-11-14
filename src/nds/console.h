@@ -18,6 +18,7 @@
 #include "nds/arm9_bus.h"
 #include "nds/arm9_io.h"
 #include "nds/bios.h"
+#include "nds/cartridge.h"
 #include "nds/dma.h"
 #include "nds/interrupts.h"
 #include "nds/ipc.h"
@@ -80,6 +81,9 @@ class Console : private runtime::System {
   Interrupts& interrupts() { return interrupts_; }
   Ipc& ipc() { return ipc_; }
   Dma& dma() { return dma_; }
+  Cartridge& cartridge() { return cartridge_; }
+  // Puts a cartridge in the slot: a ROM image, which must outlive the console.
+  void insert_cartridge(ByteSpan rom) { cartridge_.insert(rom); }
   Timeline& timeline() { return timeline_; }
   VideoTiming& video_timing() { return video_timing_; }
   Timers& timers() { return timers_; }
@@ -146,6 +150,7 @@ class Console : private runtime::System {
   WatchedBus watched_bus_;
   Bios bios_;
   Dma dma_;
+  Cartridge cartridge_;
   std::map<std::uint32_t, std::uint64_t> software_interrupts_;
   std::uint64_t accounted_instructions_ = 0;
   std::uint64_t frame_limit_ = 0;

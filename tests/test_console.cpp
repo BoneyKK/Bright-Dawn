@@ -341,3 +341,40 @@ TEST(console_stops_when_execution_leaves_memory) {
   CHECK(result.detail.find("no memory") != std::string::npos);
   CHECK(console.machine().statistics().interpreted_instructions == 2);
 }
+
+TEST(console_program_reads_the_cartridge) {
+  // Reads one word from the cartridge the way a program does: the command,
+  // the transfer control, a wait for the word, the data register.
+  //   02000000  mov r0, #0x04000000; add r1, r0, #0x1A0
+  //   02000008  ldr r2, =0x000100B7; str r2, [r1, #8]     command: B7 00 01 00 ...
+  //   02000010  mov r2, #0x10; str r2, [r1, #0xC]         ... 10 00 00 00: read data at 0x00010010
+  //   02000018  mov r2, #0x87000000; str r2, [r1, #4]     start, four bytes
+  //   02000020  ldr r3, [r1, #4]; tst r3, #0x00800000; beq 0x02000020
+  //   0200002c  ldr r3, =0x04100010; ldr r4, [r3]
+  //   02000034  ldr r5, [r1, #4]
+  //   02000038  b .
+  const bd::nds::Program program =
+      program_of({0xE3A00301, 0xE2801E1A, 0xE59F202C, 0xE5812008, 0xE3A02010, 0xE581200C, 0xE3A02487, 0xE5812004, 0xE5913004,
+                  0xE3130502, 0x0AFFFFFC, 0xE59F300C, 0xE5934000, 0xE5915004, 0xEAFFFFFE, 0x000100B7, 0x04100010});
+  std::vector<std::uint8_t> rom(0x20000);
+  for (std::uint32_t a = 0; a < rom.size(); a += 4) {
+    for (int b = 0; b < 4; ++b) rom[a + b] = static_cast<std::uint8_t>((a ^ 0xA5000000u) >> (8 * b));
+  }
+  bd::nds::Console console(program, kNoTranslations);
+  console.insert_cartridge(bd::ByteSpan(rom.data(), rom.size()));
+  CHECK(console.direct_boot().ok());
+  const bd::nds::RunResult result = console.run(1000);
+  CHECK(result.reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(result.address == 0x02000038);
+  CHECK(console.machine().cpu().r[4] == (0x00010010u ^ 0xA5000000u));
+  CHECK((console.machine().cpu().r[5] & 0x80800000u) == 0);  // Afterwards: not busy, no word waiting.
+  CHECK(console.cartridge().statistics().data_reads == 1 && console.cartridge().statistics().data_bytes == 4);
+  CHECK(console.io().unmodelled().empty());
+
+  // The same program with the slot empty reads all ones.
+  bd::nds::Console empty(program, kNoTranslations);
+  CHECK(empty.direct_boot().ok());
+  (void)empty.run(1000);
+  CHECK(empty.machine().cpu().r[4] == 0xFFFFFFFFu);
+  CHECK(empty.cartridge().statistics().reads_without_cartridge == 1);
+}

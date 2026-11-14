@@ -10,6 +10,7 @@ constexpr u32 kCountMask = 0x001FFFFF;  // A count of zero means the maximum, 0x
 constexpr unsigned kDestinationShift = 21;  // 0 up, 1 down, 2 fixed, 3 up (and reloaded on repeat).
 constexpr unsigned kSourceShift = 23;       // 0 up, 1 down, 2 fixed.
 constexpr u32 kWords = 1u << 26;
+constexpr u32 kRepeat = 1u << 25;           // With an event: stay enabled and go again at the next.
 constexpr unsigned kStartShift = 27;        // 0 = at once; the rest wait for an event.
 constexpr u32 kInterrupt = 1u << 30;
 constexpr u32 kEnable = 1u << 31;
@@ -40,12 +41,28 @@ void Dma::write_control(int channel, u32 value, u32 mask) {
   c.control = (c.control & ~mask) | (value & mask);
   // A transfer starts when the enable bit goes from 0 to 1.
   if (was_enabled || (c.control & kEnable) == 0) return;
+  const bool words = (c.control & kWords) != 0;
+  c.at_source = c.source & ~(words ? 3u : 1u);
+  c.at_destination = c.destination & ~(words ? 3u : 1u);
   const unsigned start = (c.control >> kStartShift) & 7u;
-  if (start != 0) {
+  if (start != kStartAtOnce) {
     ++statistics_.waiting_for_event[start];
+    if (on_waiting) on_waiting(start);
     return;
   }
   run(channel);
+}
+
+bool Dma::trigger(unsigned mode) {
+  bool moved = false;
+  for (int n = 0; n < kChannels; ++n) {
+    const Channel& c = channels_[n];
+    if ((c.control & kEnable) != 0 && ((c.control >> kStartShift) & 7u) == mode) {
+      run(n);
+      moved = true;
+    }
+  }
+  return moved;
 }
 
 void Dma::run(int channel) {
@@ -59,19 +76,25 @@ void Dma::run(int channel) {
   // Unsigned arithmetic: "down" is adding the two's complement.
   const u32 source_step = source_mode == 0 ? size : source_mode == 1 ? 0u - size : 0;
   const u32 destination_step = destination_mode == 1 ? 0u - size : destination_mode == 2 ? 0 : size;
-  u32 source = c.source & ~(size - 1), destination = c.destination & ~(size - 1);
   for (u32 i = 0; i < count; ++i) {
     if (words) {
-      bus_.write32(destination, bus_.read32(source));
+      bus_.write32(c.at_destination, bus_.read32(c.at_source));
     } else {
-      bus_.write16(destination, bus_.read16(source));
+      bus_.write16(c.at_destination, bus_.read16(c.at_source));
     }
-    source += source_step;
-    destination += destination_step;
+    c.at_source += source_step;
+    c.at_destination += destination_step;
   }
   ++statistics_.transfers;
   statistics_.units += count;
-  c.control &= ~kEnable;
+  const bool waits = ((c.control >> kStartShift) & 7u) != kStartAtOnce;
+  if (waits && (c.control & kRepeat) != 0) {
+    // Stays enabled for the next event. Mode 3 starts each round at the
+    // destination again.
+    if (destination_mode == 3) c.at_destination = c.destination & ~(size - 1);
+  } else {
+    c.control &= ~kEnable;
+  }
   if (c.control & kInterrupt) interrupts_.request(8 + static_cast<unsigned>(channel));
 }
 

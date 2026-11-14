@@ -24,12 +24,19 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       machine_(bus_, *this, translated),
       watched_bus_(bus_, machine_),
       bios_(watched_bus_),
-      dma_(watched_bus_, interrupts_) {
+      dma_(watched_bus_, interrupts_),
+      cartridge_(interrupts_) {
   interrupts_.attach(io_);
   ipc_.attach(io_);
   dma_.attach(io_);
   video_timing_.attach(io_);
   timers_.attach(io_);
+  cartridge_.attach(io_);
+  // A DMA channel can be set to take each word the cartridge delivers.
+  cartridge_.on_word_ready = [this] { return dma_.trigger(Dma::kStartCartridge); };
+  dma_.on_waiting = [this](unsigned mode) {
+    if (mode == Dma::kStartCartridge) cartridge_.pump();
+  };
   interrupts_.on_change = [this] { machine_.set_interrupt_line(interrupts_.pending()); };
   timeline_.on_refresh = [this] { catch_up(); };
   timeline_.on_rescheduled = [this] { set_alarm(); };

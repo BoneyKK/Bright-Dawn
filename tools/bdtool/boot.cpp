@@ -38,10 +38,11 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   std::error_code ec;
   const bool is_directory = std::filesystem::is_directory(source, ec);
   Result<nds::Program> loaded = Error{ErrorCode::Io, "not loaded"};
+  Result<rom::Rom> rom = Error{ErrorCode::Io, "no ROM"};
   if (is_directory) {
     loaded = nds::program_from_directory(source);
   } else {
-    auto rom = rom::Rom::open(source);
+    rom = rom::Rom::open(source);
     if (!rom) {
       std::fprintf(stderr, "error: %s\n", rom.error().message.c_str());
       return 1;
@@ -55,6 +56,9 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   const nds::Program& program = loaded.value();
 
   nds::Console console(program, kNoTranslations);
+  // With a ROM there is a cartridge to read files from; with only extracted
+  // program code the slot is empty.
+  if (rom) console.insert_cartridge(rom.value().bytes());
   if (auto s = console.direct_boot(); !s) {
     std::fprintf(stderr, "error: %s\n", s.error().message.c_str());
     return 1;
@@ -134,6 +138,19 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
       std::printf("  %" PRIu64 " started in mode %d, which waits for an event that never comes yet\n",
                   dma.waiting_for_event[mode], mode);
   }
+
+  const nds::Cartridge::Statistics& card = console.cartridge().statistics();
+  std::printf("\nCartridge: %s\n", console.cartridge().inserted() ? "inserted" : "none (started from extracted code)");
+  std::printf("  data reads: %" PRIu64 ", %" PRIu64 " bytes", card.data_reads, card.data_bytes);
+  if (card.data_bytes != 0)
+    std::printf(", between 0x%08" PRIX32 " and 0x%08" PRIX32, card.lowest_address, card.highest_address);
+  std::printf("\n  chip identifier reads: %" PRIu64 "\n", card.chip_id_reads);
+  if (card.reads_without_cartridge != 0)
+    std::printf("  data reads with no cartridge to answer: %" PRIu64 "\n", card.reads_without_cartridge);
+  if (card.reads_beyond_the_end != 0)
+    std::printf("  words read beyond the end of the cartridge: %" PRIu64 "\n", card.reads_beyond_the_end);
+  for (const auto& [command, count] : card.other_commands)
+    std::printf("  command 0x%02X, which is not modelled: %" PRIu64 "\n", command, count);
 
   const auto& registers = console.io().unmodelled();
   std::printf("\nHardware registers used that have no model: %zu\n", registers.size());
