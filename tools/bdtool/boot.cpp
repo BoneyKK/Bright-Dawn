@@ -137,6 +137,12 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
     std::printf("\n");
   }
 
+  const nds::SaveMemory::Statistics& save = console.save_memory().statistics();
+  std::printf("\nSave memory (blank at the start): %" PRIu64 " bytes read, %" PRIu64 " bytes written, %" PRIu64
+              " sectors erased; %s\n",
+              save.bytes_read, save.bytes_written, save.sectors_erased,
+              console.save_memory().changed() ? "contents changed" : "contents unchanged");
+
   const nds::Dma::Statistics& dma = console.dma().statistics();
   std::printf("\nDMA: %" PRIu64 " transfers performed, %" PRIu64 " units moved\n", dma.transfers, dma.units);
   for (int mode = 1; mode < 8; ++mode) {

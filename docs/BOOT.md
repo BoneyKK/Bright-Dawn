@@ -8,9 +8,9 @@ owner's ROM: through the handshake with the console's second processor, the
 initialisation of graphics and sound registers, the first interrupts, reading
 its file tables and overlays from the cartridge, and past the check that stops
 the game on a machine that does not look like a console, and through its
-first request to the second processor. It then waits for the answer to its
-second request, which concerns the cartridge's save memory and which nothing
-gives yet.
+first requests to the second processor: it finds its save memory, reads it
+(a blank one), and goes on to ask the touch screen and sound services for
+something, which nothing answers yet.
 
 ## The model
 
@@ -27,17 +27,18 @@ In `src/nds`:
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
-| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, one is begun: requests to the cartridge (service 11), where "initialise" and "read the chip identifier" are carried out. Its requests on the save memory, and every word for another service, are recorded and not answered. See below |
+| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, one is done: requests to the cartridge (service 11), including those on the save memory. Every word for another service is recorded and not answered. See below |
+| Save memory (`save_memory`) | The cartridge's 256 KiB serial flash chip, by what its commands do: read, write, program, erase a sector. Blank at the start; nothing keeps it in a file between runs yet. Every operation completes at once |
 | Console settings (`user_settings`) | Language, the owner's name, message, birthday and favourite colour, the console's network address and its wireless channels. See below |
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
 | BIOS code (`bios_rom.S`) | Three more calls, Halt, IntrWait and VBlankIntrWait, and the interrupt entry. See below |
 | Sleeping | The system coprocessor's "wait for interrupt" puts the processor to sleep until an enabled source requests an interrupt. A sleep of more than ten seconds of console time ends the run |
 | DMA (`dma`) | Transfers that start at once, and transfers fed by the cartridge, in every direction mode, with the fill registers, repeat and the completion interrupt request. A transfer set to start on any other hardware event stays pending and is counted |
-| Cartridge (`cartridge`) | The slot as a running game uses it: the "read data" and "read chip identifier" commands, the block sizes, the part of a cartridge that cannot be read, the completion interrupt, and delivery to a DMA channel. A transfer takes no console time. The encrypted exchange before a game starts is not needed and not modelled; the save memory is not modelled. The real program reads its file tables and overlays through it, and an overlay read this way passes the game's own check of its code |
+| Cartridge (`cartridge`) | The slot as a running game uses it: the "read data" and "read chip identifier" commands, the block sizes, the part of a cartridge that cannot be read, the completion interrupt, and delivery to a DMA channel. A transfer takes no console time. The encrypted exchange before a game starts is not needed and not modelled. The save memory is not reached through the slot's registers by the main program but through the second processor (below). The real program reads its file tables and overlays through it, and an overlay read this way passes the game's own check of its code |
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
 
-Not present at all: video, sound, input, the cartridge's save memory.
+Not present at all: video, sound, input.
 Interrupts in translated code are not present either: the tool that exists
 runs everything in the interpreter.
 
@@ -65,8 +66,21 @@ not run but is the reference for what the main program expects:
   and sends one word back. A request whose bit is not set in the block's
   list of allowed requests is refused, with result 3; so are requests 4, 5
   and 10, always. "Read the chip identifier" (request 3) leaves the
-  identifier in the block. The other requests work on the save memory, which
-  is not modelled: they are recorded and get no answer.
+  identifier in the block.
+- The save memory. The block says what kind the game has: for this game a
+  serial flash chip of 256 KiB, with 256-byte pages, 64 KiB sectors and
+  three-byte addresses. The requests are carried out as the program's
+  routines for them drive the chip: prepare (2: set the chip's status
+  register if the block asks for a value, which this game does not), read
+  (6), write (7: replaces bytes, a page at a time), program (8: can only
+  clear bits, a page at a time), verify (9: result 1 if the chip differs
+  from memory), erase sectors (11: result 2 unless address and length are
+  whole sectors) and read status (13). Erase everything (12), write status
+  (14) and erase a smaller unit (15) are not allowed by this game's block
+  and therefore refused. The chip is never busy, so the waiting and the
+  time limits in those routines never come into play. A block that
+  describes any other kind of save memory, or points outside main memory,
+  is not acted on: the request is recorded and not answered.
 
 The stand-in answers the moment a request arrives. On a console the second
 processor needs time, during which the main program's thread sleeps. In the
@@ -269,14 +283,17 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   7 (sound), which nothing answers, and then to service 11, the cartridge.
 - Without an answer from service 11 the program's threads waited there, and
   only the idle loop and the interrupt handlers ran.
-- With "initialise" answered, the main program at once sends request 2 to
-  the same service, the first of those that work on the save memory. That
-  one is not implemented, and the program waits again: 4.6 million
-  instructions in those ten seconds, nearly all of them the idle loop and
-  the interrupt handlers.
+- With the cartridge service answering, the program prepares its save
+  memory (request 2) and reads it: 17 read requests, 513 bytes in all. The
+  chip is blank, as in a cartridge that has never been saved to. Nothing is
+  written.
+- It then sends a word to service 6 (the touch screen) and a second one to
+  service 7 (sound), which nothing answers, and no longer comes to rest: in
+  the ten seconds it runs 336 million instructions, sleeps twice and takes
+  695 interrupts. What it is doing there has not been looked at yet.
 
-Next: the cartridge's save memory, which is what the program is waiting for.
-Then the other services, and interrupts in translated code.
+Next: the touch screen and sound services, and a look at what the program
+is busy with. Then interrupts in translated code.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

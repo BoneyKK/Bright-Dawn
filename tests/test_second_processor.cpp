@@ -29,7 +29,8 @@ struct Fixture {
   bd::nds::Arm9Bus bus{no_io};
   bd::nds::Arm9Io io;
   bd::nds::Interrupts irq;
-  SecondProcessor second{bus, kChipId};
+  bd::nds::SaveMemory save;
+  SecondProcessor second{bus, kChipId, save};
   bd::nds::Ipc ipc{irq, second};
   std::vector<std::pair<std::uint32_t, std::size_t>> written;
 
@@ -45,6 +46,35 @@ struct Fixture {
   void prepare_block(std::uint32_t allowed) {
     for (std::uint32_t i = 0; i < 0x60; i += 4) bus.write32(kBlock + i, 0xEEEEEEEE);
     bus.write32(kBlock + 0x58, allowed);
+  }
+  // The block as the game fills it in for its save memory (seen in a run of
+  // the real program), with everything initialised and the answer read.
+  void initialise_for_save() {
+    initialise(0x2FFF);
+    (void)receive();
+    bus.write32(kBlock + 0x04, 0x00001202);  // Serial flash, 2^18 bytes.
+    bus.write32(kBlock + 0x18, 0x00040000);  // Size,
+    bus.write32(kBlock + 0x1C, 0x00010000);  // sector,
+    bus.write32(kBlock + 0x20, 0);
+    bus.write32(kBlock + 0x24, 0x00000100);  // page,
+    bus.write32(kBlock + 0x28, 3);           // bytes in an address.
+    bus.write32(kBlock + 0x54, 0x000000FF);  // Leave the status register alone.
+    bus.write32(kBlock, 0xEEEEEEEE);
+    written.clear();
+  }
+  // Sends a request with its three arguments and returns the result, having
+  // checked that exactly one word came back.
+  std::uint32_t request(std::uint32_t number, std::uint32_t source, std::uint32_t destination, std::uint32_t length) {
+    bus.write32(kBlock + 0x0C, source);
+    bus.write32(kBlock + 0x10, destination);
+    bus.write32(kBlock + 0x14, length);
+    bus.write32(kBlock, 0xEEEEEEEE);
+    send(SecondProcessor::word(11, true, number));
+    if (ipc.waiting_words() != 1 || receive() != 0x0000006B) return 0xDEAD;
+    return bus.read32(kBlock);
+  }
+  void fill(std::uint32_t address, std::uint32_t size, std::uint8_t first) {
+    for (std::uint32_t i = 0; i < size; ++i) bus.write8(address + i, static_cast<std::uint8_t>(first + i));
   }
   void initialise(std::uint32_t allowed = 0xFFFF) {
     prepare_block(allowed);
@@ -122,12 +152,12 @@ TEST(second_processor_refuses_the_requests_the_program_refuses) {
 }
 
 TEST(second_processor_records_cartridge_requests_it_cannot_carry_out) {
-  // The save memory's requests.
-  for (const std::uint32_t request : {2u, 6u, 7u, 8u, 9u, 11u, 12u, 13u, 14u, 15u}) {
+  // Requests this game's kind of save memory does not take, when a block
+  // allows them all the same.
+  for (const std::uint32_t request : {12u, 14u, 15u}) {
     Fixture f;
-    f.initialise();
-    CHECK(f.receive() == 0x0000006B);
-    f.bus.write32(kBlock, 0xEEEEEEEE);
+    f.initialise_for_save();
+    f.bus.write32(kBlock + 0x58, 0xFFFF);
     f.send(SecondProcessor::word(11, true, request));
     CHECK(f.ipc.waiting_words() == 0);             // No answer.
     CHECK(f.bus.read32(kBlock) == 0xEEEEEEEE);     // No result.
@@ -135,6 +165,12 @@ TEST(second_processor_records_cartridge_requests_it_cannot_carry_out) {
     const std::string what = f.second.not_carried_out().begin()->first;
     CHECK(what.find("request " + std::to_string(request)) != std::string::npos);
     CHECK(what.find("not implemented") != std::string::npos);
+  }
+  // As the game's block has it, they are refused like anything not allowed.
+  for (const std::uint32_t request : {12u, 14u, 15u}) {
+    Fixture f;
+    f.initialise_for_save();
+    CHECK(f.request(request, 0, 0, 0) == 3);
   }
   // Requests the second-processor program itself stops on.
   for (const std::uint32_t request : {1u, 16u, 1000u}) {
@@ -146,6 +182,152 @@ TEST(second_processor_records_cartridge_requests_it_cannot_carry_out) {
     CHECK(f.second.not_carried_out().size() == 1);
     CHECK(f.second.not_carried_out().begin()->first.find("stops") != std::string::npos);
   }
+}
+
+TEST(second_processor_prepares_the_save_memory) {
+  Fixture f;
+  f.initialise_for_save();
+  CHECK(f.request(2, 0, 0, 0) == 0);  // Status register to be left alone: nothing to do.
+  CHECK(f.save.statistics().bytes_read == 0 && !f.save.changed());
+  // A status the chip already has is fine too; one it does not have would
+  // mean writing the register, which is not there.
+  f.bus.write32(kBlock + 0x54, 0x00);
+  CHECK(f.request(2, 0, 0, 0) == 0);
+  Fixture g;
+  g.initialise_for_save();
+  g.bus.write32(kBlock + 0x54, 0x02);
+  g.send(SecondProcessor::word(11, true, 2));
+  CHECK(g.ipc.waiting_words() == 0 && g.second.not_carried_out().size() == 1);
+}
+
+TEST(second_processor_reads_the_save_memory) {
+  Fixture f;
+  f.initialise_for_save();
+  const std::uint8_t data[] = {0x10, 0x20, 0x30, 0x40};
+  f.save.page_write(0x12345, data, 4);
+  f.fill(0x02200000, 16, 0x80);
+  CHECK(f.request(6, 0x12344, 0x02200004, 6) == 0);
+  CHECK(f.bus.read8(0x02200003) == 0x83);  // Before: untouched.
+  CHECK(f.bus.read8(0x02200004) == 0xFF && f.bus.read8(0x02200005) == 0x10 && f.bus.read8(0x02200008) == 0x40);
+  CHECK(f.bus.read8(0x02200009) == 0xFF);
+  CHECK(f.bus.read8(0x0220000A) == 0x8A);  // After: untouched.
+  // Told about the memory it changed: the bytes read, then the result.
+  CHECK(f.written.size() == 2 && f.written[0].first == 0x02200004 && f.written[0].second == 6);
+  // Nothing to read is still a request that is answered.
+  CHECK(f.request(6, 0, 0x02200000, 0) == 0);
+  CHECK(f.bus.read8(0x02200000) == 0x80);
+}
+
+TEST(second_processor_writes_the_save_memory_page_by_page) {
+  Fixture f;
+  f.initialise_for_save();
+  f.fill(0x02200000, 0x300, 1);
+  // 0x220 bytes from 0x1F0: the end of one page, a whole page, the start of a third.
+  CHECK(f.request(7, 0x02200000, 0x000001F0, 0x220) == 0);
+  bool same = true;
+  for (std::uint32_t i = 0; i < 0x220; ++i) same = same && f.save.read(0x1F0 + i) == static_cast<std::uint8_t>(1 + i);
+  CHECK(same);
+  CHECK(f.save.read(0x1EF) == 0xFF && f.save.read(0x410) == 0xFF);  // Nothing wrapped round inside a page.
+  CHECK(f.save.read(0x100) == 0xFF && f.save.read(0x200 - 0x11) == 0xFF);
+  CHECK(f.save.statistics().bytes_written == 0x220);
+  // Writing replaces: over the same place with other bytes.
+  f.fill(0x02200000, 4, 0xF0);
+  CHECK(f.request(7, 0x02200000, 0x000001F0, 4) == 0);
+  CHECK(f.save.read(0x1F0) == 0xF0 && f.save.read(0x1F3) == 0xF3 && f.save.read(0x1F4) == 5);
+}
+
+TEST(second_processor_programs_the_save_memory) {
+  Fixture f;
+  f.initialise_for_save();
+  f.bus.write8(0x02200000, 0xF0);
+  f.bus.write8(0x02200001, 0x0F);
+  CHECK(f.request(8, 0x02200000, 0x00030000, 1) == 0);
+  CHECK(f.save.read(0x30000) == 0xF0);
+  CHECK(f.request(8, 0x02200001, 0x00030000, 1) == 0);
+  CHECK(f.save.read(0x30000) == 0x00);  // Programming only clears bits.
+  // Across a page boundary it is split like a write.
+  f.fill(0x02200000, 8, 0x40);
+  CHECK(f.request(8, 0x02200000, 0x000300FC, 8) == 0);
+  CHECK(f.save.read(0x300FC) == 0x40 && f.save.read(0x30103) == 0x47 && f.save.read(0x30001) == 0xFF);
+}
+
+TEST(second_processor_verifies_the_save_memory) {
+  Fixture f;
+  f.initialise_for_save();
+  f.fill(0x02200000, 0x180, 3);
+  CHECK(f.request(7, 0x02200000, 0x00008080, 0x180) == 0);
+  const std::uint64_t written_before = f.save.statistics().bytes_written;
+  CHECK(f.request(9, 0x02200000, 0x00008080, 0x180) == 0);  // The same.
+  f.bus.write8(0x0220017F, 0x00);                            // The last byte differs.
+  CHECK(f.request(9, 0x02200000, 0x00008080, 0x180) == 1);
+  CHECK(f.request(9, 0x02200000, 0x00008080, 0x17F) == 0);  // Not if it is left out.
+  CHECK(f.request(9, 0x02200000, 0x00008080, 0) == 0);
+  CHECK(f.save.statistics().bytes_written == written_before);  // Verifying writes nothing,
+  CHECK(f.save.read(0x8080) == 3 && f.save.read(0x81FF) == static_cast<std::uint8_t>(3 + 0x17F));
+  CHECK(f.bus.read8(0x02200000) == 3);                         // on either side.
+}
+
+TEST(second_processor_erases_sectors_of_the_save_memory) {
+  Fixture f;
+  f.initialise_for_save();
+  f.fill(0x02200000, 4, 0);
+  for (const std::uint32_t at : {0x0FFFCu, 0x10000u, 0x2FFFCu, 0x30000u}) CHECK(f.request(7, 0x02200000, at, 4) == 0);
+  CHECK(f.request(11, 0, 0x00010000, 0x00020000) == 0);  // The second and third sectors.
+  CHECK(f.save.read(0x0FFFC) == 0x00);
+  CHECK(f.save.read(0x10000) == 0xFF && f.save.read(0x2FFFC) == 0xFF);
+  CHECK(f.save.read(0x30001) == 0x01);
+  CHECK(f.save.statistics().sectors_erased == 2);
+  // Not on sector boundaries: refused with its own result, nothing erased.
+  CHECK(f.request(11, 0, 0x00030100, 0x00010000) == 2);
+  CHECK(f.request(11, 0, 0x00030000, 0x00008000) == 2);
+  CHECK(f.save.read(0x30001) == 0x01 && f.save.statistics().sectors_erased == 2);
+  CHECK(f.request(11, 0, 0x00030000, 0) == 0);  // Nothing to erase.
+  CHECK(f.save.read(0x30001) == 0x01);
+}
+
+TEST(second_processor_reads_the_save_memory_status) {
+  Fixture f;
+  f.initialise_for_save();
+  f.bus.write32(0x02200000, 0xEEEEEEEE);
+  CHECK(f.request(13, 0, 0x02200001, 0) == 0);
+  CHECK(f.bus.read32(0x02200000) == 0xEEEE00EE);  // One byte: not busy.
+}
+
+TEST(second_processor_turns_away_save_requests_it_cannot_do_faithfully) {
+  // Another kind of save memory than this game's.
+  for (const auto& [offset, value] : std::vector<std::pair<std::uint32_t, std::uint32_t>>{
+           {0x04, 0x00001302}, {0x04, 0x00001201}, {0x04, 0x00FF1202}, {0x18, 0x00080000}, {0x28, 2}}) {
+    Fixture f;
+    f.initialise_for_save();
+    f.bus.write32(kBlock + offset, value);
+    f.send(SecondProcessor::word(11, true, 6));
+    CHECK(f.ipc.waiting_words() == 0 && f.second.not_carried_out().size() == 1);
+    CHECK(f.second.not_carried_out().begin()->first.find("other than this game's") != std::string::npos);
+  }
+  // Memory that is not main memory, or runs off its end.
+  const std::vector<std::vector<std::uint32_t>> cases = {
+      {6, 0, 0x03000000, 4}, {6, 0, 0x02FFFFFE, 4}, {6, 0, 0x01FFFFFF, 2}, {7, 0x04000000, 0, 4},
+      {8, 0x02FFFFFF, 0, 2}, {9, 0x06000000, 0, 1}, {13, 0, 0x03000000, 0}};
+  for (const auto& c : cases) {
+    Fixture f;
+    f.initialise_for_save();
+    f.bus.write32(kBlock + 0x0C, c[1]);
+    f.bus.write32(kBlock + 0x10, c[2]);
+    f.bus.write32(kBlock + 0x14, c[3]);
+    f.send(SecondProcessor::word(11, true, c[0]));
+    CHECK(f.ipc.waiting_words() == 0 && f.second.not_carried_out().size() == 1);
+    CHECK(f.second.not_carried_out().begin()->first.find("main memory") != std::string::npos);
+    CHECK(!f.save.changed() && f.bus.read32(kBlock) == 0xEEEEEEEE);
+  }
+  // Up to the very end of main memory is fine.
+  Fixture f;
+  f.initialise_for_save();
+  CHECK(f.request(6, 0, 0x02FFFFFC, 4) == 0);
+  CHECK(f.bus.read32(0x02FFFFFC) == 0xFFFFFFFF);
+  // A page size that is not a power of two.
+  f.bus.write32(kBlock + 0x24, 0x180);
+  f.send(SecondProcessor::word(11, true, 7));
+  CHECK(f.ipc.waiting_words() == 0 && f.second.not_carried_out().size() == 1);
 }
 
 TEST(second_processor_cartridge_service_ignores_words_without_the_flag) {

@@ -17,10 +17,11 @@
 //   service 0 are dropped. A word for a service the program has no handler
 //   for is sent back with its flag set, or dropped if the flag was set
 //   already.
-// - Service 11, requests to the cartridge: "initialise" and "read the chip
-//   identifier" are carried out, and the three requests the program refuses
-//   are refused the same way. The others, which work on the save memory, are
-//   recorded and not answered.
+// - Service 11, requests to the cartridge: "initialise", "read the chip
+//   identifier" and the requests on the save memory that this game's kind of
+//   chip takes (save_memory.h) are carried out, and the three requests the
+//   program refuses are refused the same way. Anything else is recorded and
+//   not answered.
 //
 // Words for the other services the program handles are recorded and not
 // answered. An answer is sent the moment the request arrives; on a console
@@ -35,6 +36,7 @@
 
 #include "nds/arm9_bus.h"
 #include "nds/ipc.h"
+#include "nds/save_memory.h"
 #include "nds/user_settings.h"
 
 namespace bd::nds {
@@ -51,23 +53,44 @@ class SecondProcessor : public IpcPeer {
   static constexpr unsigned kCartridgeService = 11;
   // Requests to the cartridge service that are carried out here.
   static constexpr std::uint32_t kCartridgeInitialise = 0;
+  static constexpr std::uint32_t kCartridgePrepareSave = 2;  // Sets the chip's status register, if asked to.
   static constexpr std::uint32_t kCartridgeReadChipId = 3;
-  // The block of memory the main program shares for cartridge requests: the
-  // result of the last request, a value returned by some, and the set of
-  // requests the main program allows, one bit per request number.
-  static constexpr std::uint32_t kCartridgeBlockResult = 0x00;
-  static constexpr std::uint32_t kCartridgeBlockValue = 0x08;
-  static constexpr std::uint32_t kCartridgeBlockAllowed = 0x58;
-  static constexpr std::uint32_t kCartridgeDone = 0;     // Results.
+  static constexpr std::uint32_t kCartridgeReadSave = 6;
+  static constexpr std::uint32_t kCartridgeWriteSave = 7;    // Replaces bytes.
+  static constexpr std::uint32_t kCartridgeProgramSave = 8;  // Clears bits.
+  static constexpr std::uint32_t kCartridgeVerifySave = 9;   // Compares the chip with memory.
+  static constexpr std::uint32_t kCartridgeEraseSectors = 11;
+  static constexpr std::uint32_t kCartridgeReadStatus = 13;
+  // The block of memory the main program shares for cartridge requests.
+  static constexpr std::uint32_t kCartridgeBlockResult = 0x00;      // Of the last request.
+  static constexpr std::uint32_t kCartridgeBlockSaveKind = 0x04;    // What save memory the game says it has.
+  static constexpr std::uint32_t kCartridgeBlockValue = 0x08;       // Returned by "read the chip identifier".
+  static constexpr std::uint32_t kCartridgeBlockSource = 0x0C;      // Where to copy from,
+  static constexpr std::uint32_t kCartridgeBlockDestination = 0x10; // where to,
+  static constexpr std::uint32_t kCartridgeBlockLength = 0x14;      // and how many bytes.
+  static constexpr std::uint32_t kCartridgeBlockSaveSize = 0x18;
+  static constexpr std::uint32_t kCartridgeBlockSectorSize = 0x1C;
+  static constexpr std::uint32_t kCartridgeBlockPageSize = 0x24;
+  static constexpr std::uint32_t kCartridgeBlockAddressBytes = 0x28;
+  static constexpr std::uint32_t kCartridgeBlockStatusWanted = 0x54;  // One byte; 0xFF: leave it.
+  static constexpr std::uint32_t kCartridgeBlockAllowed = 0x58;     // Requests allowed, one bit each.
+  // Results.
+  static constexpr std::uint32_t kCartridgeDone = 0;
+  static constexpr std::uint32_t kCartridgeDiffers = 1;       // "Verify" found a difference.
+  static constexpr std::uint32_t kCartridgeBadArgument = 2;   // An erase not on sector boundaries.
   static constexpr std::uint32_t kCartridgeRefused = 3;
+  // How this game describes its save memory in the block: serial flash,
+  // 2 to the 18th bytes.
+  static constexpr std::uint32_t kSaveKind = 0x1202;
 
   // A word as both programs put it on the channel.
   static constexpr std::uint32_t word(unsigned service, bool flag, std::uint32_t data) {
     return (service & 0x1Fu) | (flag ? 0x20u : 0u) | (data << 6);
   }
 
-  // `chip_id` is what the cartridge answers when asked what it is.
-  SecondProcessor(Arm9Bus& bus, std::uint32_t chip_id);
+  // `chip_id` is what the cartridge answers when asked what it is; `save` is
+  // the cartridge's save memory. Both must outlive this object.
+  SecondProcessor(Arm9Bus& bus, std::uint32_t chip_id, SaveMemory& save);
 
   // Must be called once, with the channel this is the other end of, before
   // the program starts.
@@ -111,9 +134,14 @@ class SecondProcessor : public IpcPeer {
   void write(std::uint32_t address, unsigned size, std::uint32_t value);
   void cartridge_word(std::uint32_t data);
   void cartridge_request();
+  // A request on the save memory. Returns false, with the reason in *why,
+  // if it cannot be carried out; otherwise the result is in the block.
+  bool save_request(std::uint32_t block, std::string* why);
 
   Arm9Bus& bus_;
   std::uint32_t chip_id_;
+  SaveMemory& save_;
+  bool save_status_set_ = false;
   Ipc* ipc_ = nullptr;
   bool handshake_done_ = false;
   // The cartridge service's two words of state, as the program keeps them.

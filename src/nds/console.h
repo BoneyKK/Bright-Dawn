@@ -25,6 +25,7 @@
 #include "nds/ipc.h"
 #include "nds/math_unit.h"
 #include "nds/program.h"
+#include "nds/save_memory.h"
 #include "nds/second_processor.h"
 #include "nds/system_control.h"
 #include "nds/timeline.h"
@@ -99,6 +100,9 @@ class Console : private runtime::System {
   // Times the processor slept waiting for an interrupt.
   std::uint64_t sleeps() const { return sleeps_; }
   SecondProcessor& second_processor() { return second_processor_; }
+  // The cartridge's save memory. Blank, as in a new cartridge, unless a save
+  // is loaded into it before the program starts.
+  SaveMemory& save_memory() { return save_memory_; }
   runtime::Machine& machine() { return machine_; }
 
   // Software interrupts the program made, by number.
@@ -129,6 +133,7 @@ class Console : private runtime::System {
   Timeline timeline_;
   VideoTiming video_timing_;
   Timers timers_;
+  SaveMemory save_memory_;
   SecondProcessor second_processor_;
   Ipc ipc_;
   runtime::Machine machine_;

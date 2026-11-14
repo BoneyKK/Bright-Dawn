@@ -120,7 +120,8 @@ TEST(wireless_channels_are_chosen_from_the_allowed_ones) {
 TEST(second_processor_leaves_the_settings_in_memory) {
   NoIo no_io;
   bd::nds::Arm9Bus bus(no_io);
-  bd::nds::SecondProcessor second(bus, 0x00001FC2);
+  bd::nds::SaveMemory save;
+  bd::nds::SecondProcessor second(bus, 0x00001FC2, save);
   UserSettings settings;
   settings.language = UserSettings::Language::Spanish;
   settings.network_address = {0x00, 0x09, 0xBF, 0xA1, 0xB2, 0xC3};
@@ -146,7 +147,8 @@ TEST(second_processor_leaves_the_settings_in_memory) {
 TEST(second_processor_writes_nothing_for_settings_that_are_not_valid) {
   NoIo no_io;
   bd::nds::Arm9Bus bus(no_io);
-  bd::nds::SecondProcessor second(bus, 0x00001FC2);
+  bd::nds::SaveMemory save;
+  bd::nds::SecondProcessor second(bus, 0x00001FC2, save);
   UserSettings settings;
   settings.birthday_month = 13;
   CHECK(!second.start_up(settings).ok());
