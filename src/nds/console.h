@@ -23,6 +23,7 @@
 #include "nds/dma.h"
 #include "nds/interrupts.h"
 #include "nds/ipc.h"
+#include "nds/keypad.h"
 #include "nds/math_unit.h"
 #include "nds/program.h"
 #include "nds/save_memory.h"
@@ -100,6 +101,11 @@ class Console : private runtime::System {
   // Times the processor slept waiting for an interrupt.
   std::uint64_t sleeps() const { return sleeps_; }
   SecondProcessor& second_processor() { return second_processor_; }
+  // The buttons and the lid. Nothing is held and the lid is open until this
+  // is told otherwise.
+  Keypad& keypad() { return keypad_; }
+  // The touch screen: whether it is touched, and where, in its own pixels.
+  void set_touch(bool touched, unsigned x, unsigned y);
   // The cartridge's save memory. Blank, as in a new cartridge, unless a save
   // is loaded into it before the program starts.
   SaveMemory& save_memory() { return save_memory_; }
@@ -134,6 +140,8 @@ class Console : private runtime::System {
   VideoTiming video_timing_;
   Timers timers_;
   SaveMemory save_memory_;
+  Keypad keypad_;
+  bool touched_ = false;
   SecondProcessor second_processor_;
   Ipc ipc_;
   runtime::Machine machine_;

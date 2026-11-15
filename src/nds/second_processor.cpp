@@ -88,6 +88,11 @@ void SecondProcessor::word_sent(std::uint32_t word) {
   if (!flag) send(word | 0x20u);
 }
 
+void SecondProcessor::report_buttons(std::uint16_t button_register) {
+  const std::uint32_t lid = (button_register & 0x80u) ? 0x8000u : 0u;
+  write(kButtonWord, 2, lid | ((button_register & 0x0Bu) << 10));
+}
+
 void SecondProcessor::set_touch(bool touched, unsigned x, unsigned y) {
   touched_ = touched;
   touch_x_ = x > 255 ? 255 : x;

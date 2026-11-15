@@ -8,8 +8,9 @@ and music packs.
 **Status: early foundation. The game does not run.** Its own start-up code
 now executes, in the interpreter, on a real ROM: it sets up the machine, takes
 interrupts, reads from the cartridge and from its save memory, and reaches its
-frame loop, where it reads the buttons and the touch screen once a frame.
-Nothing is drawn and there is no keypad yet ([docs/BOOT.md](docs/BOOT.md)). See
+frame loop, where it reads the buttons and the touch screen once a frame and
+keeps running. Nothing is drawn and no sound is made yet
+([docs/BOOT.md](docs/BOOT.md)). See
 [docs/ASSESSMENT.md](docs/ASSESSMENT.md) for what is feasible, what stands in
 the way, and the roadmap, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
 the module design.
@@ -48,7 +49,8 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | Interrupts, in interpreted code | Done, tested: the display's and timers' interrupts are taken, and the processor sleeps until one comes |
 | Console time, display timing, hardware timers, hardware divider and square root | Done, tested. Time per instruction is a coarse figure |
 | Channel to the second processor, start-up handshake | Done, tested |
-| The second processor's services | Begun: words are received as the game's own second-processor program receives them, and the cartridge service (save memory included) and one-off touch screen samples are done. Sound, clock, power, the buttons the second processor reports: not yet |
+| The second processor's services | Begun: words are received as the game's own second-processor program receives them, and the cartridge service (save memory included) and one-off touch screen samples are done. Sound, clock, power: not yet |
+| Buttons and lid | Done, tested: the main program's register and what the second processor passes on. Nothing drives them yet (no input layer) |
 | Save memory (256 KiB serial flash) | Done, tested; the real program reads it. Not yet kept in a file between runs |
 | Console settings the game reads (language, owner, network address) | Done, tested. Fixed values for now; not yet a user setting |
 | BIOS calls | 12 of the 17 the game has wrappers for, tested: 9 natively, 3 that wait for interrupts as this project's own code on the processor |

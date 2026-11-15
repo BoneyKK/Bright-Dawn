@@ -9,10 +9,9 @@ initialisation of graphics and sound registers, the first interrupts, reading
 its file tables and overlays from the cartridge, and past the check that stops
 the game on a machine that does not look like a console, and through its
 requests to the second processor for its save memory and the touch screen.
-It reaches its frame loop: every frame it reads the buttons and samples the
-touch screen. No keypad is modelled yet, so every button reads as held down,
-and after 165 frames the game takes that for its soft-reset combination and
-asks to be restarted.
+It reaches its frame loop and stays in it: every frame it reads the buttons,
+samples the touch screen and sleeps until the next vertical blank. Nothing
+is drawn, no sound is made, and nothing presses a button.
 
 ## The model
 
@@ -28,6 +27,7 @@ In `src/nds`:
 | Display timing (`video_timing`) | The line counter, the blanking flags, and the vertical blank, horizontal blank and line-match interrupts, at 263 lines of 2,130 cycles a frame. Nothing is drawn |
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
+| Buttons and lid (`keypad`) | The main program's button register, and the X and Y buttons and the lid sensor as the second processor passes them on. Nothing presses a button yet. The register that raises an interrupt on a button combination is not modelled |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
 | Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, two are there: requests to the cartridge (service 11), including those on the save memory, and one-off samples of the touch screen (service 6). Every word for another service is recorded and not answered. See below |
 | Save memory (`save_memory`) | The cartridge's 256 KiB serial flash chip, by what its commands do: read, write, program, erase a sector. Blank at the start; nothing keeps it in a file between runs yet. Every operation completes at once |
@@ -101,6 +101,12 @@ not run but is the reference for what the main program expects:
   the tolerance (request 3) is accepted. Sampling at regular intervals
   (request 1) is not implemented; stopping it (request 2) is answered as
   the program answers when it is not running.
+
+- The buttons wired to the second processor. Its program reads its own
+  button register from a timer, every four milliseconds, and leaves X, Y and
+  the lid sensor in a word at `0x027FFFA8` in the form the main program's
+  library expects. The stand-in writes that word when the program starts and
+  whenever a button or the lid changes.
 
 The stand-in answers the moment a request arrives. On a console the second
 processor needs time, during which the main program's thread sleeps. In the
@@ -313,24 +319,31 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
 - With the sample answered it reaches its frame loop. Each frame it reads
   the button register, asks for a touch sample and sleeps until the next
   vertical blank. It writes to the registers of the 3D engine, starts DMA
-  transfers timed by the horizontal blank and by the cartridge, and reads
-  on from the cartridge: 851,456 bytes in the ten seconds.
+  transfers fed by the cartridge, which run, and others timed by the
+  horizontal blank, which do not yet, and reads on from the cartridge.
 - It writes to its save memory: 16 times a write followed by a verify, 512
   bytes in all, with reads in between. A blank chip is being given its first
   contents.
-- After 165 frames it sends a word to service 12 with the value `0x1000`,
-  masks every interrupt but "word received" and waits. That is a request to
-  restart the game. The cause is on this side: no keypad is modelled, the
-  button register reads as zero, and zero means every button is held down,
-  the game's soft-reset combination among them. With the register and the
-  second processor's button word set by hand to "nothing pressed", the
-  request is not made and the frame loop runs for the whole ten seconds:
-  555 touch samples, 56 million instructions, the processor asleep for most
-  of each frame.
+- Before there was a keypad, the run ended after 165 frames: the program
+  sent a word to service 12 with the value `0x1000`, masked every interrupt
+  but "word received" and waited. That is a request to restart the game,
+  and the cause was on this side: the button register read as zero, which
+  means every button held down, the game's soft-reset combination among
+  them.
+- With the keypad, and nothing held, the frame loop runs for the whole ten
+  seconds: 600 frames, 555 touch samples, 56 million instructions, the
+  processor asleep for most of each frame, 2,784 interrupts taken. Besides
+  the vertical blank, timer 0 and "word received" it has enabled the
+  interrupt of the 3D engine's command queue.
 
-Next: the keypad, and with it the buttons the second processor reports.
-Then the other services (sound first), the display's remaining timed
-events, and interrupts in translated code.
+What it runs on is still thin. 166 hardware registers it uses have no
+model, the 3D engine and both 2D engines among them; three words to the
+sound service and one to service 13 are unanswered; DMA transfers timed by
+the horizontal blank never start.
+
+Next: the remaining unanswered services (sound first), the display's
+other timed events, then video memory and the first drawing. Interrupts
+in translated code before translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.
