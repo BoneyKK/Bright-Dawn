@@ -14,6 +14,7 @@ add_executable(bd_tests
   test_cartridge.cpp
   test_dma.cpp
   test_geometry_engine.cpp
+  test_geometry_polygons.cpp
   test_console.cpp
   test_program.cpp
   test_save_memory.cpp
