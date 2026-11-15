@@ -30,13 +30,12 @@
 //   buffers" hands the frame over for drawing and starts an empty one.
 // - With each vertex its colour and texture coordinates, and with each
 //   polygon the attribute, texture and palette words in force.
+// - Lighting. A vertex colour is either sent as such or worked out when a
+//   normal is sent: from up to four lights, each a direction and a colour,
+//   and the material's four colours (diffuse, ambient, specular, emission),
+//   with the table that can shape the specular part.
 //
 // What is not, yet:
-// - Lighting. The normal command and the light commands are accepted and
-//   have no effect, and of the material commands only the one way of setting
-//   the vertex colour directly; so a vertex has the colour last set by that
-//   or by the colour command. Texture coordinates made from the normal are
-//   not made either.
 // - Drawing. The finished frame is kept, and nothing draws it.
 // - The flag that tells a program that vertices or polygons did not fit
 //   (it is in a register of the drawing half). They are counted here.
@@ -48,8 +47,9 @@
 //
 // What the commands do is GBATEK's description; where that leaves details
 // open (the edges of the matrix stacks, the order of a box's faces, how the
-// queue hands entries on, and the arithmetic of facing, cutting and placing
-// polygons and of which vertices a strip keeps) NooDS is followed, with one
+// queue hands entries on, the arithmetic of lighting and of facing, cutting
+// and placing polygons, and which vertices a strip keeps) NooDS is followed,
+// with one
 // difference: vertices at the end of a list that made no polygon are not
 // kept in the frame. The hardware takes up to four
 // entries out of the queue before it runs them; here that is: the first four
@@ -274,6 +274,7 @@ class GeometryEngine {
   void store(std::uint32_t parameter);
   void restore(std::uint32_t parameter);
   void box_test(const std::uint32_t* p);
+  void normal(std::uint32_t parameter);
   const Matrix& clip();
   void begin_vertices(std::uint32_t parameter);
   void add_vertex();
@@ -304,6 +305,16 @@ class GeometryEngine {
   std::int16_t raw_s_ = 0, raw_t_ = 0;  // Texture coordinates as last sent,
   std::int16_t s_ = 0, t_ = 0;          // and as the next vertex gets them.
   std::uint32_t colour_ = 0;
+  // Lighting. Colours are six bits a part, as a vertex colour is.
+  struct Light {
+    std::array<std::int32_t, 3> direction{};  // Through the vector matrix, when it was sent.
+    std::array<std::int32_t, 3> half{};       // Half way between that and the line of sight.
+    std::uint32_t colour = 0;
+  };
+  std::array<Light, 4> lights_{};
+  std::uint32_t diffuse_ = 0, ambient_ = 0, specular_ = 0, emission_ = 0;
+  bool shininess_table_on_ = false;
+  std::array<std::uint8_t, 128> shininess_{};
   std::uint32_t attributes_next_ = 0;   // The polygon attribute word as last sent,
   std::uint32_t attributes_ = 0;        // and as in force since the vertex list began.
   std::uint32_t texture_parameters_ = 0, palette_ = 0;

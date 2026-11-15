@@ -571,10 +571,36 @@ void GeometryEngine::execute(unsigned command, const std::uint32_t* p) {
       add_vertex();
       break;
 
+    case kNormal:
+      normal(p[0]);
+      break;
     case kDiffuseAmbient:
-      // The material's colours are for lighting, which is not here yet; but
-      // bit 15 makes the diffuse colour the vertex colour as well.
-      if ((p[0] & 0x8000) != 0) colour_ = six_bits_each(p[0]);
+      diffuse_ = six_bits_each(p[0]);
+      ambient_ = six_bits_each(p[0] >> 16);
+      // Bit 15 makes the diffuse colour the vertex colour as well.
+      if ((p[0] & 0x8000) != 0) colour_ = diffuse_;
+      break;
+    case kSpecularEmission:
+      specular_ = six_bits_each(p[0]);
+      emission_ = six_bits_each(p[0] >> 16);
+      shininess_table_on_ = (p[0] & 0x8000) != 0;
+      break;
+    case kLightVector: {
+      // Ten bits each, in units eight times as large, through the vector
+      // matrix as it is now. The line of sight is (0, 0, -1).
+      Light& light = lights_[p[0] >> 30];
+      Vertex d = at(ten_bits(p[0], 0) * 8, ten_bits(p[0], 10) * 8, ten_bits(p[0], 20) * 8, 0);
+      through(d, vector_);
+      light.direction = {d.x, d.y, d.z};
+      light.half = {d.x / 2, d.y / 2, static_cast<i32>((static_cast<i64>(d.z) - kOne) / 2)};
+      break;
+    }
+    case kLightColour:
+      lights_[p[0] >> 30].colour = six_bits_each(p[0]);
+      break;
+    case kShininess:
+      // 128 values, four to a word, the lowest byte first.
+      for (unsigned i = 0; i < 128; ++i) shininess_[i] = static_cast<std::uint8_t>(p[i / 4] >> (8 * (i % 4)));
       break;
 
     case kPolygonAttributes:
@@ -636,11 +662,59 @@ void GeometryEngine::execute(unsigned command, const std::uint32_t* p) {
     }
 
     default:
-      // The normal, the rest of the material and the lights: accepted,
-      // without effect yet.
       if (!exists(command)) ++statistics_.unknown_commands;
       break;
   }
+}
+
+void GeometryEngine::normal(std::uint32_t parameter) {
+  // Ten bits each, in units eight times as large.
+  Vertex n = at(ten_bits(parameter, 0) * 8, ten_bits(parameter, 10) * 8, ten_bits(parameter, 20) * 8, 0);
+
+  if ((texture_parameters_ >> 30) == 2) {
+    // Texture coordinates from the normal: through the texture matrix's
+    // 3 by 3, added to the coordinates sent.
+    const auto column = [&](int c) {
+      return (static_cast<i64>(n.x) * texture_[c] + static_cast<i64>(n.y) * texture_[4 + c] +
+              static_cast<i64>(n.z) * texture_[8 + c]) >>
+             24;
+    };
+    s_ = static_cast<std::int16_t>(column(0) + raw_s_);
+    t_ = static_cast<std::int16_t>(column(1) + raw_t_);
+  }
+
+  // The vertex colour: what the material gives off by itself, and for each
+  // light that the polygon attributes turn on, what the material throws
+  // back of it. How much depends on the angle between the normal and the
+  // light (diffuse), on the angle between the normal and the direction half
+  // way between light and eye (specular), or on neither (ambient).
+  through(n, vector_);
+  const auto level = [&](const std::array<i32, 3>& direction) {
+    const i64 dot = (static_cast<i64>(direction[0]) * n.x + static_cast<i64>(direction[1]) * n.y +
+                     static_cast<i64>(direction[2]) * n.z) >>
+                    12;
+    return std::clamp<i64>(-dot, 0, kOne);
+  };
+  u32 colour = emission_;
+  for (unsigned i = 0; i < 4; ++i) {
+    if ((attributes_ & (1u << i)) == 0) continue;
+    const Light& light = lights_[i];
+    const i64 diffuse_level = level(light.direction);
+    i64 shininess_level = level(light.half);
+    shininess_level = (shininess_level * shininess_level) >> 12;
+    if (shininess_table_on_) shininess_level = i64{shininess_[std::min<i64>(shininess_level >> 5, 127)]} << 4;
+    u32 lit = 0;
+    for (unsigned shift = 0; shift < 18; shift += 6) {
+      const auto part = [&](u32 c) { return static_cast<i64>((c >> shift) & 0x3F); };
+      i64 value = part(colour);
+      value += (part(specular_) * part(light.colour) * shininess_level) >> 18;
+      value += (part(diffuse_) * part(light.colour) * diffuse_level) >> 18;
+      value += (part(ambient_) * part(light.colour)) >> 6;
+      lit |= static_cast<u32>(std::clamp<i64>(value, 0, 63)) << shift;
+    }
+    colour = lit;
+  }
+  colour_ = colour;
 }
 
 void GeometryEngine::begin_vertices(std::uint32_t parameter) {
