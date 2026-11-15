@@ -25,7 +25,8 @@
 #include "rom/rom.h"
 
 // In boot.cpp.
-int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit);
+int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit,
+             const std::filesystem::path& wireframe);
 
 namespace {
 
@@ -59,6 +60,8 @@ void print_usage(std::FILE* out) {
       "                                   instructions or F frames, default one\n"
       "                                   thousand million and 600, whichever\n"
       "                                   comes first; that can take a minute)\n"
+      "      --wireframe FILE             Also write the outlines of the polygons of the\n"
+      "                                   last 3D frame the game sent, as an SVG picture\n"
       "\n"
       "You must supply your own legally obtained ROM. Nothing is downloaded.\n",
       out);
@@ -551,7 +554,7 @@ int main(int argc, char** argv) {
     return usage_error(("unknown command: " + command).c_str());
   }
 
-  std::filesystem::path out_dir;
+  std::filesystem::path out_dir, wireframe;
   bool with_code = false;
   std::size_t top = 20;
   // Ten seconds of console time, which a busy program fills with a few
@@ -579,6 +582,9 @@ int main(int argc, char** argv) {
       if (end == args[i].c_str() || *end != '\0' || value == 0)
         return usage_error("--instructions needs a positive number");
       instructions = value;
+    } else if (arg == "--wireframe" && command == "boot") {
+      if (++i == args.size() || args[i].empty()) return usage_error("--wireframe needs a file name");
+      wireframe = args[i];
     } else if (arg == "--frames" && command == "boot") {
       if (++i == args.size()) return usage_error("--frames needs a number");
       char* end = nullptr;
@@ -600,7 +606,7 @@ int main(int argc, char** argv) {
   // Output from these commands gets pasted into reports; say which build made it.
   if (command == "validate" || command == "info" || command == "survey")
     std::printf("bdtool %s\n", BD_VERSION);
-  if (command == "boot") return cmd_boot(rom_path, instructions, frames);
+  if (command == "boot") return cmd_boot(rom_path, instructions, frames, wireframe);
   if (command == "validate") return cmd_validate(rom_path);
   if (command == "info") return cmd_info(rom_path);
   if (command == "list") return cmd_list(rom_path);

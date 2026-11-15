@@ -59,7 +59,7 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | BIOS calls | 12 of the 17 the game has wrappers for, tested: 9 natively, 3 that wait for interrupts as this project's own code on the processor |
 | DMA | Transfers that start at once, transfers fed by the cartridge and transfers timed by the display's blanks: done, tested. Transfers started by other hardware events: not yet |
 | Cartridge slot (reading data) | Done, tested, and used by the real program to read its file tables and overlays |
-| 3D engine | Begun, tested: the command queue, status and interrupt, the matrices and their stacks, the tests a program can ask for. The real program's 3D commands run through it. Vertices are not made into polygons yet, and nothing is drawn |
+| 3D engine | Begun, tested: the command queue, status and interrupt, the matrices and their stacks, the tests a program can ask for, and vertices made into polygons (facing, cutting to the view, placing on the screen, the limits of a frame). The real program's 3D commands run through it and give frames of up to 1,304 polygons; `bdtool boot --wireframe` writes their outlines. No lighting yet, and nothing is drawn |
 | 2D engines, display output, interrupts in translated code | Not started; unimplemented registers are recorded |
 | Renderer, audio, input, mods, settings menu | Not started |
 

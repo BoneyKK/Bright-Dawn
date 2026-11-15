@@ -20,12 +20,26 @@
 // - The three tests a program can ask for: a position through the matrices,
 //   a vector through the vector matrix, and whether a box is in view.
 // - The registers that read the matrices back.
-// - The current vertex position, which the vertex commands change.
+// - Vertices into polygons. Each vertex goes through the matrices, and the
+//   vertex list's kind (triangles, four-cornered polygons, or strips of
+//   either) says which vertices make a polygon. A polygon that faces the
+//   wrong way is dropped, one that leaves the view volume is cut down to it,
+//   and when a vertex list ends its vertices are placed on the screen by the
+//   viewport. The frame being built holds at most 6144 vertices and 2048
+//   polygons; a register tells the program how many there are. "Swap
+//   buffers" hands the frame over for drawing and starts an empty one.
+// - With each vertex its colour and texture coordinates, and with each
+//   polygon the attribute, texture and palette words in force.
 //
-// What is not, yet: vertices are not turned into polygons, so nothing is
-// lit, textured, clipped or counted. The commands for that are accepted and
-// have no effect, and the register that tells how many polygons and vertices
-// a frame has reads as zero.
+// What is not, yet:
+// - Lighting. The normal command and the light commands are accepted and
+//   have no effect, and of the material commands only the one way of setting
+//   the vertex colour directly; so a vertex has the colour last set by that
+//   or by the colour command. Texture coordinates made from the normal are
+//   not made either.
+// - Drawing. The finished frame is kept, and nothing draws it.
+// - The flag that tells a program that vertices or polygons did not fit
+//   (it is in a register of the drawing half). They are counted here.
 //
 // Commands take no time here: each is carried out the moment its last
 // parameter arrives, unless the engine is stopped for a swap. On the
@@ -34,7 +48,10 @@
 //
 // What the commands do is GBATEK's description; where that leaves details
 // open (the edges of the matrix stacks, the order of a box's faces, how the
-// queue hands entries on) NooDS is followed. The hardware takes up to four
+// queue hands entries on, and the arithmetic of facing, cutting and placing
+// polygons and of which vertices a strip keeps) NooDS is followed, with one
+// difference: vertices at the end of a list that made no polygon are not
+// kept in the frame. The hardware takes up to four
 // entries out of the queue before it runs them; here that is: the first four
 // waiting entries do not count as queued.
 #pragma once
@@ -44,6 +61,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <vector>
 
 #include "nds/arm9_io.h"
 #include "nds/interrupts.h"
@@ -68,6 +86,49 @@ class GeometryEngine {
   static constexpr std::uint32_t kVectorMatrix = 0x04000680;    // Nine words: the vector matrix's 3 by 3.
 
   static constexpr std::size_t kQueueSize = 256;
+  static constexpr std::size_t kMostVertices = 6144;  // In a frame.
+  static constexpr std::size_t kMostPolygons = 2048;
+
+  // A vertex of the frame. Until its vertex list is finished, x, y, z and w
+  // are its place after the matrices ("clip space": it is in view when each
+  // of x, y and z is between -w and w). Afterwards x and y are its place on
+  // the screen, in pixels from the top left, and z is its depth, from about
+  // 0 at the near side of the view volume to 0xFFFE00 at the far side; w
+  // stays.
+  struct Vertex {
+    std::int32_t x = 0, y = 0, z = 0, w = 0;
+    std::int16_t s = 0, t = 0;   // Texture coordinates, in sixteenths of a texel.
+    std::uint32_t colour = 0;    // Six bits each of red, green and blue, red lowest.
+
+    bool operator==(const Vertex&) const = default;
+  };
+
+  // A polygon of the frame: `size` vertices in a row, from `first`.
+  struct Polygon {
+    std::uint16_t first = 0;
+    std::uint8_t size = 0;           // 3 to 10: cutting can add corners.
+    bool clockwise = false;          // How its corners run on the screen, as stored.
+    // An uncut polygon of a strip of four-cornered polygons has its corners
+    // stored in the strip's order: around the polygon they run 0, 1, 3, 2.
+    bool strip_order = false;
+    std::uint32_t attributes = 0;    // The polygon attribute word in force when its vertex list began.
+    std::uint32_t texture = 0;       // The texture parameter word,
+    std::uint32_t palette = 0;       // and the texture palette, when it was made.
+  };
+
+  struct Frame {
+    std::vector<Vertex> vertices;
+    std::vector<Polygon> polygons;
+    std::uint32_t swap_parameter = 0;  // Of the "swap buffers" that ended it.
+  };
+
+  // Kinds of vertex list: the parameter of "begin a vertex list".
+  enum ListKind : unsigned { kTriangles = 0, kQuads = 1, kTriangleStrip = 2, kQuadStrip = 3 };
+
+  // Bits of the polygon attribute word that matter here.
+  static constexpr std::uint32_t kDrawBack = 1u << 6;
+  static constexpr std::uint32_t kDrawFront = 1u << 7;
+  static constexpr std::uint32_t kCutAtFarSide = 1u << 12;  // Clear: a polygon that crosses the far side is dropped.
 
   // Commands.
   enum Command : unsigned {
@@ -135,6 +196,16 @@ class GeometryEngine {
     std::uint64_t swaps = 0;
     std::uint64_t waits_for_room = 0;           // Times the queue was full when an entry came.
     std::uint64_t most_queued = 0;
+    std::uint64_t vertices = 0;                 // Sent by the program.
+    std::uint64_t polygons = 0;                 // Put into a frame.
+    std::uint64_t polygons_cut = 0;             // Of those, cut down to the view volume.
+    std::uint64_t polygons_facing_away = 0;     // Dropped: facing a way that is not drawn.
+    std::uint64_t polygons_out_of_view = 0;     // Dropped: nothing left after cutting.
+    std::uint64_t polygons_past_far_side = 0;   // Dropped: crossing the far side, with cutting there off.
+    std::uint64_t vertices_without_room = 0;    // Vertices and polygons that came when the frame was full.
+    std::uint64_t polygons_without_room = 0;
+    std::uint64_t most_vertices = 0;            // In one frame, when it was handed over.
+    std::uint64_t most_polygons = 0;
   };
 
   // `interrupts` must outlive this object.
@@ -149,6 +220,9 @@ class GeometryEngine {
 
   std::uint32_t status() const;
   void write_status(std::uint32_t value, std::uint32_t mask);
+  // What the count register reads: polygons in the frame being built in the
+  // low half, vertices in the high half.
+  std::uint32_t counts() const;
 
   // The vertical blank has begun. A swap that was asked for happens, and the
   // engine goes on with whatever has queued up.
@@ -176,6 +250,9 @@ class GeometryEngine {
   const std::array<std::int16_t, 3>& vertex() const { return vertex_; }
   std::uint32_t viewport() const { return viewport_; }
   std::uint32_t swap_parameter() const { return swap_parameter_; }
+  // The frame being built, and the one last handed over for drawing.
+  const Frame& building() const { return building_; }
+  const Frame& finished() const { return finished_; }
   const Statistics& statistics() const { return statistics_; }
 
  private:
@@ -197,6 +274,14 @@ class GeometryEngine {
   void store(std::uint32_t parameter);
   void restore(std::uint32_t parameter);
   void box_test(const std::uint32_t* p);
+  const Matrix& clip();
+  void begin_vertices(std::uint32_t parameter);
+  void add_vertex();
+  void add_polygon();
+  void forget_loose_vertices();
+  // Places the vertices of the list that has ended on the screen.
+  void place_vertices();
+  void hand_over_frame();
 
   Interrupts& interrupts_;
   std::deque<Entry> queue_;
@@ -213,7 +298,23 @@ class GeometryEngine {
   std::array<Matrix, 32> position_stack_{}, vector_stack_{};
   unsigned position_level_ = 0;
   bool projection_level_ = false;
+  Matrix clip_ = kIdentity;       // Position times projection, when not stale.
+  bool clip_stale_ = false;
   std::array<std::int16_t, 3> vertex_{};
+  std::int16_t raw_s_ = 0, raw_t_ = 0;  // Texture coordinates as last sent,
+  std::int16_t s_ = 0, t_ = 0;          // and as the next vertex gets them.
+  std::uint32_t colour_ = 0;
+  std::uint32_t attributes_next_ = 0;   // The polygon attribute word as last sent,
+  std::uint32_t attributes_ = 0;        // and as in force since the vertex list began.
+  std::uint32_t texture_parameters_ = 0, palette_ = 0;
+  unsigned list_kind_ = kTriangles;
+  std::size_t list_vertices_ = 0;       // Vertices of the list so far, or of the strip since it was last broken.
+  bool strip_clockwise_ = false;        // A strip of triangles stores every other one the other way round.
+  std::size_t placed_ = 0;              // Vertices of the frame already placed on the screen.
+  // Left edge, top edge, width and height on the screen: for the vertex list
+  // under way, and for the next.
+  std::array<std::uint16_t, 4> viewport_now_ = {0, 0, 256, 192}, viewport_next_ = {0, 0, 256, 192};
+  Frame building_, finished_;
   std::array<std::int32_t, 4> position_result_{};
   std::array<std::int16_t, 3> vector_result_{};
   std::uint32_t viewport_ = 0, swap_parameter_ = 0;

@@ -7,6 +7,7 @@
 
 #include "core/version.h"
 #include "nds/console.h"
+#include "nds/geometry_engine.h"
 #include "nds/program.h"
 #include "rom/rom.h"
 #include "translated_table.h"
@@ -29,9 +30,40 @@ const char* mode_name(std::uint32_t mode) {
   }
 }
 
+// The outlines of a 3D frame's polygons as an SVG picture of the screen, each
+// in the colour of its first corner. Not a rendering: nothing is filled,
+// textured or hidden behind anything.
+bool write_wireframe(const std::filesystem::path& path, const bd::nds::GeometryEngine::Frame& frame) {
+  std::FILE* file = std::fopen(path.string().c_str(), "w");
+  if (file == nullptr) return false;
+  std::fprintf(file,
+               "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 192\" width=\"1024\" height=\"768\">\n"
+               "<rect width=\"256\" height=\"192\" fill=\"#101018\"/>\n"
+               "<g fill=\"none\" stroke-width=\"0.25\" stroke-linejoin=\"round\">\n");
+  for (const bd::nds::GeometryEngine::Polygon& polygon : frame.polygons) {
+    if (polygon.first + std::size_t{polygon.size} > frame.vertices.size()) continue;
+    const bd::nds::GeometryEngine::Vertex* corner = &frame.vertices[polygon.first];
+    // Six bits a part made eight.
+    const auto part = [&](unsigned shift) {
+      const unsigned six = (corner[0].colour >> shift) & 0x3F;
+      return six << 2 | six >> 4;
+    };
+    std::fprintf(file, "<polygon stroke=\"#%02X%02X%02X\" points=\"", part(0), part(6), part(12));
+    for (unsigned i = 0; i < polygon.size; ++i) {
+      // A strip's uncut four-cornered polygon is stored in the strip's order.
+      const unsigned at = polygon.strip_order && i >= 2 ? 5 - i : i;
+      std::fprintf(file, "%s%d,%d", i == 0 ? "" : " ", static_cast<int>(corner[at].x), static_cast<int>(corner[at].y));
+    }
+    std::fprintf(file, "\"/>\n");
+  }
+  std::fprintf(file, "</g>\n</svg>\n");
+  return std::fclose(file) == 0;
+}
+
 }  // namespace
 
-int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit) {
+int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit,
+             const std::filesystem::path& wireframe) {
   using namespace bd;
   std::printf("bdtool %s\n", BD_VERSION);
 
@@ -173,7 +205,23 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   }
   if (geometry.unknown_commands != 0)
     std::printf("  of those, numbers that are no command: %" PRIu64 "\n", geometry.unknown_commands);
-  std::printf("  vertices are not made into polygons yet: nothing is drawn or counted\n");
+  std::printf("  %" PRIu64 " vertices sent; %" PRIu64 " polygons put into frames, %" PRIu64 " of them cut to the view\n",
+              geometry.vertices, geometry.polygons, geometry.polygons_cut);
+  std::printf("  polygons dropped: %" PRIu64 " facing away, %" PRIu64 " out of view, %" PRIu64 " past the far side\n",
+              geometry.polygons_facing_away, geometry.polygons_out_of_view, geometry.polygons_past_far_side);
+  std::printf("  the fullest frame had %" PRIu64 " vertices (of %zu) and %" PRIu64 " polygons (of %zu); no room for %" PRIu64
+              " vertices and %" PRIu64 " polygons\n",
+              geometry.most_vertices, nds::GeometryEngine::kMostVertices, geometry.most_polygons,
+              nds::GeometryEngine::kMostPolygons, geometry.vertices_without_room, geometry.polygons_without_room);
+  std::printf("  the frame last handed over: %zu vertices, %zu polygons\n", console.geometry().finished().vertices.size(),
+              console.geometry().finished().polygons.size());
+  std::printf("  the polygons are not drawn yet\n");
+  if (!wireframe.empty()) {
+    if (write_wireframe(wireframe, console.geometry().finished()))
+      std::printf("  outlines of that frame's polygons written to %s\n", wireframe.string().c_str());
+    else
+      std::fprintf(stderr, "error: cannot write %s\n", wireframe.string().c_str());
+  }
 
   nds::VideoMemory& video = console.bus().video_memory();
   std::printf("\nVideo memory: bank controls A to I, as last set:");

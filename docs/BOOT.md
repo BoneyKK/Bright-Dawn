@@ -27,7 +27,7 @@ In `src/nds`:
 | System coprocessor (`system_control`) | Places and enables the fast memories, including the mode in which one takes writes but not reads. Identification registers. Protection and cache registers are stored and have no effect. A request to wait for an interrupt is noted, not acted on |
 | Hardware registers (`arm9_io`) | Parts of the hardware implement their registers here. A register nobody implements keeps the last value written, and every access to one is counted by address |
 | Interrupt controller (`interrupts`) | The master switch, enable and request registers. When an enabled source has requested an interrupt, the master switch is on and the processor's mask is clear, the processor takes it before its next instruction. A source can also be a level, whose request stands for as long as its condition does. **Only interpreted code is interrupted so far** |
-| 3D engine, front half (`geometry_engine`) | The queue of commands, both ways into it, the status register and its interrupt; the four matrices with their stacks and every matrix command; the position, vector and box tests; the registers that read the matrices back. "Swap buffers" stops the engine until the vertical blank, what is sent meanwhile queues, and the processor waits when the queue is full. **Vertices are not made into polygons yet**: the commands for that are accepted without effect, and the register that counts polygons and vertices reads as zero. Commands take no time. After GBATEK, details after NooDS |
+| 3D engine, front half (`geometry_engine`) | The queue of commands, both ways into it, the status register and its interrupt; the four matrices with their stacks and every matrix command; the position, vector and box tests; the registers that read the matrices back. "Swap buffers" stops the engine until the vertical blank, what is sent meanwhile queues, and the processor waits when the queue is full. Vertices are made into polygons: through the matrices, by the kind of vertex list (triangles, four-cornered polygons, strips of either), dropped when they face a way that is not drawn, cut to the view volume, placed on the screen by the viewport; each vertex with its colour and texture coordinates, each polygon with its attribute, texture and palette words. A frame holds 6144 vertices and 2048 polygons, the count register reads how many there are, and "swap buffers" hands the frame over. **Nothing draws the frame yet, and there is no lighting**: the normal and light commands are accepted without effect. Commands take no time. After GBATEK; the arithmetic of facing, cutting and placing, and which vertices a strip keeps, after NooDS, except that vertices that made no polygon are not kept |
 | Time (`timeline`) | Console time in system clock cycles. Each interpreted instruction is taken to use one cycle, which is coarse. When the processor sleeps, time jumps to the next event |
 | Display timing (`video_timing`) | The line counter, the blanking flags, and the vertical blank, horizontal blank and line-match interrupts, at 263 lines of 2,130 cycles a frame. Nothing is drawn |
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
@@ -269,9 +269,15 @@ second processor, DMA, what was read from the cartridge, every hardware
 register used that has no model with its access counts, and memory accessed
 where nothing is mapped.
 
+With `--wireframe FILE` it also writes the outlines of the polygons of the
+last 3D frame the program sent, as an SVG picture of the screen. That is not
+a rendering: nothing is filled, textured or hidden behind anything. It shows
+whether the geometry arrives. The picture is made from your ROM's content;
+keep it to yourself.
+
 Given a ROM it puts the ROM in the cartridge slot and has the ROM header.
 Given a directory of extracted code it has neither, so a program that reads
-files cannot get far. Its output contains addresses and counts, no game
+files cannot get far. Its report contains addresses and counts, no game
 content.
 
 It is a development diagnostic: the list of unmodelled registers, ordered by
@@ -432,19 +438,30 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   number that is not a command. It does not use the three tests. At most
   27 entries wait in the queue, behind a swap, and the processor never has
   to wait for room.
+- The vertices make polygons. Of 2.2 million polygons sent in the ten
+  seconds, 1.56 million are out of view and 439,000 face away; 194,000 go
+  into frames, 26,000 of them cut at the edge of the view: about 350 a
+  frame. The fullest frame has 3,853 vertices and 1,304 polygons, inside
+  the hardware's 6144 and 2048, and nothing is lost for lack of room. No
+  polygon crosses the far side with cutting there turned off. The outlines
+  of the last frame (`--wireframe`) show a scene in perspective: a
+  landscape with box-shaped buildings on it and a many-cornered disc above.
+- It sends no normals in the ten seconds, so the hardware's lighting is not
+  used here: the vertices get their colours directly. It does set up
+  lights and materials.
 - It uses the queue's interrupt. With the queue always drained at once,
   the condition it asks to be told of holds whenever it asks, and it takes
   that interrupt 72,000 times in the ten seconds. On a console, where
   commands take time, it would come less often.
 
 What it runs on is still thin. 125 hardware registers it uses have no
-model; the vertices it sends are not made into polygons, and nothing is
-drawn; no sequence is played, so there is no music.
+model; the polygons it sends are not drawn; no sequence is played, so there
+is no music.
 
 The program also turns on the display capture every frame.
 
-Next: polygons from the vertices (with the count the program reads back),
-then the first drawing; for sound, the sequence player. Interrupts in
+Next: lighting, then the first drawing of the frame's polygons; for sound,
+the sequence player. Interrupts in
 translated code before translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million

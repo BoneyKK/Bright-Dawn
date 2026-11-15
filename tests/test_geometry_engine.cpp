@@ -404,7 +404,7 @@ TEST(geometry_vertex_commands_move_the_current_position) {
   CHECK(f.g.vertex()[0] == 69 && f.g.vertex()[1] == -65 && f.g.vertex()[2] == -32257);
   f.send(GeometryEngine::kVertexDifference, {0x200u << 20});
   CHECK(f.g.vertex()[2] == 32767);
-  // The commands that describe polygons are taken and change nothing yet.
+  // The other commands that describe polygons are taken as well.
   f.send(GeometryEngine::kBeginVertices, {1});
   f.send(GeometryEngine::kColour, {0x7FFF});
   f.send(GeometryEngine::kEndVertices);
@@ -538,7 +538,6 @@ TEST(geometry_registers) {
   io.write(0x04000444, 4, 0);  // Push.
   CHECK(io.read(GeometryEngine::kStatus, 4) == (kIdle | 0x100));
   CHECK(io.read(GeometryEngine::kStatus + 1, 1) == 0x01);
-  // The count of polygons and vertices is not kept yet.
   CHECK(io.read(GeometryEngine::kCounts, 4) == 0);
   // The ports cannot be read.
   CHECK(io.read(0x04000440, 4) == 0 && io.read(0x04000400, 4) == 0);

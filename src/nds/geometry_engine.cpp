@@ -37,60 +37,101 @@ Matrix times(const Matrix& a, const Matrix& b) {
   return r;
 }
 
-struct Point {
-  i32 x = 0, y = 0, z = 0, w = 0;
-};
+using Vertex = GeometryEngine::Vertex;
 
-Point through(const Point& p, const Matrix& m) {
-  const auto row = [&](int column) {
-    return static_cast<i32>((static_cast<i64>(p.x) * m[column] + static_cast<i64>(p.y) * m[4 + column] +
-                             static_cast<i64>(p.z) * m[8 + column] + static_cast<i64>(p.w) * m[12 + column]) >>
+// The place of a vertex after a matrix: the row (x, y, z, w) times `m`.
+void through(Vertex& v, const Matrix& m) {
+  const auto column = [&](int c) {
+    return static_cast<i32>((static_cast<i64>(v.x) * m[c] + static_cast<i64>(v.y) * m[4 + c] +
+                             static_cast<i64>(v.z) * m[8 + c] + static_cast<i64>(v.w) * m[12 + c]) >>
                             12);
   };
-  return Point{row(0), row(1), row(2), row(3)};
+  const i32 x = column(0), y = column(1), z = column(2), w = column(3);
+  v.x = x, v.y = y, v.z = z, v.w = w;
 }
 
+Vertex at(i32 x, i32 y, i32 z, i32 w) {
+  Vertex v;
+  v.x = x, v.y = y, v.z = z, v.w = w;
+  return v;
+}
+
+// 64-bit arithmetic that wraps, as the hardware's does, rather than being
+// undefined when a result does not fit.
+i64 wrapping_times(i64 a, i64 b) { return static_cast<i64>(static_cast<std::uint64_t>(a) * static_cast<std::uint64_t>(b)); }
+i64 wrapping_plus(i64 a, i64 b) { return static_cast<i64>(static_cast<std::uint64_t>(a) + static_cast<std::uint64_t>(b)); }
+i64 wrapping_minus(i64 a, i64 b) { return static_cast<i64>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(b)); }
+
 // Where the edge from `a` to `b` crosses one side of the view volume, given
-// each end's distance to that side.
-Point crossing(const Point& a, const Point& b, i32 value_a, i32 value_b) {
+// each end's distance to that side. Everything a vertex carries is taken in
+// proportion.
+Vertex crossing(const Vertex& a, const Vertex& b, i32 value_a, i32 value_b) {
   const i64 d1 = static_cast<i64>(value_a) + a.w;
   const i64 d2 = static_cast<i64>(value_b) + b.w;
   if (d2 == d1) return a;
-  const auto between = [&](i32 from, i32 to) { return static_cast<i32>((d2 * from - d1 * to) / (d2 - d1)); };
-  return Point{between(a.x, b.x), between(a.y, b.y), between(a.z, b.z), between(a.w, b.w)};
+  const auto between = [&](i64 from, i64 to) { return (d2 * from - d1 * to) / (d2 - d1); };
+  Vertex v;
+  v.x = static_cast<i32>(between(a.x, b.x));
+  v.y = static_cast<i32>(between(a.y, b.y));
+  v.z = static_cast<i32>(between(a.z, b.z));
+  v.w = static_cast<i32>(between(a.w, b.w));
+  v.s = static_cast<std::int16_t>(between(a.s, b.s));
+  v.t = static_cast<std::int16_t>(between(a.t, b.t));
+  v.colour = 0;
+  for (unsigned shift = 0; shift < 18; shift += 6) {
+    const i64 part = between((a.colour >> shift) & 0x3F, (b.colour >> shift) & 0x3F);
+    v.colour |= (static_cast<u32>(part) & 0x3F) << shift;
+  }
+  return v;
 }
 
-// Whether any of a four-cornered face is left after cutting it down to the
-// view volume (each of x, y, z between -w and w).
-bool face_in_view(const Point* face) {
-  Point now[10], next[10];
-  int size = 4;
-  std::copy(face, face + 4, now);
-  for (int side = 0; side < 6; ++side) {
-    int kept = 0;
-    for (int j = 0; j < size; ++j) {
-      const Point& current = now[j];
-      const Point& previous = now[(j - 1 + size) % size];
-      const auto value = [&](const Point& p) {
-        const i32 v = side < 2 ? p.x : side < 4 ? p.y : p.z;
+// Cuts a polygon down to the view volume (each of x, y, z between -w and w),
+// one side after the other. `v` holds `size` corners and has room for ten:
+// each side can add one. Returns whether anything was cut off; `size` is
+// zero when nothing is left.
+bool cut_to_view(Vertex* v, std::size_t& size) {
+  bool cut = false;
+  Vertex next[10];
+  for (int side = 0; side < 6 && size != 0; ++side) {
+    std::size_t kept = 0;
+    for (std::size_t j = 0; j < size; ++j) {
+      const Vertex& current = v[j];
+      const Vertex& previous = v[(j + size - 1) % size];
+      const auto value = [&](const Vertex& p) {
+        const i32 c = side < 2 ? p.x : side < 4 ? p.y : p.z;
         // Negated in 32 bits, as the hardware's arithmetic wraps.
-        return (side & 1) != 0 ? static_cast<i32>(0u - static_cast<u32>(v)) : v;
+        return (side & 1) != 0 ? static_cast<i32>(0u - static_cast<u32>(c)) : c;
       };
       const i32 current_value = value(current), previous_value = value(previous);
       const bool current_in = static_cast<i64>(current_value) >= -static_cast<i64>(current.w);
       const bool previous_in = static_cast<i64>(previous_value) >= -static_cast<i64>(previous.w);
       if (current_in) {
-        if (!previous_in) next[kept++] = crossing(current, previous, current_value, previous_value);
+        if (!previous_in) {
+          next[kept++] = crossing(current, previous, current_value, previous_value);
+          cut = true;
+        }
         next[kept++] = current;
       } else if (previous_in) {
         next[kept++] = crossing(current, previous, current_value, previous_value);
+        cut = true;
       }
     }
     size = kept;
-    std::copy(next, next + size, now);
-    if (size == 0) return false;
+    std::copy(next, next + size, v);
   }
-  return size > 0;
+  return cut;
+}
+
+// Five bits of red, green and blue made six each, the way the 3D hardware
+// does it: doubled, and one more unless zero.
+u32 six_bits_each(u32 colour) {
+  u32 result = 0;
+  for (unsigned i = 0; i < 3; ++i) {
+    u32 part = ((colour >> (5 * i)) & 0x1F) * 2;
+    if (part != 0) ++part;
+    result |= part << (6 * i);
+  }
+  return result;
 }
 
 // The low 16 bits of a word, and its high 16, as signed numbers.
@@ -175,8 +216,7 @@ void GeometryEngine::attach(Arm9Io& io) {
            [this, command](u32 value, u32 mask) { write_command(command, value & mask); });
   }
   io.add(kStatus, 4, [this] { return status(); }, [this](u32 value, u32 mask) { write_status(value, mask); });
-  // Nothing is counted yet: see the header.
-  io.add(kCounts, 4, [] { return u32{0}; }, nullptr);
+  io.add(kCounts, 4, [this] { return counts(); }, nullptr);
   for (u32 i = 0; i < 4; ++i)
     io.add(kPositionResult + 4 * i, 4, [this, i] { return static_cast<u32>(position_result_[i]); }, nullptr);
   for (u32 i = 0; i < 3; ++i)
@@ -188,6 +228,18 @@ void GeometryEngine::attach(Arm9Io& io) {
 }
 
 Matrix GeometryEngine::clip_matrix() const { return times(position_, projection_); }
+
+const Matrix& GeometryEngine::clip() {
+  if (clip_stale_) {
+    clip_ = times(position_, projection_);
+    clip_stale_ = false;
+  }
+  return clip_;
+}
+
+std::uint32_t GeometryEngine::counts() const {
+  return static_cast<u32>(building_.vertices.size()) << 16 | static_cast<u32>(building_.polygons.size());
+}
 
 std::size_t GeometryEngine::queued() const { return queue_.size() > 4 ? queue_.size() - 4 : 0; }
 
@@ -264,6 +316,7 @@ void GeometryEngine::vertical_blank() {
   if (stopped_) {
     stopped_ = false;
     ++statistics_.swaps;
+    hand_over_frame();
     run();
   }
   changed();
@@ -285,6 +338,7 @@ void GeometryEngine::run() {
 }
 
 void GeometryEngine::load(const Matrix& m) {
+  clip_stale_ = true;
   switch (mode_) {
     case 0: projection_ = m; break;
     case 1: position_ = m; break;
@@ -294,6 +348,7 @@ void GeometryEngine::load(const Matrix& m) {
 }
 
 void GeometryEngine::multiply(const Matrix& m, bool vector_too) {
+  clip_stale_ = true;
   switch (mode_) {
     case 0: projection_ = times(m, projection_); break;
     case 1: position_ = times(m, position_); break;
@@ -334,6 +389,7 @@ void GeometryEngine::push() {
 }
 
 void GeometryEngine::pop(std::uint32_t parameter) {
+  clip_stale_ = true;
   switch (mode_) {
     case 0:
       if (projection_level_) {
@@ -378,6 +434,7 @@ void GeometryEngine::store(std::uint32_t parameter) {
 }
 
 void GeometryEngine::restore(std::uint32_t parameter) {
+  clip_stale_ = true;
   switch (mode_) {
     case 0: projection_ = projection_stack_; break;
     case 1:
@@ -398,14 +455,21 @@ void GeometryEngine::box_test(const std::uint32_t* p) {
   for (int i = 0; i < 3; ++i) c[3 + i] = static_cast<std::int16_t>(c[3 + i] + c[i]);
   static constexpr std::uint8_t corners[8][3] = {{0, 1, 2}, {3, 1, 2}, {0, 4, 2}, {0, 1, 5},
                                                  {3, 4, 2}, {3, 1, 5}, {0, 4, 5}, {3, 4, 5}};
-  const Matrix clip = clip_matrix();
-  Point v[8];
-  for (int i = 0; i < 8; ++i) v[i] = through(Point{c[corners[i][0]], c[corners[i][1]], c[corners[i][2]], kOne}, clip);
-  const Point faces[6][4] = {{v[0], v[1], v[4], v[2]}, {v[3], v[5], v[7], v[6]}, {v[3], v[5], v[1], v[0]},
-                             {v[6], v[7], v[4], v[2]}, {v[0], v[3], v[6], v[2]}, {v[1], v[5], v[7], v[4]}};
+  Vertex v[8];
+  for (int i = 0; i < 8; ++i) {
+    v[i] = at(c[corners[i][0]], c[corners[i][1]], c[corners[i][2]], kOne);
+    through(v[i], clip());
+  }
+  static constexpr std::uint8_t faces[6][4] = {{0, 1, 4, 2}, {3, 5, 7, 6}, {3, 5, 1, 0},
+                                               {6, 7, 4, 2}, {0, 3, 6, 2}, {1, 5, 7, 4}};
   flags_ &= ~kBoxInView;
   for (const auto& face : faces) {
-    if (face_in_view(face)) {
+    // The box is in view when anything of one of its faces is.
+    Vertex corner[10];
+    for (int i = 0; i < 4; ++i) corner[i] = v[face[i]];
+    std::size_t size = 4;
+    cut_to_view(corner, size);
+    if (size != 0) {
       flags_ |= kBoxInView;
       break;
     }
@@ -456,37 +520,96 @@ void GeometryEngine::execute(unsigned command, const std::uint32_t* p) {
       break;
     }
 
+    case kColour:
+      colour_ = six_bits_each(p[0]);
+      break;
+    case kTextureCoordinates:
+      raw_s_ = low16(p[0]);
+      raw_t_ = high16(p[0]);
+      if ((texture_parameters_ >> 30) == 1) {
+        // Through the texture matrix, as the point (s, t, 1/16, 1/16).
+        const auto column = [&](int c) {
+          return static_cast<std::int16_t>((static_cast<i64>(raw_s_) * texture_[c] + static_cast<i64>(raw_t_) * texture_[4 + c] +
+                                            texture_[8 + c] + texture_[12 + c]) >>
+                                           12);
+        };
+        s_ = column(0);
+        t_ = column(1);
+      } else {
+        s_ = raw_s_;
+        t_ = raw_t_;
+      }
+      break;
+
     case kVertex16:
       vertex_ = {low16(p[0]), high16(p[0]), low16(p[1])};
+      add_vertex();
       break;
     case kVertex10:
       // Ten bits each, in units 64 times as large.
       for (unsigned i = 0; i < 3; ++i) vertex_[i] = static_cast<std::int16_t>(ten_bits(p[0], 10 * i) * 64);
+      add_vertex();
       break;
     case kVertexXY:
       vertex_[0] = low16(p[0]);
       vertex_[1] = high16(p[0]);
+      add_vertex();
       break;
     case kVertexXZ:
       vertex_[0] = low16(p[0]);
       vertex_[2] = high16(p[0]);
+      add_vertex();
       break;
     case kVertexYZ:
       vertex_[1] = low16(p[0]);
       vertex_[2] = high16(p[0]);
+      add_vertex();
       break;
     case kVertexDifference:
       // Ten bits each, added to the position, wrapping in 16 bits.
       for (unsigned i = 0; i < 3; ++i) vertex_[i] = static_cast<std::int16_t>(vertex_[i] + ten_bits(p[0], 10 * i));
+      add_vertex();
+      break;
+
+    case kDiffuseAmbient:
+      // The material's colours are for lighting, which is not here yet; but
+      // bit 15 makes the diffuse colour the vertex colour as well.
+      if ((p[0] & 0x8000) != 0) colour_ = six_bits_each(p[0]);
+      break;
+
+    case kPolygonAttributes:
+      // Takes effect when the next vertex list begins.
+      attributes_next_ = p[0];
+      break;
+    case kTextureParameters:
+      texture_parameters_ = p[0];
+      break;
+    case kPaletteBase:
+      palette_ = p[0] & 0x1FFF;
+      break;
+
+    case kBeginVertices:
+      begin_vertices(p[0]);
+      break;
+    case kEndVertices:
+      // Nothing: a vertex list ends when the next begins, or the frame does.
       break;
 
     case kSwapBuffers:
       swap_parameter_ = p[0];
       stopped_ = true;
       break;
-    case kViewport:
+    case kViewport: {
+      // Two corners, the bottom left first, with y counted from the bottom.
+      // It takes effect when the next vertex list begins.
       viewport_ = p[0];
+      const u32 x1 = p[0] & 0xFF, y1 = (p[0] >> 8) & 0xFF, x2 = (p[0] >> 16) & 0xFF, y2 = p[0] >> 24;
+      const u32 top = (191 - y2) & 0xFF;
+      viewport_next_ = {static_cast<std::uint16_t>(x1), static_cast<std::uint16_t>(top),
+                        static_cast<std::uint16_t>((x2 - x1 + 1) & 0x1FF),
+                        static_cast<std::uint16_t>((191 - y1 - top + 1) & 0xFF)};
       break;
+    }
 
     case kBoxTest:
       box_test(p);
@@ -494,15 +617,16 @@ void GeometryEngine::execute(unsigned command, const std::uint32_t* p) {
     case kPositionTest: {
       // The position also becomes the current vertex position.
       vertex_ = {low16(p[0]), high16(p[0]), low16(p[1])};
-      const Point r = through(Point{vertex_[0], vertex_[1], vertex_[2], kOne}, clip_matrix());
+      Vertex r = at(vertex_[0], vertex_[1], vertex_[2], kOne);
+      through(r, clip());
       position_result_ = {r.x, r.y, r.z, r.w};
       break;
     }
     case kVectorTest: {
       // Ten bits each, in units eight times as large; through the vector
       // matrix's 3 by 3; the answers keep 13 bits, sign included.
-      const Point in{ten_bits(p[0], 0) * 8, ten_bits(p[0], 10) * 8, ten_bits(p[0], 20) * 8, 0};
-      const Point r = through(in, vector_);
+      Vertex r = at(ten_bits(p[0], 0) * 8, ten_bits(p[0], 10) * 8, ten_bits(p[0], 20) * 8, 0);
+      through(r, vector_);
       const i32 out[3] = {r.x, r.y, r.z};
       for (unsigned i = 0; i < 3; ++i) {
         const u32 bits = static_cast<u32>(out[i]) & 0x1FFF;
@@ -512,11 +636,232 @@ void GeometryEngine::execute(unsigned command, const std::uint32_t* p) {
     }
 
     default:
-      // Colours, normals, texture coordinates, polygon and light settings,
-      // and the begin and end of a vertex list: accepted, without effect yet.
+      // The normal, the rest of the material and the lights: accepted,
+      // without effect yet.
       if (!exists(command)) ++statistics_.unknown_commands;
       break;
   }
+}
+
+void GeometryEngine::begin_vertices(std::uint32_t parameter) {
+  forget_loose_vertices();
+  place_vertices();
+  list_kind_ = parameter & 3;
+  list_vertices_ = 0;
+  strip_clockwise_ = false;
+  attributes_ = attributes_next_;
+}
+
+void GeometryEngine::forget_loose_vertices() {
+  // Vertices at the end of a list that made no polygon: those of an
+  // unfinished polygon, or the two a strip that was broken went on with.
+  std::size_t loose = 0;
+  switch (list_kind_) {
+    case kTriangles: loose = list_vertices_ % 3; break;
+    case kQuads: loose = list_vertices_ % 4; break;
+    case kTriangleStrip: loose = list_vertices_ < 3 ? list_vertices_ : 0; break;
+    default: loose = list_vertices_ < 4 ? list_vertices_ : list_vertices_ % 2; break;
+  }
+  loose = std::min(loose, building_.vertices.size() - placed_);
+  building_.vertices.resize(building_.vertices.size() - loose);
+  list_vertices_ = 0;
+}
+
+void GeometryEngine::place_vertices() {
+  const i64 left = viewport_now_[0], top = viewport_now_[1], width = viewport_now_[2], height = viewport_now_[3];
+  for (std::size_t i = placed_; i < building_.vertices.size(); ++i) {
+    Vertex& v = building_.vertices[i];
+    if (v.w == 0) continue;
+    const i64 w = v.w;
+    // x is 9 bits and y 8, and they wrap; y runs down the screen.
+    v.x = static_cast<i32>(((v.x + w) * width / (w * 2) + left) & 0x1FF);
+    v.y = static_cast<i32>(((w - v.y) * height / (w * 2) + top) & 0xFF);
+    v.z = static_cast<i32>(((static_cast<i64>(v.z) * (1 << 14)) / w + 0x3FFF) * (1 << 9));
+  }
+  placed_ = building_.vertices.size();
+  viewport_now_ = viewport_next_;
+}
+
+void GeometryEngine::hand_over_frame() {
+  forget_loose_vertices();
+  place_vertices();
+  placed_ = 0;
+  statistics_.most_vertices = std::max<std::uint64_t>(statistics_.most_vertices, building_.vertices.size());
+  statistics_.most_polygons = std::max<std::uint64_t>(statistics_.most_polygons, building_.polygons.size());
+  building_.swap_parameter = swap_parameter_;
+  std::swap(building_, finished_);
+  building_.vertices.clear();
+  building_.polygons.clear();
+  list_vertices_ = 0;
+}
+
+void GeometryEngine::add_vertex() {
+  std::vector<Vertex>& vertices = building_.vertices;
+  ++statistics_.vertices;
+  if (vertices.size() >= kMostVertices) {
+    ++statistics_.vertices_without_room;
+    return;
+  }
+  Vertex v = at(vertex_[0], vertex_[1], vertex_[2], kOne);
+  v.s = s_;
+  v.t = t_;
+  v.colour = colour_;
+  if ((texture_parameters_ >> 30) == 3) {
+    // Texture coordinates from the vertex: its position through the texture
+    // matrix's 3 by 3, added to the coordinates sent.
+    const auto column = [&](int c) {
+      return (static_cast<i64>(v.x) * texture_[c] + static_cast<i64>(v.y) * texture_[4 + c] +
+              static_cast<i64>(v.z) * texture_[8 + c]) >>
+             24;
+    };
+    v.s = static_cast<std::int16_t>(column(0) + raw_s_);
+    v.t = static_cast<std::int16_t>(column(1) + raw_t_);
+  }
+  through(v, clip());
+  vertices.push_back(v);
+  ++list_vertices_;
+
+  switch (list_kind_) {
+    case kTriangles:
+      if (list_vertices_ % 3 == 0) add_polygon();
+      break;
+    case kQuads:
+      if (list_vertices_ % 4 == 0) add_polygon();
+      break;
+    case kTriangleStrip:
+      if (list_vertices_ >= 3) add_polygon();
+      break;
+    default:
+      if (list_vertices_ >= 4 && list_vertices_ % 2 == 0) add_polygon();
+      break;
+  }
+}
+
+void GeometryEngine::add_polygon() {
+  std::vector<Vertex>& vertices = building_.vertices;
+  if (building_.polygons.size() >= kMostPolygons) {
+    ++statistics_.polygons_without_room;
+    return;
+  }
+  const std::size_t corners = 3 + (list_kind_ & 1);
+  if (vertices.size() < corners) return;
+  const std::size_t count = vertices.size();
+
+  // The corners, in the order they run around the polygon. A strip of
+  // four-cornered polygons sends the last two the other way round.
+  Vertex corner[10];
+  std::copy(vertices.end() - static_cast<std::ptrdiff_t>(corners), vertices.end(), corner);
+  if (list_kind_ == kQuadStrip) std::swap(corner[2], corner[3]);
+
+  // Which way it faces: the cross product of two of its edges, in x, y and
+  // w, against its first corner. Above zero is the front.
+  const i64 x1 = static_cast<i64>(corner[1].x) - corner[0].x, x2 = static_cast<i64>(corner[2].x) - corner[0].x;
+  const i64 y1 = static_cast<i64>(corner[1].y) - corner[0].y, y2 = static_cast<i64>(corner[2].y) - corner[0].y;
+  const i64 w1 = static_cast<i64>(corner[1].w) - corner[0].w, w2 = static_cast<i64>(corner[2].w) - corner[0].w;
+  i64 xc = wrapping_minus(wrapping_times(y1, w2), wrapping_times(w1, y2));
+  i64 yc = wrapping_minus(wrapping_times(w1, x2), wrapping_times(x1, w2));
+  i64 wc = wrapping_minus(wrapping_times(x1, y2), wrapping_times(y1, x2));
+  while (xc != static_cast<i32>(xc) || yc != static_cast<i32>(yc) || wc != static_cast<i32>(wc)) {
+    xc >>= 4;
+    yc >>= 4;
+    wc >>= 4;
+  }
+  i64 facing = wrapping_plus(wrapping_plus(wrapping_times(xc, corner[0].x), wrapping_times(yc, corner[0].y)),
+                             wrapping_times(wc, corner[0].w));
+
+  Polygon polygon;
+  polygon.clockwise = facing < 0;
+  polygon.attributes = attributes_;
+  polygon.texture = texture_parameters_;
+  polygon.palette = palette_;
+
+  // A strip of triangles stores every other one the other way round.
+  if (list_kind_ == kTriangleStrip) {
+    if (strip_clockwise_) facing = wrapping_minus(0, facing);
+    strip_clockwise_ = !strip_clockwise_;
+  }
+
+  std::size_t size = corners;
+  bool cut = false;
+  const Vertex second = corner[1], third = corner[2], fourth = corner[3];
+  if (((attributes_ & kDrawFront) == 0 && facing > 0) || ((attributes_ & kDrawBack) == 0 && facing < 0)) {
+    ++statistics_.polygons_facing_away;
+    size = 0;
+  } else if ((attributes_ & kCutAtFarSide) == 0 &&
+             std::any_of(corner, corner + corners, [](const Vertex& v) { return v.z > v.w; })) {
+    ++statistics_.polygons_past_far_side;
+    size = 0;
+  } else {
+    cut = cut_to_view(corner, size);
+    if (size == 0) ++statistics_.polygons_out_of_view;
+  }
+
+  if (size == 0) {
+    // Dropped, and its vertices with it as far as no other polygon has them.
+    switch (list_kind_) {
+      case kTriangles:
+      case kQuads:
+        vertices.resize(count - corners);
+        break;
+      case kTriangleStrip:
+        if (list_vertices_ == 3) {
+          // The strip's first: the strip goes on from its last two vertices.
+          vertices[count - 3] = vertices[count - 2];
+          vertices[count - 2] = vertices[count - 1];
+          vertices.pop_back();
+          --list_vertices_;
+        } else if (count < kMostVertices) {
+          // The strip is broken: a new one starts with the last two
+          // vertices, the first of which the triangle before still uses.
+          vertices.push_back(vertices[count - 1]);
+          vertices[count - 1] = vertices[count - 2];
+          list_vertices_ = 2;
+        }
+        break;
+      default:
+        if (list_vertices_ == 4) {
+          vertices[count - 4] = vertices[count - 2];
+          vertices[count - 3] = vertices[count - 1];
+          vertices.resize(count - 2);
+          list_vertices_ -= 2;
+        } else {
+          list_vertices_ = 2;
+        }
+        break;
+    }
+    return;
+  }
+
+  polygon.first = static_cast<std::uint16_t>(count - corners);
+  if (cut) {
+    // The cut polygon's corners take the place of the vertices sent. A strip
+    // is broken by it: the polygon before keeps the vertices it shares, and
+    // a new strip starts with copies of the last two.
+    const auto append = [&](const Vertex& v) {
+      if (vertices.size() >= kMostVertices) {
+        ++statistics_.vertices_without_room;
+        return false;
+      }
+      vertices.push_back(v);
+      return true;
+    };
+    const bool strip = list_kind_ == kTriangleStrip || list_kind_ == kQuadStrip;
+    const std::size_t shared = strip && list_vertices_ != corners ? 2 : 0;
+    vertices.resize(count - corners + shared);
+    polygon.first = static_cast<std::uint16_t>(vertices.size());
+    for (std::size_t i = 0; i < size; ++i)
+      if (!append(corner[i])) return;
+    if (strip) {
+      const Vertex& first_of_next = list_kind_ == kTriangleStrip ? second : fourth;
+      if (!append(first_of_next) || !append(third)) return;
+      list_vertices_ = 2;
+    }
+    ++statistics_.polygons_cut;
+  }
+  polygon.size = static_cast<std::uint8_t>(size);
+  polygon.strip_order = list_kind_ == kQuadStrip && !cut;
+  building_.polygons.push_back(polygon);
+  ++statistics_.polygons;
 }
 
 }  // namespace bd::nds
