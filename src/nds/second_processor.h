@@ -31,6 +31,9 @@
 //
 // - Service 7, sound: words go to the stand-in for the sound program
 //   (sound_driver.h), if one is connected.
+// - Service 13, the console's second cartridge slot (the one for Game Boy
+//   Advance cartridges): the check for a cartridge there is answered as for
+//   an empty slot.
 //
 // Words for the other services the program handles are recorded and not
 // answered. An answer is sent the moment the request arrives; on a console
@@ -96,6 +99,21 @@ class SecondProcessor : public IpcPeer {
     const unsigned service = group == 0 ? 6u : group == 1 ? 4u : group == 2 ? 9u : 8u;
     return word(service, false, kPieceFirst | kPieceLast | (((request & 0xFFu) | 0x80u) << 8) | (result & 0xFFu));
   }
+
+  static constexpr unsigned kSecondSlotService = 13;
+  // The one request the program waits for on this service, once: "look at
+  // the second slot". The program compares what the slot reads back with 78
+  // 16-bit values in main memory (the logo every cartridge for that slot
+  // carries), notes the outcome in bit 0 of the byte below, and sends the
+  // request's number back. Nothing is in the slot here. An empty slot reads
+  // as all ones (as in NooDS), and the last two values are compared with
+  // bits masked off, so they can never be all ones: the outcome is always
+  // "no such cartridge". After this the program takes one other word on
+  // this service, the main program's notice that the cartridge was pulled
+  // out, on which it shuts sound and itself down; that is recorded and not
+  // acted on.
+  static constexpr std::uint32_t kSecondSlotCheck = 1;
+  static constexpr std::uint32_t kSecondSlotFlags = 0x027FFC35;
 
   static constexpr unsigned kCartridgeService = 11;
   // Requests to the cartridge service that are carried out here.
@@ -200,6 +218,7 @@ class SecondProcessor : public IpcPeer {
   void write(std::uint32_t address, unsigned size, std::uint32_t value);
   void touch_word(std::uint32_t data);
   void cartridge_word(std::uint32_t data);
+  void second_slot_word(std::uint32_t data);
   void cartridge_request();
   // A request on the save memory. Returns false, with the reason in *why,
   // if it cannot be carried out; otherwise the result is in the block.
@@ -211,6 +230,7 @@ class SecondProcessor : public IpcPeer {
   bool save_status_set_ = false;
   Ipc* ipc_ = nullptr;
   SoundDriver* sound_ = nullptr;
+  bool second_slot_checked_ = false;
   bool handshake_done_ = false;
   // The touch screen service: the pieces of the request being received.
   std::uint16_t touch_pieces_[16] = {};

@@ -92,6 +92,11 @@ void SecondProcessor::word_sent(std::uint32_t word) {
     if (flag) cartridge_word(data);
     return;
   }
+  if (service == kSecondSlotService) {
+    // Neither of its handlers takes notice of the flag.
+    second_slot_word(data);
+    return;
+  }
   if (service == SoundDriver::kService && sound_ != nullptr) {
     // Its handler takes no notice of the flag.
     sound_->word(data);
@@ -103,6 +108,27 @@ void SecondProcessor::word_sent(std::uint32_t word) {
   }
   // No handler: the word goes back marked, unless it came marked.
   if (!flag) send(word | 0x20u);
+}
+
+void SecondProcessor::second_slot_word(std::uint32_t data) {
+  const std::uint32_t request = data & 0x3Fu;
+  if (!second_slot_checked_) {
+    if (request != kSecondSlotCheck) {
+      ++not_carried_out_["service 13: a first word other than \"look at the second slot\", on which the second processor's program stops"];
+      return;
+    }
+    // The comparison cannot succeed with an empty slot (see the header), so
+    // the outcome is known without making it.
+    write(kSecondSlotFlags, 1, bus_.main_read(kSecondSlotFlags, 1) & ~1u);
+    send(word(kSecondSlotService, false, kSecondSlotCheck));
+    second_slot_checked_ = true;
+    return;
+  }
+  if (request == 2) {
+    ++not_carried_out_["service 13: \"the cartridge in the second slot was pulled out\", on which the second processor's program shuts down"];
+  } else {
+    ++not_carried_out_["service 13: a word on which the second processor's program stops"];
+  }
 }
 
 void SecondProcessor::report_buttons(std::uint16_t button_register) {
