@@ -9,7 +9,9 @@ and music packs.
 now executes, in the interpreter, on a real ROM: it sets up the machine, takes
 interrupts, reads from the cartridge and from its save memory, and reaches its
 frame loop, where it reads the buttons and the touch screen once a frame and
-keeps running. Nothing is drawn and no sound is made yet
+keeps running. Its sound commands reach a model of the sound hardware, but
+the music player behind them is not there. Nothing is drawn and no sound
+comes out yet
 ([docs/BOOT.md](docs/BOOT.md)). See
 [docs/ASSESSMENT.md](docs/ASSESSMENT.md) for what is feasible, what stands in
 the way, and the roadmap, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
@@ -49,7 +51,8 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | Interrupts, in interpreted code | Done, tested: the display's and timers' interrupts are taken, and the processor sleeps until one comes |
 | Console time, display timing, hardware timers, hardware divider and square root | Done, tested. Time per instruction is a coarse figure |
 | Channel to the second processor, start-up handshake | Done, tested |
-| The second processor's services | Begun: words are received as the game's own second-processor program receives them, and the cartridge service (save memory included) and one-off touch screen samples are done. Sound, clock, power: not yet |
+| The second processor's services | Begun: words are received as the game's own second-processor program receives them, and the cartridge service (save memory included) and one-off touch screen samples are done. Sound: next row. Clock, power: not yet |
+| Sound | Begun, tested: the sound hardware (channels, mixer, capture units) and the part of the second processor's sound program that drives it directly, with its alarms. The real program's echo set-up runs on it. The music player (sequences) is not there, so nothing is heard, and there is no audio device yet |
 | Buttons and lid | Done, tested: the main program's register and what the second processor passes on. Nothing drives them yet (no input layer) |
 | Save memory (256 KiB serial flash) | Done, tested; the real program reads it. Not yet kept in a file between runs |
 | Console settings the game reads (language, owner, network address) | Done, tested. Fixed values for now; not yet a user setting |

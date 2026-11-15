@@ -29,6 +29,9 @@
 //   readings may lie is accepted. Sampling at regular intervals is not
 //   implemented.
 //
+// - Service 7, sound: words go to the stand-in for the sound program
+//   (sound_driver.h), if one is connected.
+//
 // Words for the other services the program handles are recorded and not
 // answered. An answer is sent the moment the request arrives; on a console
 // it takes the second processor some time.
@@ -43,6 +46,7 @@
 #include "nds/arm9_bus.h"
 #include "nds/ipc.h"
 #include "nds/save_memory.h"
+#include "nds/sound_driver.h"
 #include "nds/user_settings.h"
 
 namespace bd::nds {
@@ -134,6 +138,12 @@ class SecondProcessor : public IpcPeer {
   // the program starts.
   void connect(Ipc& ipc);
 
+  // Hands the sound service's words to `sound`, and lets it send words and
+  // report memory it changes through this object. `sound` must outlive this
+  // object. Without this, words for the sound service are recorded and not
+  // answered.
+  void connect_sound(SoundDriver& sound);
+
   // What the second-processor program does with the console's settings when
   // it starts, before the main program can look: the settings block, the
   // network address and the wireless channels go to their places in main
@@ -200,6 +210,7 @@ class SecondProcessor : public IpcPeer {
   SaveMemory& save_;
   bool save_status_set_ = false;
   Ipc* ipc_ = nullptr;
+  SoundDriver* sound_ = nullptr;
   bool handshake_done_ = false;
   // The touch screen service: the pieces of the request being received.
   std::uint16_t touch_pieces_[16] = {};

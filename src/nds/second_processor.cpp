@@ -24,6 +24,18 @@ void SecondProcessor::connect(Ipc& ipc) {
   ipc_->peer_set_sync(7);
 }
 
+void SecondProcessor::connect_sound(SoundDriver& sound) {
+  sound_ = &sound;
+  sound.send = [this](std::uint32_t data) {
+    if (ipc_ == nullptr || !ipc_->peer_try_send(word(SoundDriver::kService, false, data))) return false;
+    ++words_answered_;
+    return true;
+  };
+  sound.on_memory_written = [this](std::uint32_t address, std::size_t size) {
+    if (on_memory_written) on_memory_written(address, size);
+  };
+}
+
 void SecondProcessor::write(std::uint32_t address, unsigned size, std::uint32_t value) {
   bus_.main_write(address, size, value);
   if (on_memory_written) on_memory_written(address, size);
@@ -78,6 +90,11 @@ void SecondProcessor::word_sent(std::uint32_t word) {
   if (service == kCartridgeService) {
     // Its handler takes no notice of words without the flag.
     if (flag) cartridge_word(data);
+    return;
+  }
+  if (service == SoundDriver::kService && sound_ != nullptr) {
+    // Its handler takes no notice of the flag.
+    sound_->word(data);
     return;
   }
   if ((kServices >> service) & 1u) {

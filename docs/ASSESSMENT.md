@@ -170,6 +170,15 @@ and stack switches, but none of the game's own code has run. The first
 attempt is where the SDK's start-up, thread and interrupt code meets the
 runtime.
 
+Milestone 7 has been started early, because the game's start-up waits on
+its sound. What is now known about it: the game drives sound the standard
+way, by commands to the second processor's sound program, and that program
+is where music is played, from sequence and instrument data. The hardware
+underneath and the simpler commands are modelled; the music player has to
+be written, from what the game's own second-processor program does. The
+game also routes all its sound through main memory, with the hardware's
+capture units, and works on it there before it is heard.
+
 ## 7. Milestone 0, delivered
 
 - CMake build with no third-party dependencies; warnings-as-errors and

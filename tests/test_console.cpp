@@ -97,6 +97,24 @@ TEST(console_direct_boot_leaves_the_user_settings_in_memory) {
   CHECK(!invalid.direct_boot().ok());
 }
 
+TEST(console_starts_with_the_sound_on_and_silent) {
+  //   02000000  b    .
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  // As the second processor's sound program leaves the hardware: enabled,
+  // master volume full, outputs from the mixer.
+  CHECK(console.sound_hardware().read(bd::nds::SoundHardware::kControl, 2) == 0x807F);
+  // A hundredth of a second (335,140 cycles, one per instruction): 327
+  // output samples of 1,024 cycles, none with anything in it, and the sound
+  // program has not had its first beat.
+  CHECK(console.run(335140).reason == bd::nds::StopReason::InstructionLimit);
+  console.timeline().refresh();
+  CHECK(console.sound_hardware().statistics().samples == 327);
+  CHECK(console.sound_hardware().statistics().samples_with_sound == 0);
+  CHECK(console.sound_driver().statistics().beats == 0);
+}
+
 TEST(console_has_buttons_that_are_not_held) {
   // A program that reads the button register and stops:
   //   02000000  mov  r0, #0x04000000

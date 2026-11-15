@@ -44,6 +44,9 @@ class Ipc {
   // Queues a word for the main processor. The hardware queue holds 16 words;
   // more than that wait here and move up as the main processor reads.
   void peer_send(std::uint32_t word);
+  // The same, but only if the hardware queue has room: returns false, having
+  // queued nothing, if it holds 16 words (or words are waiting to move up).
+  bool peer_try_send(std::uint32_t word);
 
   // --- State, for reports and tests ---------------------------------------
   unsigned sync_out() const { return sync_out_; }
