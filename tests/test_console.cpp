@@ -240,6 +240,44 @@ TEST(console_feeds_the_3d_queue_by_dma) {
   CHECK(console.geometry().matrix_mode() == 3);
 }
 
+TEST(console_draws_what_the_3d_engine_is_sent) {
+  //   02000000  b    .
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  bd::nds::Arm9Io& io = console.io();
+  io.write(0x04000354, 2, 0x7FFF);       // Clear depth: the far side.
+  io.write(0x040004A4, 4, 0x001F00C0);   // Polygon attributes: both sides, solid.
+  io.write(0x04000500, 4, 0);            // Begin: triangles.
+  io.write(0x04000480, 4, 0x001F);       // Colour: red.
+  // The lower left half of the screen: the corners of the view are at one
+  // unit, 0x040 in a vertex of ten bits a coordinate.
+  io.write(0x04000490, 4, 0x3C0u | 0x040u << 10);  // (-1, 1): top left.
+  io.write(0x04000490, 4, 0x3C0u | 0x3C0u << 10);  // (-1, -1): bottom left.
+  io.write(0x04000490, 4, 0x040u | 0x3C0u << 10);  // (1, -1): bottom right.
+  CHECK(io.read(0x04000604, 4) == 0x00030001);
+  io.write(0x04000540, 4, 0);            // Swap buffers.
+  // One instruction is one cycle here: run to past the vertical blank.
+  CHECK(console.run(192 * 2130 + 10).reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(console.geometry().statistics().swaps == 1);
+  const bd::nds::PolygonRenderer::Image& image =
+      console.polygon_renderer().draw(console.geometry().finished(), console.bus().video_memory());
+  const auto at = [&](int x, int y) { return image[static_cast<std::size_t>(y * 256 + x)]; };
+  const std::uint32_t red = 63u | 63u << 18;
+  CHECK(at(0, 0) == red && at(0, 191) == red && at(100, 150) == red);
+  CHECK(at(255, 0) == 0 && at(150, 50) == 0);
+
+  // The drawing half's control register tells when a frame was too full,
+  // until the program writes the flag back.
+  CHECK(io.read(0x04000060, 2) == 0);
+  io.write(0x04000500, 4, 0);
+  for (int i = 0; i < 2049 * 3; ++i) io.write(0x04000490, 4, i % 3 == 0 ? 0u : i % 3 == 1 ? 0x020u : 0x020u << 10);
+  CHECK(io.read(0x04000604, 4) == 0x18000800);
+  CHECK(io.read(0x04000060, 2) == 0x2000);
+  io.write(0x04000060, 2, 0x2000);
+  CHECK(io.read(0x04000060, 2) == 0);
+}
+
 TEST(console_has_buttons_that_are_not_held) {
   // A program that reads the button register and stops:
   //   02000000  mov  r0, #0x04000000

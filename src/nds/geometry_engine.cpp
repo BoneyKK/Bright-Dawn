@@ -766,6 +766,7 @@ void GeometryEngine::hand_over_frame() {
   std::swap(building_, finished_);
   building_.vertices.clear();
   building_.polygons.clear();
+  building_.depth_is_w = (swap_parameter_ & 2) != 0;
   list_vertices_ = 0;
 }
 
@@ -774,6 +775,7 @@ void GeometryEngine::add_vertex() {
   ++statistics_.vertices;
   if (vertices.size() >= kMostVertices) {
     ++statistics_.vertices_without_room;
+    if (on_no_room) on_no_room();
     return;
   }
   Vertex v = at(vertex_[0], vertex_[1], vertex_[2], kOne);
@@ -815,6 +817,7 @@ void GeometryEngine::add_polygon() {
   std::vector<Vertex>& vertices = building_.vertices;
   if (building_.polygons.size() >= kMostPolygons) {
     ++statistics_.polygons_without_room;
+    if (on_no_room) on_no_room();
     return;
   }
   const std::size_t corners = 3 + (list_kind_ & 1);
@@ -914,6 +917,7 @@ void GeometryEngine::add_polygon() {
     const auto append = [&](const Vertex& v) {
       if (vertices.size() >= kMostVertices) {
         ++statistics_.vertices_without_room;
+        if (on_no_room) on_no_room();
         return false;
       }
       vertices.push_back(v);

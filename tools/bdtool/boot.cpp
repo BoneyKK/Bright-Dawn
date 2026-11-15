@@ -3,11 +3,13 @@
 #include <cinttypes>
 #include <cstdio>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 
 #include "core/version.h"
 #include "nds/console.h"
 #include "nds/geometry_engine.h"
+#include "nds/polygon_renderer.h"
 #include "nds/program.h"
 #include "rom/rom.h"
 #include "translated_table.h"
@@ -60,10 +62,45 @@ bool write_wireframe(const std::filesystem::path& path, const bd::nds::GeometryE
   return std::fclose(file) == 0;
 }
 
+// A drawn 3D layer as a BMP file, 24 bits a pixel. Pixels nothing was drawn
+// on are black; alpha is otherwise left out.
+bool write_picture(const std::filesystem::path& path, const bd::nds::PolygonRenderer::Image& image) {
+  constexpr int width = bd::nds::PolygonRenderer::kWidth, height = bd::nds::PolygonRenderer::kHeight;
+  if (image.size() != static_cast<std::size_t>(width) * height) return false;
+  std::FILE* file = std::fopen(path.string().c_str(), "wb");
+  if (file == nullptr) return false;
+  const std::uint32_t data_size = static_cast<std::uint32_t>(width * height * 3);
+  unsigned char header[54] = {'B', 'M'};
+  const auto put = [&](int at, std::uint32_t value) {
+    for (int i = 0; i < 4; ++i) header[at + i] = static_cast<unsigned char>(value >> (8 * i));
+  };
+  put(2, 54 + data_size);
+  put(10, 54);
+  put(14, 40);
+  put(18, static_cast<std::uint32_t>(width));
+  put(22, static_cast<std::uint32_t>(height));
+  header[26] = 1;   // One plane,
+  header[28] = 24;  // 24 bits a pixel.
+  put(34, data_size);
+  std::fwrite(header, 1, sizeof header, file);
+  // Lines from the bottom up, blue first. Six bits a part made eight.
+  for (int y = height - 1; y >= 0; --y) {
+    for (int x = 0; x < width; ++x) {
+      const std::uint32_t pixel = image[static_cast<std::size_t>(y * width + x)];
+      const bool drawn = ((pixel >> 18) & 0x3F) != 0;
+      for (unsigned shift : {12u, 6u, 0u}) {
+        const std::uint32_t six = drawn ? (pixel >> shift) & 0x3F : 0;
+        std::fputc(static_cast<int>(six << 2 | six >> 4), file);
+      }
+    }
+  }
+  return std::fclose(file) == 0;
+}
+
 }  // namespace
 
 int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit,
-             const std::filesystem::path& wireframe) {
+             const std::filesystem::path& wireframe, const std::filesystem::path& picture) {
   using namespace bd;
   std::printf("bdtool %s\n", BD_VERSION);
 
@@ -215,7 +252,19 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
               nds::GeometryEngine::kMostPolygons, geometry.vertices_without_room, geometry.polygons_without_room);
   std::printf("  the frame last handed over: %zu vertices, %zu polygons\n", console.geometry().finished().vertices.size(),
               console.geometry().finished().polygons.size());
-  std::printf("  the polygons are not drawn yet\n");
+  std::printf("  drawing control 0x%04" PRIX32 ", clear colour 0x%08" PRIX32 ", clear depth 0x%04" PRIX32 "\n",
+              console.polygon_renderer().control(), console.polygon_renderer().clear_colour(),
+              console.polygon_renderer().clear_depth());
+  if (!picture.empty()) {
+    const nds::PolygonRenderer::Image& image =
+        console.polygon_renderer().draw(console.geometry().finished(), console.bus().video_memory());
+    if (write_picture(picture, image))
+      std::printf("  that frame's 3D layer drawn and written to %s\n", picture.string().c_str());
+    else
+      std::fprintf(stderr, "error: cannot write %s\n", picture.string().c_str());
+  }
+  for (const auto& [what, count] : console.polygon_renderer().notes())
+    std::printf("  not carried out when drawing: %s (%" PRIu64 " frames)\n", what.c_str(), count);
   if (!wireframe.empty()) {
     if (write_wireframe(wireframe, console.geometry().finished()))
       std::printf("  outlines of that frame's polygons written to %s\n", wireframe.string().c_str());

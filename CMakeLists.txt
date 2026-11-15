@@ -110,6 +110,7 @@ add_library(bd_nds STATIC
   src/nds/console.cpp
   src/nds/dma.cpp
   src/nds/geometry_engine.cpp
+  src/nds/polygon_renderer.cpp
   src/nds/interrupts.cpp
   src/nds/ipc.cpp
   src/nds/keypad.cpp
