@@ -9,9 +9,11 @@ and music packs.
 now executes, in the interpreter, on a real ROM: it sets up the machine, takes
 interrupts, reads from the cartridge and from its save memory, and reaches its
 frame loop, where it reads the buttons and the touch screen once a frame and
-keeps running. Its sound commands reach a model of the sound hardware, but
-the music player behind them is not there. Nothing is drawn and no sound
-comes out yet
+keeps running. The 3D frames it sends can be drawn: the trace tool writes
+the title screen's 3D layer to a picture. There is no screen yet: the 2D
+display hardware is not modelled, and the program is not playable. Its sound
+commands reach a model of the sound hardware, but the music player behind
+them is not there, so no sound comes out
 ([docs/BOOT.md](docs/BOOT.md)). See
 [docs/ASSESSMENT.md](docs/ASSESSMENT.md) for what is feasible, what stands in
 the way, and the roadmap, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
@@ -59,7 +61,7 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | BIOS calls | 12 of the 17 the game has wrappers for, tested: 9 natively, 3 that wait for interrupts as this project's own code on the processor |
 | DMA | Transfers that start at once, transfers fed by the cartridge and transfers timed by the display's blanks: done, tested. Transfers started by other hardware events: not yet |
 | Cartridge slot (reading data) | Done, tested, and used by the real program to read its file tables and overlays |
-| 3D engine | Begun, tested: the command queue, status and interrupt, the matrices and their stacks, the tests a program can ask for, vertices made into polygons (facing, cutting to the view, placing on the screen, the limits of a frame), and lighting. The real program's 3D commands run through it and give frames of up to 1,304 polygons; `bdtool boot --wireframe` writes their outlines. Nothing is drawn yet |
+| 3D engine | Begun, tested: the command queue, status and interrupt, the matrices and their stacks, the tests a program can ask for, vertices made into polygons (facing, cutting to the view, placing on the screen, the limits of a frame), lighting, and the drawing of a frame's polygons with textures, blending, shadows, fog, edge marking and anti-aliasing at the hardware's resolution. The real program's 3D commands run through it; `bdtool boot --picture` writes the drawn 3D layer of the last frame (the title screen) and `--wireframe` its outlines. Not compared with a console pixel by pixel; no sorting of translucent polygons; nothing puts the frame on a screen yet |
 | 2D engines, display output, interrupts in translated code | Not started; unimplemented registers are recorded |
 | Renderer, audio, input, mods, settings menu | Not started |
 

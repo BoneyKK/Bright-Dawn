@@ -1,0 +1,727 @@
+// Drawing a 3D frame's polygons. The frames are made by hand, with corners
+// already on the screen, and the expectations worked out from the hardware's
+// arithmetic.
+#include <cstdint>
+#include <initializer_list>
+
+#include "nds/arm9_io.h"
+#include "nds/geometry_engine.h"
+#include "nds/polygon_renderer.h"
+#include "nds/video_memory.h"
+#include "test.h"
+
+namespace {
+
+using bd::nds::GeometryEngine;
+using bd::nds::PolygonRenderer;
+using bd::nds::VideoMemory;
+using Vertex = GeometryEngine::Vertex;
+using u32 = std::uint32_t;
+
+// Colours as drawn: six bits a part.
+constexpr u32 kRed = 63, kGreen = 63u << 6, kBlue = 63u << 12, kWhite = 0x3FFFF, kBlack = 0;
+constexpr u32 rgb(u32 r, u32 g, u32 b) { return r | g << 6 | b << 12; }
+constexpr u32 rgba(u32 r, u32 g, u32 b, u32 a) { return r | g << 6 | b << 12 | a << 18; }
+constexpr u32 kSolid = 63u << 18;
+
+// Polygon attributes.
+constexpr u32 alpha(u32 a) { return a << 16; }
+constexpr u32 number(u32 n) { return n << 24; }
+constexpr u32 mode(u32 m) { return m << 4; }
+constexpr u32 kOpaque = alpha(31);
+constexpr u32 kFogged = 1u << 15, kDepthEqual = 1u << 14, kNewDepth = 1u << 11;
+
+constexpr int kMiddle = 0x400000;  // A depth.
+constexpr int kOne = 0x1000;       // A w.
+
+struct Fixture {
+  bd::nds::Arm9Io io;
+  PolygonRenderer r;
+  VideoMemory video;
+  GeometryEngine::Frame frame;
+
+  Fixture() {
+    r.attach(io);
+    io.write(PolygonRenderer::kClearDepth, 2, 0x7FFF);
+  }
+  void control(u32 value) { io.write(PolygonRenderer::kControl, 2, value); }
+
+  static Vertex vertex(int x, int y, u32 colour = kWhite, int z = kMiddle, int w = kOne, int s = 0, int t = 0) {
+    Vertex v;
+    v.x = x, v.y = y, v.z = z, v.w = w;
+    v.colour = colour;
+    v.s = static_cast<std::int16_t>(s);
+    v.t = static_cast<std::int16_t>(t);
+    return v;
+  }
+  // A polygon with these corners. Which way round it runs is worked out as
+  // the 3D engine's front half would.
+  void polygon(std::initializer_list<Vertex> corners, u32 attributes, u32 texture = 0, u32 palette = 0) {
+    GeometryEngine::Polygon p;
+    p.first = static_cast<std::uint16_t>(frame.vertices.size());
+    p.size = static_cast<std::uint8_t>(corners.size());
+    p.attributes = attributes;
+    p.texture = texture;
+    p.palette = palette;
+    const Vertex* c = corners.begin();
+    p.clockwise = (c[1].x - c[0].x) * (c[2].y - c[0].y) - (c[1].y - c[0].y) * (c[2].x - c[0].x) > 0;
+    frame.vertices.insert(frame.vertices.end(), corners.begin(), corners.end());
+    frame.polygons.push_back(p);
+  }
+  // Pixels x0 to x1 - 1 of lines y0 to y1 - 1, in one colour at one depth.
+  void rectangle(int x0, int y0, int x1, int y1, u32 colour, u32 attributes, int z = kMiddle, int w = kOne) {
+    polygon({vertex(x0, y0, colour, z, w), vertex(x0, y1, colour, z, w), vertex(x1, y1, colour, z, w),
+             vertex(x1, y0, colour, z, w)},
+            attributes);
+  }
+  void clear() {
+    frame.vertices.clear();
+    frame.polygons.clear();
+  }
+  void draw() { r.draw(frame, video); }
+  u32 at(int x, int y) const { return r.image()[static_cast<std::size_t>(y * PolygonRenderer::kWidth + x)]; }
+  bool drawn(int x, int y) const { return (at(x, y) >> 18) != 0; }
+  int drawn_on_line(int y) const {
+    int count = 0;
+    for (int x = 0; x < PolygonRenderer::kWidth; ++x) count += drawn(x, y) ? 1 : 0;
+    return count;
+  }
+  int drawn_in_all() const {
+    int count = 0;
+    for (int y = 0; y < PolygonRenderer::kHeight; ++y) count += drawn_on_line(y);
+    return count;
+  }
+
+  // Video memory for textures: bank A as the first texture slot, B as the
+  // second, E as the palettes. Filled as plain memory, then handed over.
+  void fill_textures() {
+    video.set_control(VideoMemory::kA, VideoMemory::kEnable);
+    video.set_control(VideoMemory::kB, VideoMemory::kEnable);
+    video.set_control(VideoMemory::kE, VideoMemory::kEnable);
+  }
+  void texture_byte(u32 at_address, u32 value) { video.write(0x06800000 + at_address, 1, value); }
+  void texture_word(u32 at_address, u32 value) { video.write(0x06800000 + at_address, 2, value); }
+  void second_slot_word(u32 at_address, u32 value) { video.write(0x06820000 + at_address, 2, value); }
+  void palette_word(u32 at_address, u32 value) { video.write(0x06880000 + at_address, 2, value); }
+  void hand_over_textures() {
+    video.set_control(VideoMemory::kA, VideoMemory::kEnable | 3);
+    video.set_control(VideoMemory::kB, VideoMemory::kEnable | 3 | 8);
+    video.set_control(VideoMemory::kE, VideoMemory::kEnable | 3);
+  }
+  // A square of `size` pixels at the top left with texture coordinates that
+  // put texel (x, y) on pixel (x, y).
+  void textured_square(int size, u32 texture, u32 attributes = kOpaque, u32 palette = 0, u32 colour = kWhite) {
+    polygon({vertex(0, 0, colour, kMiddle, kOne, 0, 0), vertex(0, size, colour, kMiddle, kOne, 0, size * 16),
+             vertex(size, size, colour, kMiddle, kOne, size * 16, size * 16),
+             vertex(size, 0, colour, kMiddle, kOne, size * 16, 0)},
+            attributes, texture, palette);
+  }
+};
+
+// Texture parameter words.
+constexpr u32 format(u32 f) { return f << 26; }
+constexpr u32 kRepeatS = 1u << 16, kFlipS = 1u << 18, kTransparent0 = 1u << 29;
+
+}  // namespace
+
+TEST(renderer_registers) {
+  Fixture f;
+  // The control register can be read; of its bits, 0 to 11 and 14 are kept.
+  f.io.write(PolygonRenderer::kControl, 2, 0xFFFF);
+  CHECK(f.io.read(PolygonRenderer::kControl, 2) == 0x4FFF);
+  f.control(0);
+  // The overflow flag is set by the front half and cleared by writing a one.
+  f.r.ram_overflowed();
+  CHECK(f.io.read(PolygonRenderer::kControl, 2) == PolygonRenderer::kRamOverflow);
+  f.control(PolygonRenderer::kFog);
+  CHECK(f.io.read(PolygonRenderer::kControl, 2) == (PolygonRenderer::kRamOverflow | PolygonRenderer::kFog));
+  f.control(PolygonRenderer::kRamOverflow | PolygonRenderer::kFog);
+  CHECK(f.io.read(PolygonRenderer::kControl, 2) == PolygonRenderer::kFog);
+  // The rest are written only, and keep the bits that exist.
+  f.io.write(PolygonRenderer::kClearColour, 4, 0xFFFFFFFF);
+  f.io.write(PolygonRenderer::kClearDepth, 2, 0xFFFF);
+  f.io.write(PolygonRenderer::kFogColour, 4, 0xFFFFFFFF);
+  f.io.write(PolygonRenderer::kFogOffset, 2, 0xFFFF);
+  f.io.write(PolygonRenderer::kAlphaTestReference, 2, 0xFFFF);
+  CHECK(f.r.clear_colour() == 0x3F1FFFFF && f.r.clear_depth() == 0x7FFF);
+  CHECK(f.r.fog_colour() == 0x001F7FFF && f.r.fog_offset() == 0x7FFF && f.r.alpha_test_reference() == 0x1F);
+  CHECK(f.io.read(PolygonRenderer::kClearColour, 4) == 0 && f.io.read(PolygonRenderer::kFogTable, 1) == 0);
+  f.io.write(PolygonRenderer::kEdgeColours + 14, 2, 0x1234);
+  f.io.write(PolygonRenderer::kFogTable + 31, 1, 0x7F);
+  f.io.write(PolygonRenderer::kToonTable + 62, 2, 0x4321);
+  CHECK(f.io.unmodelled().empty());
+}
+
+TEST(renderer_an_empty_frame_is_the_clear_colour) {
+  Fixture f;
+  f.draw();
+  // Nothing set: every pixel is black with alpha 0.
+  CHECK(f.drawn_in_all() == 0 && f.at(0, 0) == 0 && f.at(255, 191) == 0);
+  // Five bits a part made six; the alpha is the clear colour's own.
+  f.io.write(PolygonRenderer::kClearColour, 4, 0x001F | 16u << 5 | 31u << 16);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(63, 33, 0, 63) && f.at(255, 191) == rgba(63, 33, 0, 63));
+  CHECK(f.drawn_in_all() == 256 * 192);
+  f.io.write(PolygonRenderer::kClearColour, 4, 0x7FFF | 8u << 16);
+  f.draw();
+  CHECK(f.at(100, 100) == rgba(63, 63, 63, 17));
+}
+
+TEST(renderer_a_polygon_covers_from_its_left_edge_to_before_its_right_and_bottom) {
+  Fixture f;
+  f.rectangle(10, 10, 20, 20, kRed, kOpaque);
+  f.draw();
+  CHECK(f.drawn_in_all() == 100);
+  for (int y = 10; y < 20; ++y) CHECK(f.drawn_on_line(y) == 10);
+  CHECK(f.at(10, 10) == (kRed | kSolid) && f.at(19, 19) == (kRed | kSolid));
+  CHECK(!f.drawn(9, 10) && !f.drawn(20, 10) && !f.drawn(10, 9) && !f.drawn(10, 20));
+  // The corners can come in any order, and either way round.
+  f.clear();
+  f.polygon({Fixture::vertex(20, 20), Fixture::vertex(20, 10), Fixture::vertex(10, 10), Fixture::vertex(10, 20)}, kOpaque);
+  f.draw();
+  CHECK(f.drawn_in_all() == 100 && f.drawn(10, 10) && f.drawn(19, 19));
+  f.clear();
+  f.polygon({Fixture::vertex(10, 10), Fixture::vertex(20, 10), Fixture::vertex(20, 20), Fixture::vertex(10, 20)}, kOpaque);
+  f.draw();
+  CHECK(f.drawn_in_all() == 100 && f.drawn(10, 10) && f.drawn(19, 19));
+}
+
+TEST(renderer_slanted_edges) {
+  Fixture f;
+  // A right edge that runs four pixels across for one down covers four
+  // pixels a line.
+  f.polygon({Fixture::vertex(0, 0), Fixture::vertex(0, 4), Fixture::vertex(16, 4)}, kOpaque);
+  f.draw();
+  for (int y = 0; y < 4; ++y) CHECK(f.drawn_on_line(y) == 4 * y + 4);
+  CHECK(f.drawn(3, 0) && !f.drawn(4, 0) && f.drawn(15, 3) && !f.drawn(16, 3));
+  CHECK(f.drawn_on_line(4) == 0);
+
+  // A right edge at 45 degrees is on pixel x = y, and its pixels are left to
+  // a polygon beyond it, except on the top line.
+  f.clear();
+  f.polygon({Fixture::vertex(0, 0, kRed), Fixture::vertex(0, 8, kRed), Fixture::vertex(8, 8, kRed)}, kOpaque);
+  f.draw();
+  CHECK(f.drawn_on_line(0) == 1 && f.drawn(0, 0));
+  for (int y = 1; y < 8; ++y) CHECK(f.drawn_on_line(y) == y);
+  CHECK(f.drawn(2, 3) && !f.drawn(3, 3));
+  // The polygon beyond it, with that edge as its left edge, draws them: the
+  // two make a square with no gap.
+  f.polygon({Fixture::vertex(0, 0, kBlue), Fixture::vertex(8, 8, kBlue), Fixture::vertex(8, 0, kBlue)}, kOpaque);
+  f.draw();
+  CHECK(f.drawn_in_all() == 64);
+  for (int y = 0; y < 8; ++y) CHECK(f.drawn_on_line(y) == 8);
+  CHECK(f.at(2, 3) == (kRed | kSolid) && f.at(3, 3) == (kBlue | kSolid) && f.at(7, 7) == (kBlue | kSolid));
+}
+
+TEST(renderer_what_is_nearer_is_drawn) {
+  Fixture f;
+  // The nearer of two, whichever is sent first.
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x400000);
+  f.rectangle(4, 0, 12, 8, kBlue, kOpaque, 0x200000);
+  f.rectangle(8, 0, 16, 8, kGreen, kOpaque, 0x300000);
+  f.draw();
+  CHECK(f.at(0, 0) == (kRed | kSolid) && f.at(4, 0) == (kBlue | kSolid) && f.at(11, 0) == (kBlue | kSolid));
+  CHECK(f.at(12, 0) == (kGreen | kSolid));
+  // At the same depth the first stays,
+  f.clear();
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque);
+  f.rectangle(0, 0, 8, 8, kBlue, kOpaque);
+  f.draw();
+  CHECK(f.at(3, 3) == (kRed | kSolid));
+  // unless the second asks to be drawn at equal depth; that allows 0x200
+  // either way and no more.
+  f.clear();
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x400000);
+  f.rectangle(0, 0, 4, 8, kBlue, kOpaque | kDepthEqual, 0x400200);
+  f.rectangle(4, 0, 8, 4, kBlue, kOpaque | kDepthEqual, 0x3FFE00);
+  f.rectangle(4, 4, 8, 8, kBlue, kOpaque | kDepthEqual, 0x400201);
+  f.draw();
+  CHECK(f.at(0, 0) == (kBlue | kSolid) && f.at(4, 0) == (kBlue | kSolid) && f.at(4, 4) == (kRed | kSolid));
+  // Nothing is drawn behind the clear depth: 0x1000 there is 0x200000.
+  f.clear();
+  f.io.write(PolygonRenderer::kClearDepth, 2, 0x1000);
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x200000);
+  f.rectangle(8, 0, 16, 8, kRed, kOpaque, 0x1FFFFF);
+  f.draw();
+  CHECK(!f.drawn(0, 0) && f.drawn(8, 0));
+}
+
+TEST(renderer_depth_can_be_w) {
+  Fixture f;
+  f.frame.depth_is_w = true;
+  // The smaller w is nearer, whatever z says. A w too large for 16 bits is
+  // cut down for the arithmetic and a small one widened, and the depth is
+  // w again.
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x100000, 0x100000);
+  f.rectangle(0, 0, 8, 8, kBlue, kOpaque, 0x700000, 0x2000);
+  f.rectangle(4, 0, 8, 8, kGreen, kOpaque, 0x7FFFFF, 0x10);
+  f.rectangle(0, 4, 8, 8, kWhite, kOpaque, 0x000000, 0x4000);
+  f.draw();
+  CHECK(f.at(0, 0) == (kBlue | kSolid) && f.at(4, 0) == (kGreen | kSolid));
+  CHECK(f.at(0, 4) == (kBlue | kSolid) && f.at(4, 4) == (kGreen | kSolid));
+}
+
+TEST(renderer_colours_run_between_the_corners) {
+  Fixture f;
+  // Black on the left, red on the right, 16 pixels apart: 504 * x / 16, in
+  // eighths of a step.
+  f.polygon({Fixture::vertex(0, 0, kBlack), Fixture::vertex(0, 4, kBlack), Fixture::vertex(16, 4, kRed),
+             Fixture::vertex(16, 0, kRed)},
+            kOpaque);
+  f.draw();
+  CHECK(f.at(0, 0) == kSolid && f.at(1, 0) == (3 | kSolid) && f.at(8, 0) == (31 | kSolid) && f.at(15, 0) == (59 | kSolid));
+  CHECK(f.at(8, 3) == (31 | kSolid));
+  // Black at the top, green at the bottom, four lines apart.
+  f.clear();
+  f.polygon({Fixture::vertex(0, 0, kBlack), Fixture::vertex(0, 4, kGreen), Fixture::vertex(16, 4, kGreen),
+             Fixture::vertex(16, 0, kBlack)},
+            kOpaque);
+  f.draw();
+  CHECK(f.at(0, 0) == kSolid && f.at(5, 1) == (15u << 6 | kSolid) && f.at(5, 2) == (31u << 6 | kSolid) &&
+        f.at(15, 3) == (47u << 6 | kSolid));
+}
+
+TEST(renderer_colours_run_with_perspective) {
+  Fixture f;
+  // The right side is four times as far away as the left, so the far half
+  // takes up less of the span: at the middle pixel the colour is only 51
+  // 256ths of the way, and three quarters across 109.
+  f.polygon({Fixture::vertex(0, 0, kBlack, kMiddle, 0x1000), Fixture::vertex(0, 4, kBlack, kMiddle, 0x1000),
+             Fixture::vertex(16, 4, kRed, kMiddle, 0x4000), Fixture::vertex(16, 0, kRed, kMiddle, 0x4000)},
+            kOpaque);
+  f.draw();
+  CHECK(f.at(0, 0) == kSolid && f.at(8, 0) == (12 | kSolid) && f.at(12, 0) == (26 | kSolid));
+  // Down an edge too: the bottom is four times as far away. Half way down,
+  // 512 * 0x800 * 2 / (0x2000 * 2 + 0x800 * 2) is 102 512ths of 504.
+  f.clear();
+  f.polygon({Fixture::vertex(0, 0, kBlack, kMiddle, 0x1000), Fixture::vertex(0, 4, kRed, kMiddle, 0x4000),
+             Fixture::vertex(16, 4, kRed, kMiddle, 0x4000), Fixture::vertex(16, 0, kBlack, kMiddle, 0x1000)},
+            kOpaque);
+  f.draw();
+  CHECK(f.at(0, 0) == kSolid && f.at(0, 2) == (12 | kSolid) && f.at(9, 2) == (12 | kSolid));
+}
+
+TEST(renderer_translucent_polygons_are_blended_over_what_is_there) {
+  Fixture f;
+  f.control(PolygonRenderer::kAlphaBlending);
+  // Sent first, drawn last: alpha 15 of 31 over red.
+  f.rectangle(4, 0, 12, 8, kBlue, alpha(15) | number(3), 0x200000);
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x400000);
+  f.draw();
+  CHECK(f.at(0, 0) == (kRed | kSolid));
+  // 63 * 32 / 63 of the red is left, and 63 * 31 / 63 of the blue comes in.
+  CHECK(f.at(4, 0) == rgba(32, 0, 31, 63));
+  // Over nothing, it is itself, with its alpha.
+  CHECK(f.at(8, 0) == rgba(0, 0, 63, 31));
+  // Behind the red, it is not drawn.
+  f.clear();
+  f.rectangle(4, 0, 12, 8, kBlue, alpha(15), 0x600000);
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x400000);
+  f.draw();
+  CHECK(f.at(4, 0) == (kRed | kSolid) && f.at(8, 0) == rgba(0, 0, 63, 31));
+  // With blending off, it replaces what is there.
+  f.control(0);
+  f.clear();
+  f.rectangle(4, 0, 12, 8, kBlue, alpha(15), 0x200000);
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x400000);
+  f.draw();
+  CHECK(f.at(4, 0) == rgba(0, 0, 63, 31));
+}
+
+TEST(renderer_translucent_pixels_of_one_polygon_number_are_drawn_once) {
+  Fixture f;
+  f.control(PolygonRenderer::kAlphaBlending);
+  f.rectangle(0, 0, 16, 8, kRed, kOpaque, 0x400000);
+  f.rectangle(0, 0, 12, 8, kBlue, alpha(15) | number(3), 0x200000);
+  f.rectangle(4, 0, 8, 8, kGreen, alpha(15) | number(3), 0x100000);  // The same number: left out.
+  f.rectangle(8, 0, 16, 8, kGreen, alpha(15) | number(4), 0x100000);  // Another number.
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(32, 0, 31, 63) && f.at(4, 0) == rgba(32, 0, 31, 63));
+  // Green over the blend: 32 * 32 / 63 red, 63 * 31 / 63 green, 31 * 32 / 63 blue.
+  CHECK(f.at(8, 0) == rgba(16, 31, 15, 63));
+  CHECK(f.at(12, 0) == rgba(32, 31, 0, 63));
+
+  // A translucent polygon leaves the depth as it is, unless it asks to set
+  // it: then what is behind it is not drawn afterwards.
+  f.clear();
+  f.rectangle(0, 0, 8, 8, kBlue, alpha(15) | number(3), 0x200000);
+  f.rectangle(8, 0, 16, 8, kBlue, alpha(15) | number(3) | kNewDepth, 0x200000);
+  f.rectangle(0, 0, 16, 8, kGreen, alpha(15) | number(4), 0x300000);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 31, 32, 31) && f.at(8, 0) == rgba(0, 0, 63, 31));
+}
+
+TEST(renderer_alpha_test) {
+  Fixture f;
+  f.control(PolygonRenderer::kAlphaBlending | PolygonRenderer::kAlphaTest);
+  f.io.write(PolygonRenderer::kAlphaTestReference, 2, 15);
+  // Only what has more alpha than the reference is drawn.
+  f.rectangle(0, 0, 8, 8, kBlue, alpha(15));
+  f.rectangle(8, 0, 16, 8, kBlue, alpha(16));
+  f.rectangle(16, 0, 24, 8, kBlue, kOpaque);
+  f.draw();
+  CHECK(!f.drawn(0, 0) && f.at(8, 0) == rgba(0, 0, 63, 33) && f.at(16, 0) == (kBlue | kSolid));
+  f.control(PolygonRenderer::kAlphaBlending);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 0, 63, 31));
+}
+
+TEST(renderer_alpha_0_is_an_outline) {
+  Fixture f;
+  f.rectangle(10, 10, 20, 20, kRed, alpha(0));
+  f.draw();
+  // The top and bottom lines all across, the others at their two ends; solid.
+  CHECK(f.drawn_on_line(10) == 10 && f.drawn_on_line(19) == 10);
+  for (int y = 11; y < 19; ++y) CHECK(f.drawn_on_line(y) == 2);
+  CHECK(f.at(10, 15) == (kRed | kSolid) && f.at(19, 15) == (kRed | kSolid) && !f.drawn(15, 15));
+}
+
+TEST(renderer_textures_with_colours_as_such) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures);
+  f.fill_textures();
+  // Eight by eight texels: red is the column, green the row.
+  for (u32 t = 0; t < 8; ++t)
+    for (u32 s = 0; s < 8; ++s) f.texture_word((t * 8 + s) * 2, 0x8000 | s | t << 5);
+  f.texture_word((2 * 8 + 2) * 2, 2 | 2u << 5);  // One texel without its alpha bit.
+  f.hand_over_textures();
+  f.textured_square(8, format(7));
+  f.draw();
+  // A white vertex colour leaves the texel as it is.
+  CHECK(f.at(0, 0) == kSolid && f.at(3, 5) == rgba(7, 11, 0, 63) && f.at(7, 7) == rgba(15, 15, 0, 63));
+  CHECK(!f.drawn(2, 2) && f.drawn_in_all() == 63);
+  // Another vertex colour multiplies it: (7 + 1) * (31 + 1) - 1 over 64.
+  f.clear();
+  f.textured_square(8, format(7), kOpaque, 0, rgb(31, 63, 0));
+  f.draw();
+  CHECK(f.at(3, 5) == rgba(3, 11, 0, 63));
+  // With textures switched off, the vertex colour is all.
+  f.control(0);
+  f.draw();
+  CHECK(f.at(3, 5) == rgba(31, 63, 0, 63) && f.drawn(2, 2));
+  // Where no bank is, nothing is drawn.
+  f.control(PolygonRenderer::kTextures);
+  f.video.set_control(VideoMemory::kA, 0);
+  f.draw();
+  CHECK(f.drawn_in_all() == 0);
+}
+
+TEST(renderer_textures_outside_their_edges) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures);
+  f.fill_textures();
+  for (u32 t = 0; t < 8; ++t)
+    for (u32 s = 0; s < 8; ++s) f.texture_word((t * 8 + s) * 2, 0x8000 | s | t << 5);
+  f.hand_over_textures();
+  // 16 pixels across the eight texels, and eight more to the left of them.
+  const auto wide = [&](u32 texture) {
+    f.clear();
+    f.polygon({Fixture::vertex(0, 0, kWhite, kMiddle, kOne, -128, 0), Fixture::vertex(0, 4, kWhite, kMiddle, kOne, -128, 64),
+               Fixture::vertex(24, 4, kWhite, kMiddle, kOne, 256, 64), Fixture::vertex(24, 0, kWhite, kMiddle, kOne, 256, 0)},
+              kOpaque, texture);
+    f.draw();
+  };
+  const auto red = [&](int x) { return f.at(x, 1) & 63; };
+  // Held at the edges.
+  wide(format(7));
+  CHECK(red(0) == 0 && red(7) == 0 && red(9) == 3 && red(15) == 15 && red(16) == 15 && red(23) == 15);
+  // Repeated.
+  wide(format(7) | kRepeatS);
+  CHECK(red(0) == 0 && red(1) == 3 && red(7) == 15 && red(8) == 0 && red(15) == 15 && red(17) == 3);
+  // Repeated, every other time mirrored.
+  wide(format(7) | kRepeatS | kFlipS);
+  CHECK(red(0) == 15 && red(1) == 13 && red(7) == 0 && red(8) == 0 && red(15) == 15 && red(16) == 15 && red(17) == 13);
+}
+
+TEST(renderer_textures_with_palettes) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures);
+  f.fill_textures();
+  // 256 colours: a byte a texel. The top line is colours 0, 1, 2, 3...
+  for (u32 s = 0; s < 8; ++s) f.texture_byte(s, s);
+  // 16 colours, at 0x100: four bits a texel, the low four first.
+  f.texture_byte(0x100, 0x10);
+  f.texture_byte(0x101, 0x32);
+  // Four colours, at 0x200: two bits a texel, the low two first.
+  f.texture_byte(0x200, 0xE4);
+  // The palette: colour n is red n. From byte 16 on: green n. From 8: blue.
+  for (u32 n = 0; n < 4; ++n) {
+    f.palette_word(n * 2, n + 1);
+    f.palette_word(16 + n * 2, (n + 1) << 5);
+  }
+  f.palette_word(8, 1u << 10);
+  f.palette_word(10, 2u << 10);
+  f.hand_over_textures();
+
+  f.textured_square(8, format(4));
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(3, 0, 0, 63) && f.at(1, 0) == rgba(5, 0, 0, 63) && f.at(3, 0) == rgba(9, 0, 0, 63));
+  // Colour 0 can be made transparent.
+  f.clear();
+  f.textured_square(8, format(4) | kTransparent0);
+  f.draw();
+  CHECK(!f.drawn(0, 0) && f.at(1, 0) == rgba(5, 0, 0, 63));
+  // The palette's place is given in units of 16 bytes,
+  f.clear();
+  f.textured_square(8, format(4), kOpaque, 1);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 3, 0, 63) && f.at(2, 0) == rgba(0, 7, 0, 63));
+  f.clear();
+  f.textured_square(8, format(3) | (0x100 >> 3), kOpaque, 1);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 3, 0, 63) && f.at(1, 0) == rgba(0, 5, 0, 63) && f.at(2, 0) == rgba(0, 7, 0, 63) &&
+        f.at(3, 0) == rgba(0, 9, 0, 63));
+  // and of 8 for four colours.
+  f.clear();
+  f.textured_square(8, format(2) | (0x200 >> 3), kOpaque, 1);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 0, 3, 63) && f.at(1, 0) == rgba(0, 0, 5, 63));
+  f.clear();
+  f.textured_square(8, format(2) | (0x200 >> 3), kOpaque, 0);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(3, 0, 0, 63) && f.at(1, 0) == rgba(5, 0, 0, 63) && f.at(2, 0) == rgba(7, 0, 0, 63) &&
+        f.at(3, 0) == rgba(9, 0, 0, 63));
+}
+
+TEST(renderer_textures_with_an_alpha_of_their_own) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kAlphaBlending);
+  f.fill_textures();
+  // Five bits of colour number and three of alpha: 7 is solid, 3 is 13 of
+  // 31, 0 is nothing.
+  f.texture_byte(0, 1 | 7u << 5);
+  f.texture_byte(1, 2 | 3u << 5);
+  f.texture_byte(2, 2 | 0u << 5);
+  // Three bits of colour number and five of alpha, at 0x100.
+  f.texture_byte(0x100, 1 | 31u << 3);
+  f.texture_byte(0x101, 2 | 13u << 3);
+  f.palette_word(2, 0x001F);
+  f.palette_word(4, 0x03E0);
+  f.hand_over_textures();
+  f.textured_square(8, format(1));
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(63, 0, 0, 63) && f.at(1, 0) == rgba(0, 63, 0, 27) && !f.drawn(2, 0));
+  f.clear();
+  f.textured_square(8, format(6) | (0x100 >> 3));
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(63, 0, 0, 63) && f.at(1, 0) == rgba(0, 63, 0, 27));
+  // Such a polygon counts as translucent: it is blended over what is there,
+  // by the texel's alpha. 63 * 36 / 63 blue is left, 63 * 27 / 63 green comes in.
+  f.clear();
+  f.textured_square(8, format(1));
+  f.rectangle(0, 0, 8, 8, kBlue, kOpaque, 0x500000);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(63, 0, 0, 63) && f.at(1, 0) == rgba(0, 27, 36, 63) && f.at(2, 0) == (kBlue | kSolid));
+}
+
+TEST(renderer_textures_in_blocks_of_four_by_four) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures);
+  f.fill_textures();
+  // The first block's top row: colours 0, 1, 2, 3.
+  f.texture_byte(0, 0xE4);
+  // Its four colours start at palette entry 8 (the table counts in fours of
+  // bytes): bright red, black, green, blue.
+  f.palette_word(16, 0x001F);
+  f.palette_word(18, 0x0000);
+  f.palette_word(20, 0x03E0);
+  f.palette_word(22, 0x7C00);
+  const auto with_table_entry = [&](u32 entry) {
+    f.video.set_control(VideoMemory::kB, VideoMemory::kEnable);
+    f.second_slot_word(0, entry);
+    f.hand_over_textures();
+    f.clear();
+    f.textured_square(8, format(5));
+    f.draw();
+  };
+  // Three colours and a transparent one.
+  with_table_entry(4);
+  CHECK(f.at(0, 0) == rgba(63, 0, 0, 63) && f.at(1, 0) == kSolid && f.at(2, 0) == rgba(0, 63, 0, 63) && !f.drawn(3, 0));
+  // Two colours, their mean, and a transparent one.
+  with_table_entry(4 | 1u << 14);
+  CHECK(f.at(0, 0) == rgba(63, 0, 0, 63) && f.at(1, 0) == kSolid && f.at(2, 0) == rgba(31, 0, 0, 63) && !f.drawn(3, 0));
+  // Four colours.
+  with_table_entry(4 | 2u << 14);
+  CHECK(f.at(2, 0) == rgba(0, 63, 0, 63) && f.at(3, 0) == rgba(0, 0, 63, 63));
+  // Two colours and two between them, at 3/8 and 5/8.
+  with_table_entry(4 | 3u << 14);
+  CHECK(f.at(0, 0) == rgba(63, 0, 0, 63) && f.at(1, 0) == kSolid && f.at(2, 0) == rgba(39, 0, 0, 63) &&
+        f.at(3, 0) == rgba(23, 0, 0, 63));
+  // Without the table's bank, nothing.
+  f.video.set_control(VideoMemory::kB, 0);
+  f.draw();
+  CHECK(f.drawn_in_all() == 0);
+}
+
+TEST(renderer_decal_and_toon) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures);
+  f.fill_textures();
+  f.texture_word(0, 0x8000 | 0x03E0);  // Green, solid.
+  f.texture_word(2, 0x03E0);           // Green, without its alpha bit.
+  f.texture_word(4, 0x8000 | 0x000F);  // Half red.
+  f.hand_over_textures();
+  // A decal: the texel over the vertex colour by the texel's alpha, with the
+  // polygon's alpha. 63 * 63 / 64 either way.
+  f.textured_square(8, format(7), kOpaque | mode(1), 0, kRed);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 62, 0, 63) && f.at(1, 0) == rgba(62, 0, 0, 63));
+
+  // The toon table is looked up by half the vertex colour's red: entry 31
+  // for full red, 15 for 31.
+  f.io.write(PolygonRenderer::kToonTable + 62, 2, 0x7C00);  // Blue.
+  f.io.write(PolygonRenderer::kToonTable + 30, 2, 0x001F);  // Red.
+  // Without a texture: the table's colour instead of the vertex colour,
+  f.clear();
+  f.rectangle(0, 0, 8, 8, rgb(63, 63, 0), kOpaque | mode(2));
+  f.rectangle(8, 0, 16, 8, rgb(31, 0, 0), kOpaque | mode(2));
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 0, 63, 63) && f.at(8, 0) == rgba(63, 0, 0, 63));
+  // or, as a highlight, added to it.
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kHighlight);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(63, 63, 63, 63) && f.at(8, 0) == rgba(63, 0, 0, 63));
+  // With a texture: the texel times the table's colour,
+  f.control(PolygonRenderer::kTextures);
+  f.clear();
+  f.textured_square(8, format(7), kOpaque | mode(2), 0, rgb(31, 63, 63));
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 0, 0, 63) && f.at(2, 0) == rgba(31, 0, 0, 63));
+  // or the texel times the vertex colour, plus the table's colour.
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kHighlight);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(63, 63, 0, 63) && f.at(2, 0) == rgba(63, 0, 0, 63));
+}
+
+TEST(renderer_shadows) {
+  Fixture f;
+  f.control(PolygonRenderer::kAlphaBlending);
+  // A white floor; a mask that is behind the floor from (4, 4) to (12, 12);
+  // a black shadow in front of the floor, all over.
+  f.rectangle(0, 0, 16, 16, kWhite, kOpaque | number(1), 0x400000);
+  f.rectangle(4, 4, 12, 12, kBlack, alpha(15) | mode(3) | number(0), 0x600000);
+  f.rectangle(0, 0, 16, 16, kBlack, alpha(15) | mode(3) | number(2), 0x200000);
+  f.draw();
+  // The shadow falls where the mask was hidden: 63 * 32 / 63 of the white is left.
+  CHECK(f.at(0, 0) == (kWhite | kSolid) && f.at(3, 4) == (kWhite | kSolid) && f.at(12, 12) == (kWhite | kSolid));
+  CHECK(f.at(4, 4) == rgba(32, 32, 32, 63) && f.at(11, 11) == rgba(32, 32, 32, 63));
+  // A mask that is not hidden casts none.
+  f.clear();
+  f.rectangle(0, 0, 16, 16, kWhite, kOpaque | number(1), 0x400000);
+  f.rectangle(4, 4, 12, 12, kBlack, alpha(15) | mode(3) | number(0), 0x300000);
+  f.rectangle(0, 0, 16, 16, kBlack, alpha(15) | mode(3) | number(2), 0x200000);
+  f.draw();
+  CHECK(f.at(4, 4) == (kWhite | kSolid));
+  // A shadow does not fall on a pixel of its own polygon number.
+  f.clear();
+  f.rectangle(0, 0, 16, 16, kWhite, kOpaque | number(2), 0x400000);
+  f.rectangle(4, 4, 12, 12, kBlack, alpha(15) | mode(3) | number(0), 0x600000);
+  f.rectangle(0, 0, 16, 16, kBlack, alpha(15) | mode(3) | number(2), 0x200000);
+  f.draw();
+  CHECK(f.at(4, 4) == (kWhite | kSolid));
+  // Masks that come after a shadow start anew, on the lines they are on:
+  // the first mask no longer counts there.
+  f.clear();
+  f.rectangle(0, 0, 16, 16, kWhite, kOpaque | number(1), 0x400000);
+  f.rectangle(0, 0, 4, 8, kBlack, alpha(15) | mode(3) | number(0), 0x600000);
+  f.rectangle(0, 0, 16, 16, kBlack, alpha(15) | mode(3) | number(2), 0x200000);
+  f.rectangle(8, 0, 12, 4, kBlack, alpha(15) | mode(3) | number(0), 0x600000);
+  f.rectangle(0, 0, 16, 16, kRed, alpha(15) | mode(3) | number(3), 0x200000);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(32, 32, 32, 63) && f.at(5, 0) == (kWhite | kSolid) && f.at(8, 0) == rgba(63, 32, 32, 63));
+  // On the lines below the second mask the first still counts, for both
+  // shadows: red over the darkened floor, 32 + 31 * 31 / 63 and 32 * 32 / 63.
+  CHECK(f.at(0, 4) == rgba(47, 16, 16, 63) && f.at(8, 4) == (kWhite | kSolid));
+}
+
+TEST(renderer_fog) {
+  Fixture f;
+  f.control(PolygonRenderer::kFog);
+  f.io.write(PolygonRenderer::kFogColour, 4, 0x7FFF | 31u << 16);
+  f.io.write(PolygonRenderer::kFogOffset, 2, 0x1000);
+  f.io.write(PolygonRenderer::kFogTable + 3, 1, 32);
+  f.io.write(PolygonRenderer::kFogTable + 4, 1, 96);
+  // A depth of 0x440000 is 0x2200 in the fog's units, 0x1200 past the
+  // offset: four and a half steps of 0x400, so half way between the table's
+  // entries 3 and 4, a density of 64 of 128.
+  f.rectangle(0, 0, 8, 8, kBlack, kOpaque | kFogged, 0x440000);
+  f.rectangle(8, 0, 16, 8, kBlack, kOpaque, 0x440000);  // Takes no fog.
+  // Short of the offset: the first entry (0 here).
+  f.rectangle(16, 0, 24, 8, kBlack, kOpaque | kFogged, 0x100000);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(31, 31, 31, 63) && f.at(8, 0) == kSolid && f.at(16, 0) == kSolid);
+  // With smaller steps the same depth is past the last entry.
+  f.control(PolygonRenderer::kFog | 4u << PolygonRenderer::kFogShift);
+  f.io.write(PolygonRenderer::kFogTable + 31, 1, 127);
+  f.draw();
+  // A density of 127 counts as all.
+  CHECK(f.at(0, 0) == rgba(63, 63, 63, 63));
+  // The fog can be told to change only the alpha.
+  f.control(PolygonRenderer::kFog | PolygonRenderer::kFogAlphaOnly);
+  f.io.write(PolygonRenderer::kFogColour, 4, 0x7FFF);
+  f.draw();
+  CHECK(f.at(0, 0) == rgba(0, 0, 0, 31) && f.at(8, 0) == kSolid);
+  // The clear plane takes fog if its colour says so.
+  f.clear();
+  f.control(PolygonRenderer::kFog | 4u << PolygonRenderer::kFogShift);
+  f.io.write(PolygonRenderer::kFogColour, 4, 0x001F | 31u << 16);
+  f.io.write(PolygonRenderer::kClearColour, 4, 0x8000 | 31u << 16);
+  f.draw();
+  CHECK(f.at(100, 100) == rgba(63, 0, 0, 63));
+}
+
+TEST(renderer_edge_marking) {
+  Fixture f;
+  f.control(PolygonRenderer::kEdgeMarking);
+  f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);  // For polygon numbers 8 to 15: green.
+  f.rectangle(10, 10, 20, 20, kRed, kOpaque | number(8));
+  f.rectangle(0, 30, 10, 40, kRed, kOpaque | number(9));
+  f.draw();
+  // The pixels around the polygon's rim, next to something of another
+  // number that is further away, get the edge colour; the inside does not.
+  CHECK(f.at(10, 15) == (kGreen | kSolid) && f.at(19, 15) == (kGreen | kSolid));
+  CHECK(f.at(15, 10) == (kGreen | kSolid) && f.at(15, 19) == (kGreen | kSolid));
+  CHECK(f.at(11, 11) == (kRed | kSolid) && f.at(18, 18) == (kRed | kSolid));
+  // Past the screen's edge is the clear plane.
+  CHECK(f.at(0, 35) == (kGreen | kSolid) && f.at(1, 35) == (kRed | kSolid));
+  // Next to the same number, or to something nearer, there is no edge.
+  f.io.write(PolygonRenderer::kClearColour, 4, 8u << 24);
+  f.draw();
+  CHECK(f.at(10, 15) == (kRed | kSolid) && f.at(0, 35) == (kGreen | kSolid));
+  f.io.write(PolygonRenderer::kClearColour, 4, 0);
+  f.io.write(PolygonRenderer::kClearDepth, 2, 0x2001);
+  f.clear();
+  f.rectangle(10, 10, 20, 20, kRed, kOpaque | number(8), 0x400000);
+  f.rectangle(0, 0, 10, 30, kBlue, kOpaque | number(1), 0x300000);
+  f.draw();
+  // The clear plane is behind it at 0x400200, the blue polygon in front.
+  CHECK(f.at(10, 15) == (kRed | kSolid) && f.at(19, 15) == (kGreen | kSolid));
+}
+
+TEST(renderer_anti_aliasing) {
+  Fixture f;
+  f.control(PolygonRenderer::kAntiAliasing);
+  // The left edge runs from (10, 0) to (14, 8): half a pixel a line.
+  const auto shape = [&] {
+    f.polygon({Fixture::vertex(10, 0, kRed, 0x200000), Fixture::vertex(14, 8, kRed, 0x200000),
+               Fixture::vertex(20, 8, kRed, 0x200000), Fixture::vertex(20, 0, kRed, 0x200000)},
+              kOpaque);
+  };
+  shape();
+  f.draw();
+  // On odd lines the edge covers half of its pixel: with nothing behind,
+  // that becomes the pixel's alpha.
+  CHECK(f.at(10, 0) == (kRed | kSolid) && f.at(10, 1) == rgba(63, 0, 0, 31) && f.at(11, 1) == (kRed | kSolid));
+  CHECK(f.at(11, 2) == (kRed | kSolid) && f.at(11, 3) == rgba(63, 0, 0, 31) && f.at(12, 3) == (kRed | kSolid));
+  CHECK(f.at(19, 1) == (kRed | kSolid) && !f.drawn(9, 1));
+  // With something behind, the two are mixed: 31 of 63 red, 32 of 63 blue.
+  f.clear();
+  f.rectangle(0, 0, 40, 20, kBlue, kOpaque, 0x400000);
+  shape();
+  f.draw();
+  CHECK(f.at(10, 1) == rgba(31, 0, 32, 63) && f.at(11, 1) == (kRed | kSolid) && f.at(9, 1) == (kBlue | kSolid));
+  // Without anti-aliasing the pixel is plain.
+  f.control(0);
+  f.draw();
+  CHECK(f.at(10, 1) == (kRed | kSolid));
+}

@@ -35,10 +35,9 @@
 //   and the material's four colours (diffuse, ambient, specular, emission),
 //   with the table that can shape the specular part.
 //
-// What is not, yet:
-// - Drawing. The finished frame is kept, and nothing draws it.
-// - The flag that tells a program that vertices or polygons did not fit
-//   (it is in a register of the drawing half). They are counted here.
+// Drawing the finished frame is the back half's business
+// (polygon_renderer). So is the flag that tells a program that vertices or
+// polygons did not fit: it is in a register there, and this half says when.
 //
 // Commands take no time here: each is carried out the moment its last
 // parameter arrives, unless the engine is stopped for a swap. On the
@@ -120,6 +119,9 @@ class GeometryEngine {
     std::vector<Vertex> vertices;
     std::vector<Polygon> polygons;
     std::uint32_t swap_parameter = 0;  // Of the "swap buffers" that ended it.
+    // Whether depth is to be w rather than z. That is bit 1 of the "swap
+    // buffers" before the frame: it counts for the polygons sent after it.
+    bool depth_is_w = false;
   };
 
   // Kinds of vertex list: the parameter of "begin a vertex list".
@@ -234,6 +236,8 @@ class GeometryEngine {
   std::function<void()> on_full;
   // Called when the queue has come to be less than half full.
   std::function<void()> on_less_than_half_full;
+  // Called when a vertex or a polygon comes and the frame is full.
+  std::function<void()> on_no_room;
 
   std::size_t queued() const;  // Entries waiting, less the four taken ahead.
   bool room() const { return queued() < kQueueSize; }

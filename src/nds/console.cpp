@@ -40,6 +40,8 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   bus_.video_memory().attach(io_);
   geometry_.attach(io_);
   geometry_.on_full = [this] { wait_for_geometry_room(); };
+  geometry_.on_no_room = [this] { polygon_renderer_.ram_overflowed(); };
+  polygon_renderer_.attach(io_);
   // A DMA channel can be set to feed the 3D engine's queue whenever it is
   // less than half full.
   geometry_.on_less_than_half_full = [this] { dma_.trigger(Dma::kStartGeometry); };
