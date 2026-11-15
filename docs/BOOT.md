@@ -27,7 +27,7 @@ In `src/nds`:
 | System coprocessor (`system_control`) | Places and enables the fast memories, including the mode in which one takes writes but not reads. Identification registers. Protection and cache registers are stored and have no effect. A request to wait for an interrupt is noted, not acted on |
 | Hardware registers (`arm9_io`) | Parts of the hardware implement their registers here. A register nobody implements keeps the last value written, and every access to one is counted by address |
 | Interrupt controller (`interrupts`) | The master switch, enable and request registers. When an enabled source has requested an interrupt, the master switch is on and the processor's mask is clear, the processor takes it before its next instruction. A source can also be a level, whose request stands for as long as its condition does. **Only interpreted code is interrupted so far** |
-| 3D engine, front half (`geometry_engine`) | The queue of commands, both ways into it, the status register and its interrupt; the four matrices with their stacks and every matrix command; the position, vector and box tests; the registers that read the matrices back. "Swap buffers" stops the engine until the vertical blank, what is sent meanwhile queues, and the processor waits when the queue is full. Vertices are made into polygons: through the matrices, by the kind of vertex list (triangles, four-cornered polygons, strips of either), dropped when they face a way that is not drawn, cut to the view volume, placed on the screen by the viewport; each vertex with its colour and texture coordinates, each polygon with its attribute, texture and palette words. A frame holds 6144 vertices and 2048 polygons, the count register reads how many there are, and "swap buffers" hands the frame over. **Nothing draws the frame yet, and there is no lighting**: the normal and light commands are accepted without effect. Commands take no time. After GBATEK; the arithmetic of facing, cutting and placing, and which vertices a strip keeps, after NooDS, except that vertices that made no polygon are not kept |
+| 3D engine, front half (`geometry_engine`) | The queue of commands, both ways into it, the status register and its interrupt; the four matrices with their stacks and every matrix command; the position, vector and box tests; the registers that read the matrices back. "Swap buffers" stops the engine until the vertical blank, what is sent meanwhile queues, and the processor waits when the queue is full. Vertices are made into polygons: through the matrices, by the kind of vertex list (triangles, four-cornered polygons, strips of either), dropped when they face a way that is not drawn, cut to the view volume, placed on the screen by the viewport; each vertex with its colour and texture coordinates, each polygon with its attribute, texture and palette words. A vertex colour is sent as such or worked out from a normal, up to four lights and the material's colours. A frame holds 6144 vertices and 2048 polygons, the count register reads how many there are, and "swap buffers" hands the frame over. **Nothing draws the frame yet.** Commands take no time. After GBATEK; the arithmetic of lighting, facing, cutting and placing, and which vertices a strip keeps, after NooDS, except that vertices that made no polygon are not kept |
 | Time (`timeline`) | Console time in system clock cycles. Each interpreted instruction is taken to use one cycle, which is coarse. When the processor sleeps, time jumps to the next event |
 | Display timing (`video_timing`) | The line counter, the blanking flags, and the vertical blank, horizontal blank and line-match interrupts, at 263 lines of 2,130 cycles a frame. Nothing is drawn |
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
@@ -448,7 +448,8 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   landscape with box-shaped buildings on it and a many-cornered disc above.
 - It sends no normals in the ten seconds, so the hardware's lighting is not
   used here: the vertices get their colours directly. It does set up
-  lights and materials.
+  lights and materials. The lighting is modelled and tested, but the
+  program has not yet been seen to use it.
 - It uses the queue's interrupt. With the queue always drained at once,
   the condition it asks to be told of holds whenever it asks, and it takes
   that interrupt 72,000 times in the ten seconds. On a console, where
@@ -460,8 +461,8 @@ is no music.
 
 The program also turns on the display capture every frame.
 
-Next: lighting, then the first drawing of the frame's polygons; for sound,
-the sequence player. Interrupts in
+Next: the first drawing of the frame's polygons; for sound, the sequence
+player. Interrupts in
 translated code before translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million
