@@ -22,6 +22,7 @@
 #include "nds/bios.h"
 #include "nds/cartridge.h"
 #include "nds/dma.h"
+#include "nds/geometry_engine.h"
 #include "nds/interrupts.h"
 #include "nds/ipc.h"
 #include "nds/keypad.h"
@@ -95,6 +96,8 @@ class Console : private runtime::System {
   Interrupts& interrupts() { return interrupts_; }
   Ipc& ipc() { return ipc_; }
   Dma& dma() { return dma_; }
+  // The 3D hardware's command queue and matrices.
+  GeometryEngine& geometry() { return geometry_; }
   Cartridge& cartridge() { return cartridge_; }
   // Puts a cartridge in the slot: a ROM image, which must outlive the console.
   void insert_cartridge(ByteSpan rom) { cartridge_.insert(rom); }
@@ -131,6 +134,8 @@ class Console : private runtime::System {
   void set_alarm();
   // The processor sleeps until an enabled interrupt is requested.
   void wait_for_interrupt();
+  // The processor waits until the 3D engine's command queue has room.
+  void wait_for_geometry_room();
   std::uint32_t coprocessor_read(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2) override;
   void coprocessor_write(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2,
                          std::uint32_t value) override;
@@ -183,6 +188,7 @@ class Console : private runtime::System {
   Bios bios_;
   Dma dma_;
   Cartridge cartridge_;
+  GeometryEngine geometry_;
   MathUnit math_unit_;
   std::map<std::uint32_t, std::uint64_t> software_interrupts_;
   std::uint64_t accounted_instructions_ = 0;

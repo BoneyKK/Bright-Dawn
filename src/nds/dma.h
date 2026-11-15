@@ -2,11 +2,17 @@
 // memory on the program's behalf.
 //
 // Transfers that start at once are performed; so are transfers fed by the
-// cartridge, a word at a time as the cartridge delivers, and transfers that
+// cartridge, a word at a time as the cartridge delivers, transfers that
 // start with the vertical blank or with the horizontal blank of each visible
-// line. A transfer set to start on any other hardware event (the start of
-// the display, the geometry queue, the second cartridge slot) stays pending
-// and is counted, because nothing raises those events for DMA yet.
+// line, and transfers that feed the 3D engine's command queue while it is
+// less than half full. A transfer set to start on any other hardware event
+// (the start of the display, the second cartridge slot) stays pending and is
+// counted, because nothing raises those events for DMA yet.
+//
+// A transfer to the 3D engine's queue moves all its words at once here. The
+// hardware moves 112 at a time and waits for the queue to drain in between;
+// with a queue that never fills while the engine runs, the outcome is the
+// same.
 #pragma once
 
 #include <cstdint>
@@ -35,6 +41,7 @@ class Dma {
   static constexpr unsigned kStartVBlank = 1;
   static constexpr unsigned kStartHBlank = 2;  // Of visible lines only.
   static constexpr unsigned kStartCartridge = 5;
+  static constexpr unsigned kStartGeometry = 7;
 
   // The event of start mode `mode` has happened. Every channel waiting for
   // it moves the number of units it is set to and, unless set to repeat, is
@@ -49,7 +56,7 @@ class Dma {
     std::uint64_t transfers = 0;       // Performed.
     std::uint64_t units = 0;           // 16- or 32-bit units moved.
     // Transfers the program started in a mode that waits for an event, by
-    // start mode. Those of modes other than the three above never run.
+    // start mode. Those of modes other than the four above never run.
     std::uint64_t waiting_for_event[8] = {};
   };
   const Statistics& statistics() const { return statistics_; }

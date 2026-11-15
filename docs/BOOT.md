@@ -26,7 +26,8 @@ In `src/nds`:
 | Video memory (`video_memory`) | The nine banks, each placed by its control register: as backgrounds or sprites of either screen, or as plain memory, with the places where small banks repeat and what happens where banks overlap. Uses that give a bank no address (textures, palettes, the second processor's) take it out of reach and keep its contents. After GBATEK's table, checked against NooDS. Nothing reads the banks for display yet |
 | System coprocessor (`system_control`) | Places and enables the fast memories, including the mode in which one takes writes but not reads. Identification registers. Protection and cache registers are stored and have no effect. A request to wait for an interrupt is noted, not acted on |
 | Hardware registers (`arm9_io`) | Parts of the hardware implement their registers here. A register nobody implements keeps the last value written, and every access to one is counted by address |
-| Interrupt controller (`interrupts`) | The master switch, enable and request registers. When an enabled source has requested an interrupt, the master switch is on and the processor's mask is clear, the processor takes it before its next instruction. **Only interpreted code is interrupted so far** |
+| Interrupt controller (`interrupts`) | The master switch, enable and request registers. When an enabled source has requested an interrupt, the master switch is on and the processor's mask is clear, the processor takes it before its next instruction. A source can also be a level, whose request stands for as long as its condition does. **Only interpreted code is interrupted so far** |
+| 3D engine, front half (`geometry_engine`) | The queue of commands, both ways into it, the status register and its interrupt; the four matrices with their stacks and every matrix command; the position, vector and box tests; the registers that read the matrices back. "Swap buffers" stops the engine until the vertical blank, what is sent meanwhile queues, and the processor waits when the queue is full. **Vertices are not made into polygons yet**: the commands for that are accepted without effect, and the register that counts polygons and vertices reads as zero. Commands take no time. After GBATEK, details after NooDS |
 | Time (`timeline`) | Console time in system clock cycles. Each interpreted instruction is taken to use one cycle, which is coarse. When the processor sleeps, time jumps to the next event |
 | Display timing (`video_timing`) | The line counter, the blanking flags, and the vertical blank, horizontal blank and line-match interrupts, at 263 lines of 2,130 cycles a frame. Nothing is drawn |
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
@@ -41,7 +42,7 @@ In `src/nds`:
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
 | BIOS code (`bios_rom.S`) | Three more calls, Halt, IntrWait and VBlankIntrWait, and the interrupt entry. See below |
 | Sleeping | The system coprocessor's "wait for interrupt" puts the processor to sleep until an enabled source requests an interrupt. A sleep of more than ten seconds of console time ends the run |
-| DMA (`dma`) | Transfers that start at once, transfers fed by the cartridge, and transfers that start with the vertical blank or with the horizontal blank of each visible line, in every direction mode, with the fill registers, repeat and the completion interrupt request. A transfer set to start on any other hardware event stays pending and is counted |
+| DMA (`dma`) | Transfers that start at once, transfers fed by the cartridge, transfers that start with the vertical blank or with the horizontal blank of each visible line, and transfers that feed the 3D engine's queue, in every direction mode, with the fill registers, repeat and the completion interrupt request. A transfer set to start on any other hardware event stays pending and is counted |
 | Cartridge (`cartridge`) | The slot as a running game uses it: the "read data" and "read chip identifier" commands, the block sizes, the part of a cartridge that cannot be read, the completion interrupt, and delivery to a DMA channel. A transfer takes no console time. The encrypted exchange before a game starts is not needed and not modelled. The save memory is not reached through the slot's registers by the main program but through the second processor (below). The real program reads its file tables and overlays through it, and an overlay read this way passes the game's own check of its code |
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
@@ -415,10 +416,6 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   registers that have no model. The program's own course is unchanged by
   them, to the instruction.
 
-What it runs on is still thin. 157 hardware registers it uses have no
-model, the 3D engine and both 2D engines among them; no sequence is
-played, so there is no music.
-
 - With video memory in banks, every one of the program's accesses to it
   lands in a bank the program has placed there; none misses. At the end of
   the ten seconds banks A, B and C are with the 3D engine as textures and G
@@ -426,14 +423,29 @@ played, so there is no music.
   sprites, H and I the second screen's, and D is plain memory. The controls
   of A, B, C and G are set dozens of times on the way.
 
-Most used among the registers without a model are those of the 3D engine:
-22 million writes to its command port in the ten seconds, its status
-register read 93,000 times, and once a frame the command that ends a 3D
-frame. The program also turns on the display capture every frame.
+- With the 3D engine's command queue, what the program sends can be read.
+  In the ten seconds it ends 556 frames with "swap buffers", and sends
+  947,897 vertex lists with 5.9 million vertices, 5.4 million texture
+  coordinates and 3.9 million colours between them: about 1,700 lists and
+  10,000 vertices a frame. It is drawing a 3D scene almost from the start.
+  Its matrix commands run: 107,000 of them, with no stack error and no
+  number that is not a command. It does not use the three tests. At most
+  27 entries wait in the queue, behind a swap, and the processor never has
+  to wait for room.
+- It uses the queue's interrupt. With the queue always drained at once,
+  the condition it asks to be told of holds whenever it asks, and it takes
+  that interrupt 72,000 times in the ten seconds. On a console, where
+  commands take time, it would come less often.
 
-Next: the 3D engine's command queue and status, which the program's flow
-depends on, then the first drawing; for sound, the sequence player. Interrupts in translated code before
-translated game code is run.
+What it runs on is still thin. 125 hardware registers it uses have no
+model; the vertices it sends are not made into polygons, and nothing is
+drawn; no sequence is played, so there is no music.
+
+The program also turns on the display capture every frame.
+
+Next: polygons from the vertices (with the count the program reads back),
+then the first drawing; for sound, the sequence player. Interrupts in
+translated code before translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.
