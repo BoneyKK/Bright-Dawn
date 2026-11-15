@@ -115,6 +115,79 @@ TEST(console_starts_with_the_sound_on_and_silent) {
   CHECK(console.sound_driver().statistics().beats == 0);
 }
 
+TEST(console_runs_dma_at_the_blanks_of_the_display) {
+  //   02000000  b    .
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  constexpr std::uint32_t kTable = 0x02100000, kPlace = 0x02200000, kOther = 0x02200100, kThird = 0x02200200;
+  for (std::uint32_t i = 0; i < 600; ++i) console.bus().write16(kTable + 2 * i, static_cast<std::uint16_t>(i + 1));
+  constexpr std::uint32_t kEnable = 0x80000000, kRepeat = 1u << 25, kFixedDestination = 2u << 21;
+  constexpr std::uint32_t kAtVBlank = 1u << 27, kAtHBlank = 2u << 27;
+  const auto run_to = [&](std::uint64_t time) {
+    const std::uint64_t now = console.timeline().now();
+    CHECK(console.run(time - now).reason == bd::nds::StopReason::InstructionLimit);
+    console.timeline().refresh();
+    CHECK(console.timeline().now() == time);
+  };
+  constexpr std::uint64_t kLine = 2130, kHBlank = 1536, kFrame = 263 * kLine;
+
+  // Channel 0: at every horizontal blank, the next 16-bit value of the table
+  // to one fixed place. Channel 1: once, three values. Channel 2: at every
+  // vertical blank, one value.
+  console.io().write(0x040000B0, 4, kTable);
+  console.io().write(0x040000B4, 4, kPlace);
+  console.io().write(0x040000B8, 4, kEnable | kAtHBlank | kRepeat | kFixedDestination | 1);
+  CHECK(console.video_timing().watching_horizontal_blank());
+  console.io().write(0x040000BC, 4, kTable + 0x200);
+  console.io().write(0x040000C0, 4, kOther);
+  console.io().write(0x040000C4, 4, kEnable | kAtHBlank | 3);
+  console.io().write(0x040000C8, 4, kTable + 0x400);
+  console.io().write(0x040000CC, 4, kThird);
+  console.io().write(0x040000D0, 4, kEnable | kAtVBlank | kRepeat | kFixedDestination | 1);
+  CHECK(console.dma().statistics().transfers == 0);
+
+  run_to(kHBlank - 1);
+  CHECK(console.dma().statistics().transfers == 0);
+  run_to(kHBlank);
+  CHECK(console.dma().statistics().transfers == 2);
+  CHECK(console.bus().read16(kPlace) == 1);
+  CHECK(console.bus().read16(kOther) == 0x101 && console.bus().read16(kOther + 4) == 0x103);
+  // Channel 1 is finished; channel 0 goes on, a line at a time.
+  CHECK((console.io().read(0x040000C4, 4) & kEnable) == 0);
+  CHECK((console.io().read(0x040000B8, 4) & kEnable) != 0);
+  run_to(kLine + kHBlank - 1);
+  CHECK(console.bus().read16(kPlace) == 1);
+  run_to(kLine + kHBlank);
+  CHECK(console.bus().read16(kPlace) == 2);
+  CHECK(console.bus().read16(kOther) == 0x101);
+
+  // Line 191 is the last with a horizontal blank that counts. The vertical
+  // blank begins with line 192.
+  run_to(191 * kLine + kHBlank);
+  CHECK(console.bus().read16(kPlace) == 192);
+  CHECK(console.bus().read16(kThird) == 0);
+  run_to(192 * kLine - 1);
+  CHECK(console.bus().read16(kThird) == 0);
+  run_to(192 * kLine);
+  CHECK(console.bus().read16(kThird) == 0x201);
+  run_to(kFrame + kHBlank - 1);
+  CHECK(console.bus().read16(kPlace) == 192);
+  CHECK(console.dma().statistics().transfers == 192 + 1 + 1);
+  run_to(kFrame + kHBlank);
+  CHECK(console.bus().read16(kPlace) == 193);
+
+  // With channel 0 switched off nothing waits for the horizontal blank, and
+  // after the next one it is no longer watched for.
+  console.io().write(0x040000B8, 4, 0);
+  run_to(kFrame + kLine + kHBlank);
+  CHECK(console.bus().read16(kPlace) == 193);
+  CHECK(!console.video_timing().watching_horizontal_blank());
+  run_to(2 * kFrame);
+  CHECK(console.bus().read16(kThird) == 0x202);
+  CHECK(console.dma().statistics().transfers == 193 + 1 + 2);
+}
+
 TEST(console_has_buttons_that_are_not_held) {
   // A program that reads the button register and stops:
   //   02000000  mov  r0, #0x04000000

@@ -1,11 +1,12 @@
 // The four DMA channels of the main processor: hardware that copies or fills
 // memory on the program's behalf.
 //
-// Transfers that start at once are performed, and so are transfers fed by
-// the cartridge, a word at a time as the cartridge delivers. A transfer set
-// to start on any other hardware event (vertical or horizontal blank, the
-// geometry queue) stays pending and is counted, because nothing raises those
-// events for DMA yet.
+// Transfers that start at once are performed; so are transfers fed by the
+// cartridge, a word at a time as the cartridge delivers, and transfers that
+// start with the vertical blank or with the horizontal blank of each visible
+// line. A transfer set to start on any other hardware event (the start of
+// the display, the geometry queue, the second cartridge slot) stays pending
+// and is counted, because nothing raises those events for DMA yet.
 #pragma once
 
 #include <cstdint>
@@ -31,6 +32,8 @@ class Dma {
 
   // Start modes (bits 27-29 of a channel's control register).
   static constexpr unsigned kStartAtOnce = 0;
+  static constexpr unsigned kStartVBlank = 1;
+  static constexpr unsigned kStartHBlank = 2;  // Of visible lines only.
   static constexpr unsigned kStartCartridge = 5;
 
   // The event of start mode `mode` has happened. Every channel waiting for
@@ -46,7 +49,7 @@ class Dma {
     std::uint64_t transfers = 0;       // Performed.
     std::uint64_t units = 0;           // 16- or 32-bit units moved.
     // Transfers the program started in a mode that waits for an event, by
-    // start mode. Apart from the cartridge's, they never run.
+    // start mode. Those of modes other than the three above never run.
     std::uint64_t waiting_for_event[8] = {};
   };
   const Statistics& statistics() const { return statistics_; }

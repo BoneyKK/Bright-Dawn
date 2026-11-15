@@ -49,8 +49,16 @@ void VideoTiming::write_status(u32 value, u32 mask) {
   timeline_.rescheduled();  // The horizontal blank is an event only while its interrupt is on.
 }
 
+void VideoTiming::watch_horizontal_blank(bool watch) {
+  if (watch == hblank_watched_) return;
+  timeline_.refresh();
+  hblank_watched_ = watch;
+  timeline_.rescheduled();
+}
+
 Timeline::Time VideoTiming::next_event() const {
-  if ((status_ & kHBlankInterrupt) != 0 && !hblank_done_) return line_start_ + kHBlankStart;
+  const bool wanted = (status_ & kHBlankInterrupt) != 0 || (hblank_watched_ && line_ < kVisibleLines);
+  if (wanted && !hblank_done_) return line_start_ + kHBlankStart;
   return line_start_ + kCyclesPerLine;
 }
 
@@ -59,6 +67,7 @@ void VideoTiming::run_until(Timeline::Time now) {
     if (!hblank_done_ && now >= line_start_ + kHBlankStart) {
       hblank_done_ = true;
       if (status_ & kHBlankInterrupt) interrupts_.request(Interrupts::kHBlank);
+      if (hblank_watched_ && line_ < kVisibleLines && on_horizontal_blank) on_horizontal_blank();
     }
     if (now < line_start_ + kCyclesPerLine) return;
     start_line();

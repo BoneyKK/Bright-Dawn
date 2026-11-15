@@ -40,7 +40,7 @@ In `src/nds`:
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
 | BIOS code (`bios_rom.S`) | Three more calls, Halt, IntrWait and VBlankIntrWait, and the interrupt entry. See below |
 | Sleeping | The system coprocessor's "wait for interrupt" puts the processor to sleep until an enabled source requests an interrupt. A sleep of more than ten seconds of console time ends the run |
-| DMA (`dma`) | Transfers that start at once, and transfers fed by the cartridge, in every direction mode, with the fill registers, repeat and the completion interrupt request. A transfer set to start on any other hardware event stays pending and is counted |
+| DMA (`dma`) | Transfers that start at once, transfers fed by the cartridge, and transfers that start with the vertical blank or with the horizontal blank of each visible line, in every direction mode, with the fill registers, repeat and the completion interrupt request. A transfer set to start on any other hardware event stays pending and is counted |
 | Cartridge (`cartridge`) | The slot as a running game uses it: the "read data" and "read chip identifier" commands, the block sizes, the part of a cartridge that cannot be read, the completion interrupt, and delivery to a DMA channel. A transfer takes no console time. The encrypted exchange before a game starts is not needed and not modelled. The save memory is not reached through the slot's registers by the main program but through the second processor (below). The real program reads its file tables and overlays through it, and an overlay read this way passes the game's own check of its code |
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
@@ -408,14 +408,25 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   second slot. It is told there is none, and no word the program has sent
   is left unanswered.
 
+- The DMA transfers it starts at the horizontal blank, 430 of them in the
+  ten seconds, each set to repeat, now run: 82,444 transfers of about 110
+  units each, one per visible line. They write to memory, not to any of the
+  registers that have no model. The program's own course is unchanged by
+  them, to the instruction.
+
 What it runs on is still thin. 166 hardware registers it uses have no
 model, the 3D engine and both 2D engines among them; no sequence is
-played, so there is no music; DMA transfers timed by the horizontal blank
-never start.
+played, so there is no music.
 
-Next: the display's other timed events, then video memory and the first
-drawing; for sound, the sequence player. Interrupts in translated code
-before translated game code is run.
+Most used among the registers without a model are those of the 3D engine:
+22 million writes to its command port in the ten seconds, its status
+register read 93,000 times, and once a frame the command that ends a 3D
+frame. The program also turns on the display capture every frame.
+
+Next: video memory and its banks, then the 3D engine's command queue and
+status, which the program's flow depends on, then the first drawing; for
+sound, the sequence player. Interrupts in translated code before
+translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.
