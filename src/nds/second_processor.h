@@ -22,6 +22,8 @@
 //   chip takes (save_memory.h) are carried out, and the three requests the
 //   program refuses are refused the same way. Anything else is recorded and
 //   not answered.
+// - It passes on the two buttons and the lid sensor that are wired to it
+//   (report_buttons).
 // - Service 6, the touch screen: a request for one sample is answered with
 //   the state set through set_touch, and the request that sets how far apart
 //   readings may lie is accepted. Sampling at regular intervals is not
@@ -137,6 +139,17 @@ class SecondProcessor : public IpcPeer {
   // network address and the wireless channels go to their places in main
   // memory. Fails, writing nothing, if the settings are not valid.
   Status start_up(const UserSettings& settings);
+
+  // Where the second-processor program leaves the inputs wired to it, for
+  // the main program: X in bit 10 and Y in bit 11, 0 = held, as the main
+  // program's own button register has its ten; bit 13 for a button only
+  // development consoles have; bit 15 set while the lid is closed.
+  static constexpr std::uint32_t kButtonWord = 0x027FFFA8;
+  // Passes on what the second processor's button register reads
+  // (Keypad::second_processor_register). The program does this from a timer,
+  // every four milliseconds; here it is to be called at the start and
+  // whenever the inputs change.
+  void report_buttons(std::uint16_t button_register);
 
   // The touch screen as the next sample will find it: whether it is being
   // touched, and where, in pixels of the touch screen (0-255 across, 0-191

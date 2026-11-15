@@ -111,6 +111,7 @@ add_library(bd_nds STATIC
   src/nds/dma.cpp
   src/nds/interrupts.cpp
   src/nds/ipc.cpp
+  src/nds/keypad.cpp
   src/nds/math_unit.cpp
   src/nds/program.cpp
   src/nds/save_memory.cpp

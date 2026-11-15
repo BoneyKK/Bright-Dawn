@@ -97,6 +97,38 @@ TEST(console_direct_boot_leaves_the_user_settings_in_memory) {
   CHECK(!invalid.direct_boot().ok());
 }
 
+TEST(console_has_buttons_that_are_not_held) {
+  // A program that reads the button register and stops:
+  //   02000000  mov  r0, #0x04000000
+  //   02000004  add  r0, r0, #0x130
+  //   02000008  ldrh r4, [r0]
+  //   0200000c  b    .
+  const bd::nds::Program program = program_of({0xE3A00301, 0xE2800E13, 0xE1D040B0, 0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  CHECK(console.bus().read16(0x027FFFA8) == 0x2C00);  // X, Y and the lid, from the second processor.
+  CHECK(console.run(100).reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(console.machine().cpu().r[4] == 0x03FF);
+  CHECK(console.io().unmodelled().empty());
+
+  // Held buttons show in both places, at once.
+  bd::nds::Console held(program, kNoTranslations);
+  CHECK(held.direct_boot().ok());
+  held.keypad().set_held((1u << static_cast<unsigned>(bd::nds::Button::Start)) |
+                         (1u << static_cast<unsigned>(bd::nds::Button::X)));
+  CHECK(held.bus().read16(0x027FFFA8) == 0x2800);
+  CHECK(held.run(100).reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(held.machine().cpu().r[4] == 0x03F7);
+  held.keypad().set_lid_closed(true);
+  CHECK(held.bus().read16(0x027FFFA8) == 0xA800);
+
+  // Buttons held before the program starts are there when it starts.
+  bd::nds::Console early(program, kNoTranslations);
+  early.keypad().set_held(1u << static_cast<unsigned>(bd::nds::Button::Y));
+  CHECK(early.direct_boot().ok());
+  CHECK(early.bus().read16(0x027FFFA8) == 0x2400);
+}
+
 TEST(console_direct_boot_rejects_a_program_that_does_not_fit) {
   bd::nds::Program program = program_of(kStartUp);
   program.arm9_load_address = 0x023FFFF0;

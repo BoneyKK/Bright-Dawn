@@ -33,6 +33,8 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   timers_.attach(io_);
   cartridge_.attach(io_);
   math_unit_.attach(io_);
+  keypad_.attach(io_);
+  keypad_.on_change = [this] { second_processor_.report_buttons(keypad_.second_processor_register(touched_)); };
   // A DMA channel can be set to take each word the cartridge delivers.
   cartridge_.on_word_ready = [this] { return dma_.trigger(Dma::kStartCartridge); };
   dma_.on_waiting = [this](unsigned mode) {
@@ -98,6 +100,7 @@ Status Console::direct_boot() {
   // The second processor's program starts alongside the main one, and has
   // the console's settings in place before the main program can ask for them.
   if (auto s = second_processor_.start_up(user_settings_); !s) return s;
+  second_processor_.report_buttons(keypad_.second_processor_register(touched_));
 
   for (const OverlayCode& overlay : program_.overlays)
     machine_.add_overlay(overlay.id, overlay.load_address, overlay.image.data(), overlay.image.size());
@@ -115,6 +118,11 @@ Status Console::direct_boot() {
   c.r[12] = program_.arm9_entry;
   c.cpsr_ctrl = 0xDF;
   return {};
+}
+
+void Console::set_touch(bool touched, unsigned x, unsigned y) {
+  touched_ = touched;
+  second_processor_.set_touch(touched, x, y);
 }
 
 RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limit) {

@@ -146,9 +146,13 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   const nds::Dma::Statistics& dma = console.dma().statistics();
   std::printf("\nDMA: %" PRIu64 " transfers performed, %" PRIu64 " units moved\n", dma.transfers, dma.units);
   for (int mode = 1; mode < 8; ++mode) {
-    if (dma.waiting_for_event[mode] != 0)
+    if (dma.waiting_for_event[mode] == 0) continue;
+    if (mode == static_cast<int>(nds::Dma::kStartCartridge)) {
+      std::printf("  %" PRIu64 " started in mode %d, fed by the cartridge\n", dma.waiting_for_event[mode], mode);
+    } else {
       std::printf("  %" PRIu64 " started in mode %d, which waits for an event that never comes yet\n",
                   dma.waiting_for_event[mode], mode);
+    }
   }
 
   const nds::Cartridge::Statistics& card = console.cartridge().statistics();
