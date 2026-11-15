@@ -19,6 +19,8 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       system_control_(bus_),
       video_timing_(timeline_, interrupts_),
       timers_(timeline_, interrupts_),
+      sound_hardware_(bus_),
+      sound_driver_(timeline_, bus_, sound_hardware_),
       second_processor_(bus_, Cartridge::kChipId, save_memory_),
       ipc_(interrupts_, second_processor_),
       machine_(bus_, *this, translated),
@@ -50,10 +52,15 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
     }
   };
   second_processor_.connect(ipc_);
+  second_processor_.connect_sound(sound_driver_);
   second_processor_.on_memory_written = [this](std::uint32_t address, std::size_t size) {
     // By the address the memory has in its first copy, where programs are.
     machine_.note_memory_written(0x02000000u | (address & (Arm9Bus::kMainRamSize - 1)), size);
   };
+  // The sound hardware is brought up to date whenever time stops for an
+  // event. What its capture units record goes into main memory too.
+  timeline_.add(sound_hardware_);
+  sound_hardware_.on_memory_written = second_processor_.on_memory_written;
 }
 
 Status Console::direct_boot() {
@@ -101,6 +108,7 @@ Status Console::direct_boot() {
   // the console's settings in place before the main program can ask for them.
   if (auto s = second_processor_.start_up(user_settings_); !s) return s;
   second_processor_.report_buttons(keypad_.second_processor_register(touched_));
+  sound_driver_.start_up();
 
   for (const OverlayCode& overlay : program_.overlays)
     machine_.add_overlay(overlay.id, overlay.load_address, overlay.image.data(), overlay.image.size());

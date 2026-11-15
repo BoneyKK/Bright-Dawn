@@ -6,10 +6,11 @@
 // the timers, DMA and the channel to the second processor; time passes with
 // the instructions interpreted and jumps ahead when the processor sleeps.
 // Some BIOS calls are implemented (bios.h, bios_rom.S). The second
-// processor's stand-in leaves the console's settings in memory and answers
-// the start-up handshake, nothing more. Whatever the program asks for that
-// is not there is recorded, and a BIOS call that is not implemented stops
-// the run.
+// processor's program is not run: a stand-in answers for it, as far as it
+// goes (second_processor.h), and another drives the sound hardware as that
+// program's sound part does (sound_driver.h). Whatever the program asks for
+// that is not there is recorded, and a BIOS call that is not implemented
+// stops the run.
 #pragma once
 
 #include <cstdint>
@@ -28,6 +29,8 @@
 #include "nds/program.h"
 #include "nds/save_memory.h"
 #include "nds/second_processor.h"
+#include "nds/sound_driver.h"
+#include "nds/sound_hardware.h"
 #include "nds/system_control.h"
 #include "nds/timeline.h"
 #include "nds/timers.h"
@@ -101,6 +104,10 @@ class Console : private runtime::System {
   // Times the processor slept waiting for an interrupt.
   std::uint64_t sleeps() const { return sleeps_; }
   SecondProcessor& second_processor() { return second_processor_; }
+  // The sound hardware, and the stand-in for the second processor's sound
+  // program that drives it.
+  SoundHardware& sound_hardware() { return sound_hardware_; }
+  SoundDriver& sound_driver() { return sound_driver_; }
   // The buttons and the lid. Nothing is held and the lid is open until this
   // is told otherwise.
   Keypad& keypad() { return keypad_; }
@@ -142,6 +149,8 @@ class Console : private runtime::System {
   SaveMemory save_memory_;
   Keypad keypad_;
   bool touched_ = false;
+  SoundHardware sound_hardware_;
+  SoundDriver sound_driver_;
   SecondProcessor second_processor_;
   Ipc ipc_;
   runtime::Machine machine_;

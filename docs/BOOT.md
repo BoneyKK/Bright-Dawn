@@ -9,9 +9,12 @@ initialisation of graphics and sound registers, the first interrupts, reading
 its file tables and overlays from the cartridge, and past the check that stops
 the game on a machine that does not look like a console, and through its
 requests to the second processor for its save memory and the touch screen.
-It reaches its frame loop and stays in it: every frame it reads the buttons,
-samples the touch screen and sleeps until the next vertical blank. Nothing
-is drawn, no sound is made, and nothing presses a button.
+It reaches its frame loop and stays in it: every frame it reads the buttons
+and samples the touch screen. It sets up its sound: its commands reach a
+model of the sound hardware, and the echo it builds from that hardware's
+capture units runs. Nothing is drawn, nothing presses a button, and no sound
+comes out, because the part of the second processor's program that plays
+music is not there yet.
 
 ## The model
 
@@ -29,7 +32,9 @@ In `src/nds`:
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Buttons and lid (`keypad`) | The main program's button register, and the X and Y buttons and the lid sensor as the second processor passes them on. Nothing presses a button yet. The register that raises an interrupt on a button combination is not modelled |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
-| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, two are there: requests to the cartridge (service 11), including those on the save memory, and one-off samples of the touch screen (service 6). Every word for another service is recorded and not answered. See below |
+| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, three are there: requests to the cartridge (service 11), including those on the save memory, one-off samples of the touch screen (service 6), and sound (service 7, next row). Every word for another service is recorded and not answered. See below |
+| Sound program (`sound_driver`) | A stand-in for the part of the second processor's program that looks after sound: it takes the main program's lists of commands, carries out the ones that drive the hardware directly, runs the alarms, and keeps the block of memory the two programs share up to date. **It does not play sequences**, which is how the game plays its music: those commands are counted and not carried out. See below |
+| Sound hardware (`sound_hardware`) | The sixteen channels (sampled sound in three formats, square waves, noise), the mixer, the two capture units and the output stage, in steps of one output sample. Registers after GBATEK, mixing arithmetic after NooDS. Its output is counted, not played: there is no audio device yet. Limits are listed in its header |
 | Save memory (`save_memory`) | The cartridge's 256 KiB serial flash chip, by what its commands do: read, write, program, erase a sector. Blank at the start; nothing keeps it in a file between runs yet. Every operation completes at once |
 | Console settings (`user_settings`) | Language, the owner's name, message, birthday and favourite colour, the console's network address and its wireless channels. See below |
 | BIOS calls (`bios`) | Nine of the seventeen the program has wrappers for, done natively: WaitByLoop, Div, CpuSet, CpuFastSet, Sqrt, GetCRC16, IsDebugger, LZ77UnCompWram, RLUnCompWram. Written from what the calls are documented to do; the console's BIOS is not used. A call that is not implemented ends the run, as do two cases whose result on a console is not known here (division by zero, a checksum over an odd length) |
@@ -40,7 +45,8 @@ In `src/nds`:
 | Program loader (`program`) | From a ROM, or from a directory written by `bdtool extract --code` |
 | Start-up state (`console`) | See below |
 
-Not present at all: video, sound, input.
+Not present at all: video, input, and a device for the sound to come out
+of.
 Interrupts in translated code are not present either: the tool that exists
 runs everything in the interpreter.
 
@@ -101,6 +107,33 @@ not run but is the reference for what the main program expects:
   the tolerance (request 3) is accepted. Sampling at regular intervals
   (request 1) is not implemented; stopping it (request 2) is answered as
   the program answers when it is not running.
+
+- Service 7, sound. The main program never touches the sound hardware. It
+  builds lists of commands in main memory, each command six words (the
+  address of the next, a number, four arguments), and sends the address of
+  a list as a word. The second processor's sound program wakes every 2,728
+  timer ticks (5.2 ms), works through the lists that have arrived, and adds
+  one to a count in a block of memory the main program has told it about
+  (command `0x1D`), which is how the main program knows a list is done. A
+  word with the data 0 means "do it now". In the same block the sound
+  program reports which channels and capture units are active. There are 34
+  commands. The stand-in carries out the 20 that work on the hardware, the
+  alarms and the shared block, by the same arithmetic as the program's
+  routines: set up, start and stop channels and capture units; volume,
+  place between left and right, timer; a "surround" effect that makes
+  sound at the sides quieter; master volume; what goes to the outputs;
+  reserving channels; variables kept in the shared block. Of the other 14,
+  13 concern sequences: the sound program is also a music player, which
+  reads sequence and instrument data the main program points it to and
+  plays notes on channels it picks itself. That player is not there. The
+  last one copies the player's internal state out, and is not there either. A list is
+  counted as finished all the same, since the main program otherwise waits
+  for ever; each command not carried out is reported by `bdtool boot`.
+- Alarms. Eight timers the main program can set up through commands. When
+  one fires, the second processor sends a word on service 7 carrying the
+  alarm's number and an identifier, once or at regular intervals. If the
+  queue to the main program is full, the word is kept back and sent with
+  the next firing, as the program does it.
 
 - The buttons wired to the second processor. Its program reads its own
   button register from a timer, every four milliseconds, and leaves X, Y and
@@ -336,14 +369,39 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   the vertical blank, timer 0 and "word received" it has enabled the
   interrupt of the 3D engine's command queue.
 
-What it runs on is still thin. 166 hardware registers it uses have no
-model, the 3D engine and both 2D engines among them; three words to the
-sound service and one to service 13 are unanswered; DMA transfers timed by
-the horizontal blank never start.
+- The three words it sends to the sound service are lists of commands.
+  The first names the block of memory to share. The second sets up an
+  echo: channels 1 and 3 are reserved and made to play, for ever, two
+  buffers of 1,360 bytes; the two capture units record the mixer's left and
+  right output into those same buffers; the outputs are taken from channels
+  1 and 3 instead of the mixer; and an alarm is to fire every 5,440 ticks
+  (10.4 ms), which is each time half a buffer has gone by. So everything
+  the game plays passes through main memory, where the main program can
+  change it, on its way to the speakers. The third list prepares a sequence
+  on player 0, sets two of the player's values and starts it: the game's
+  first music.
+- With the sound program's stand-in, the first two lists are carried out in
+  full. In ten seconds the alarm fires 950 times and the main program is
+  told each time; the capture units write 1.3 million bytes, all of them
+  silence, because nothing is playing: the third list's four sequence
+  commands are not carried out.
+- The alarm changes how the program spends its time. A thread of its own,
+  which the alarm wakes, then keeps running whenever nothing more urgent
+  does, so the processor no longer sleeps between frames: 335 million
+  instructions in the ten seconds instead of 56 million, 4 sleeps instead
+  of 626. The frame loop goes on as before, with as many touch samples and
+  cartridge reads. From the code, the thread goes round a loop that calls
+  one routine and sleeps only when its own priority is 14; whether a
+  console spends its idle time the same way has not been checked.
 
-Next: the remaining unanswered services (sound first), the display's
-other timed events, then video memory and the first drawing. Interrupts
-in translated code before translated game code is run.
+What it runs on is still thin. 166 hardware registers it uses have no
+model, the 3D engine and both 2D engines among them; no sequence is
+played, so there is no music; one word to service 13 is unanswered; DMA
+transfers timed by the horizontal blank never start.
+
+Next: the display's other timed events, then video memory and the first
+drawing; for sound, the sequence player, and one request to service 13.
+Interrupts in translated code before translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

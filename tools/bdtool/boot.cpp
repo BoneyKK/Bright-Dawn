@@ -137,6 +137,29 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
     std::printf("\n");
   }
 
+  // Sound: the stand-in for the second processor's sound program, and the
+  // hardware it drives.
+  const nds::SoundDriver::Statistics& driver = console.sound_driver().statistics();
+  std::printf("\nSound: %" PRIu64 " command lists received, %" PRIu64 " worked through", driver.lists_received,
+              driver.lists_finished);
+  if (driver.lists_dropped != 0) std::printf(", %" PRIu64 " dropped because eight were waiting", driver.lists_dropped);
+  std::printf("; %" PRIu64 " alarm firings, %" PRIu64 " reported to the program\n", driver.alarms_fired,
+              driver.alarm_words_sent);
+  for (std::uint32_t number = 0; number < nds::SoundDriver::kCommands; ++number) {
+    if (driver.commands[number] != 0)
+      std::printf("  command 0x%02" PRIX32 ", %s: %" PRIu64 "\n", number, nds::SoundDriver::command_name(number),
+                  driver.commands[number]);
+  }
+  for (const auto& [what, count] : console.sound_driver().not_carried_out())
+    std::printf("  not carried out, %" PRIu64 " times: %s\n", count, what.c_str());
+  const nds::SoundHardware::Statistics& sound = console.sound_hardware().statistics();
+  std::printf("  hardware: %" PRIu64 " output samples, %" PRIu64 " of them not silent; %" PRIu64
+              " channel starts, %" PRIu64 " channels played to their end; %" PRIu64 " bytes captured\n",
+              sound.samples, sound.samples_with_sound, sound.channels_started, sound.channels_ended,
+              sound.bytes_captured);
+  for (const auto& [what, count] : console.sound_hardware().notes())
+    std::printf("  not modelled, %" PRIu64 " times: %s\n", count, what.c_str());
+
   const nds::SaveMemory::Statistics& save = console.save_memory().statistics();
   std::printf("\nSave memory (blank at the start): %" PRIu64 " bytes read, %" PRIu64 " bytes written, %" PRIu64
               " sectors erased; %s\n",

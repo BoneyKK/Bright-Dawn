@@ -116,6 +116,8 @@ add_library(bd_nds STATIC
   src/nds/program.cpp
   src/nds/save_memory.cpp
   src/nds/second_processor.cpp
+  src/nds/sound_driver.cpp
+  src/nds/sound_hardware.cpp
   src/nds/system_control.cpp
   src/nds/timeline.cpp
   src/nds/timers.cpp

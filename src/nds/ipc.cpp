@@ -97,6 +97,12 @@ void Ipc::peer_send(u32 word) {
   if (receive_.size() == 1 && receive_interrupt_) interrupts_.request(Interrupts::kIpcReceive);
 }
 
+bool Ipc::peer_try_send(u32 word) {
+  if (receive_.size() == kQueueSize || !backlog_.empty()) return false;
+  peer_send(word);
+  return true;
+}
+
 u32 Ipc::read_receive() {
   if (receive_.empty()) {
     error_ = true;
