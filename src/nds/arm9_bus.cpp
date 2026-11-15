@@ -11,10 +11,6 @@ using u32 = std::uint32_t;
 constexpr u32 kSharedRamSize = 32 * 1024;
 constexpr u32 kPaletteSize = 2 * 1024;
 constexpr u32 kSpriteSize = 2 * 1024;
-// Video memory is really several banks that the program maps where it wants
-// them. Until that is modelled the whole address range is backed by plain
-// memory, so that what the program writes can at least be read back.
-constexpr u32 kVideoSize = 16 * 1024 * 1024;
 constexpr u32 kBiosAddress = 0xFFFF0000;
 constexpr u32 kBiosSize = 4 * 1024;
 
@@ -27,7 +23,6 @@ Arm9Bus::Arm9Bus(Io& io)
       dtcm_(kDtcmSize),
       shared_ram_(kSharedRamSize),
       palette_(kPaletteSize),
-      video_(kVideoSize),
       sprites_(kSpriteSize),
       bios_(kBiosSize) {}
 
@@ -70,7 +65,6 @@ std::uint8_t* Arm9Bus::locate(u32 address, bool write) {
     case 0x02: return main_ram_.data() + (address & (kMainRamSize - 1));
     case 0x03: return shared_ram_.data() + (address & (kSharedRamSize - 1));
     case 0x05: return palette_.data() + (address & (kPaletteSize - 1));
-    case 0x06: return video_.data() + (address & (kVideoSize - 1));
     case 0x07: return sprites_.data() + (address & (kSpriteSize - 1));
     case 0xFF:
       if (!write && address - kBiosAddress < kBiosSize) return bios_.data() + (address - kBiosAddress);
@@ -83,8 +77,13 @@ bool Arm9Bus::is_io(u32 address, bool write) const {
   return (address >> 24) == 0x04 && !itcm_map_.claims(address, write) && !dtcm_map_.claims(address, write);
 }
 
+bool Arm9Bus::is_video(u32 address, bool write) const {
+  return (address >> 24) == 0x06 && !itcm_map_.claims(address, write) && !dtcm_map_.claims(address, write);
+}
+
 u32 Arm9Bus::read(u32 address, unsigned size) {
   if (is_io(address, false)) return io_.read(address, size);
+  if (is_video(address, false)) return video_.read(address, size);
   const std::uint8_t* p = locate(address, false);
   if (p == nullptr) {
     ++statistics_.unmapped_reads[address >> 16];
@@ -98,6 +97,10 @@ u32 Arm9Bus::read(u32 address, unsigned size) {
 void Arm9Bus::write(u32 address, unsigned size, u32 value) {
   if (is_io(address, true)) {
     io_.write(address, size, value);
+    return;
+  }
+  if (is_video(address, true)) {
+    video_.write(address, size, value);
     return;
   }
   std::uint8_t* p = locate(address, true);

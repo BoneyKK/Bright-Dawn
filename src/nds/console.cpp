@@ -36,6 +36,7 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   cartridge_.attach(io_);
   math_unit_.attach(io_);
   keypad_.attach(io_);
+  bus_.video_memory().attach(io_);
   keypad_.on_change = [this] { second_processor_.report_buttons(keypad_.second_processor_register(touched_)); };
   // A DMA channel can be set to take each word the cartridge delivers.
   cartridge_.on_word_ready = [this] { return dma_.trigger(Dma::kStartCartridge); };

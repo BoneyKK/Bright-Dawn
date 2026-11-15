@@ -46,7 +46,7 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | Overlays that share an address | Done: a translation is used only while the bytes it was made from are in memory |
 | Processor modes, each with its own registers | Done, tested in translated and interpreted code |
 | Translating the real game | Done: main program and all 366 overlays, 17,076 functions, compile and link. **No translated game code has been executed** |
-| Memory map, system coprocessor, the state a game starts in | Done, tested. Video memory is not banked yet |
+| Memory map, system coprocessor, the state a game starts in | Done, tested, with video memory in its nine banks |
 | Running the game's start-up code (`bdtool boot`) | Works in the interpreter, on the real ROM: the program sets up the machine, takes interrupts, reads file tables and overlays from the cartridge, passes its check of the console, sets up its save memory and reaches its frame loop |
 | Interrupts, in interpreted code | Done, tested: the display's and timers' interrupts are taken, and the processor sleeps until one comes |
 | Console time, display timing, hardware timers, hardware divider and square root | Done, tested. Time per instruction is a coarse figure |

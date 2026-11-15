@@ -1,9 +1,10 @@
 // The memory the DS main processor sees.
 //
-// This is the first, deliberately plain version: the regions are in the right
-// places and mirror the way the hardware does, but the hardware registers are
-// only stored, not acted on, and video memory is not banked. Everything that
-// is not modelled is counted, so a run shows what the game needs next.
+// The regions are in the right places and repeat the way the hardware's do.
+// Hardware registers are someone else's business (Io). Video memory is nine
+// banks the program places itself (video_memory.h). Accesses to addresses
+// with nothing behind them are counted, so a run shows what the game needs
+// next.
 #pragma once
 
 #include <cstddef>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "machine.h"
+#include "nds/video_memory.h"
 
 namespace bd::nds {
 
@@ -44,7 +46,11 @@ class Arm9Bus : public runtime::Bus {
   void write8(std::uint32_t address, std::uint8_t value) override;
   void write16(std::uint32_t address, std::uint16_t value) override;
   void write32(std::uint32_t address, std::uint32_t value) override;
+  // Video memory does not count as memory code can be in: no program is
+  // known to run code from there, and it has no single place to point at.
   bool has_code_memory(std::uint32_t address) override { return locate(address, false) != nullptr; }
+
+  VideoMemory& video_memory() { return video_; }
 
   // The two small fast memories are placed and switched on by the program
   // through the system coprocessor. Until then nothing is mapped there.
@@ -90,11 +96,13 @@ class Arm9Bus : public runtime::Bus {
   // Where `address` lives for a read or a write, or nullptr.
   std::uint8_t* locate(std::uint32_t address, bool write);
   bool is_io(std::uint32_t address, bool write) const;
+  bool is_video(std::uint32_t address, bool write) const;
   std::uint32_t read(std::uint32_t address, unsigned size);
   void write(std::uint32_t address, unsigned size, std::uint32_t value);
 
   Io& io_;
-  std::vector<std::uint8_t> main_ram_, itcm_, dtcm_, shared_ram_, palette_, video_, sprites_, bios_;
+  std::vector<std::uint8_t> main_ram_, itcm_, dtcm_, shared_ram_, palette_, sprites_, bios_;
+  VideoMemory video_;
   FastMemory itcm_map_, dtcm_map_;
   BusStatistics statistics_;
 };

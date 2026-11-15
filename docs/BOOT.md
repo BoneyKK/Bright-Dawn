@@ -22,7 +22,8 @@ In `src/nds`:
 
 | Part | State |
 | --- | --- |
-| Memory map of the main processor (`arm9_bus`) | Main memory, both fast memories, shared memory, palette, video and sprite memory, in their places and repeating as on the hardware. Video memory is plain memory, not banked. Accesses to addresses with nothing behind them are counted |
+| Memory map of the main processor (`arm9_bus`) | Main memory, both fast memories, shared memory, palette, video and sprite memory, in their places and repeating as on the hardware. Accesses to addresses with nothing behind them are counted |
+| Video memory (`video_memory`) | The nine banks, each placed by its control register: as backgrounds or sprites of either screen, or as plain memory, with the places where small banks repeat and what happens where banks overlap. Uses that give a bank no address (textures, palettes, the second processor's) take it out of reach and keep its contents. After GBATEK's table, checked against NooDS. Nothing reads the banks for display yet |
 | System coprocessor (`system_control`) | Places and enables the fast memories, including the mode in which one takes writes but not reads. Identification registers. Protection and cache registers are stored and have no effect. A request to wait for an interrupt is noted, not acted on |
 | Hardware registers (`arm9_io`) | Parts of the hardware implement their registers here. A register nobody implements keeps the last value written, and every access to one is counted by address |
 | Interrupt controller (`interrupts`) | The master switch, enable and request registers. When an enabled source has requested an interrupt, the master switch is on and the processor's mask is clear, the processor takes it before its next instruction. **Only interpreted code is interrupted so far** |
@@ -414,18 +415,24 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   registers that have no model. The program's own course is unchanged by
   them, to the instruction.
 
-What it runs on is still thin. 166 hardware registers it uses have no
+What it runs on is still thin. 157 hardware registers it uses have no
 model, the 3D engine and both 2D engines among them; no sequence is
 played, so there is no music.
+
+- With video memory in banks, every one of the program's accesses to it
+  lands in a bank the program has placed there; none misses. At the end of
+  the ten seconds banks A, B and C are with the 3D engine as textures and G
+  as texture palettes, E and F are the main screen's backgrounds and
+  sprites, H and I the second screen's, and D is plain memory. The controls
+  of A, B, C and G are set dozens of times on the way.
 
 Most used among the registers without a model are those of the 3D engine:
 22 million writes to its command port in the ten seconds, its status
 register read 93,000 times, and once a frame the command that ends a 3D
 frame. The program also turns on the display capture every frame.
 
-Next: video memory and its banks, then the 3D engine's command queue and
-status, which the program's flow depends on, then the first drawing; for
-sound, the sequence player. Interrupts in translated code before
+Next: the 3D engine's command queue and status, which the program's flow
+depends on, then the first drawing; for sound, the sequence player. Interrupts in translated code before
 translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million

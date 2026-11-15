@@ -22,6 +22,7 @@ add_executable(bd_tests
   test_system_control.cpp
   test_timing.cpp
   test_user_settings.cpp
+  test_video_memory.cpp
   test_formats.cpp
   test_keypad.cpp
   test_math_unit.cpp
