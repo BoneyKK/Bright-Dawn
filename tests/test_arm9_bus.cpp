@@ -147,8 +147,25 @@ TEST(arm9_bus_small_regions_repeat) {
   CHECK(bus.read32(0x07000804) == 0x01020304);  // Sprite table: 2 KiB.
   bus.write32(0x03000000, 0x99);
   CHECK(bus.read32(0x03008000) == 0x99);    // Shared memory: 32 KiB.
+}
+
+TEST(arm9_bus_video_memory_is_where_its_banks_are_placed) {
+  RecordingIo io;
+  bd::nds::Arm9Bus bus(io);
+  // No bank is anywhere until the program places one.
   bus.write32(0x06800000, 0x55);
+  CHECK(bus.read32(0x06800000) == 0);
+  CHECK(bus.video_memory().statistics().writes_with_no_bank == 1);
+  CHECK(bus.video_memory().statistics().reads_with_no_bank == 1);
+  CHECK(bus.statistics().unmapped_reads.empty() && bus.statistics().unmapped_writes.empty());
+  bus.video_memory().set_control(bd::nds::VideoMemory::kA, 0x80);  // Bank A as plain memory.
+  bus.write32(0x06800000, 0x55);
+  bus.write16(0x0681FFFE, 0x1234);
+  bus.write8(0x06800005, 0xAB);
   CHECK(bus.read32(0x06800000) == 0x55);
+  CHECK(bus.read16(0x0681FFFE) == 0x1234);
+  CHECK(bus.read32(0x06800004) == 0x0000AB00);
+  CHECK(!bus.has_code_memory(0x06800000));
 }
 
 TEST(arm9_bus_counts_unmapped_accesses) {

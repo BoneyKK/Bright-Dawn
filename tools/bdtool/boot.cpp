@@ -160,6 +160,13 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   for (const auto& [what, count] : console.sound_hardware().notes())
     std::printf("  not modelled, %" PRIu64 " times: %s\n", count, what.c_str());
 
+  nds::VideoMemory& video = console.bus().video_memory();
+  std::printf("\nVideo memory: bank controls A to I, as last set:");
+  for (unsigned bank = 0; bank < nds::VideoMemory::kBanks; ++bank)
+    std::printf(" 0x%02X", video.control(static_cast<nds::VideoMemory::Bank>(bank)));
+  std::printf("\n  accesses where no bank was: %" PRIu64 " reads, %" PRIu64 " writes\n",
+              video.statistics().reads_with_no_bank, video.statistics().writes_with_no_bank);
+
   const nds::SaveMemory::Statistics& save = console.save_memory().statistics();
   std::printf("\nSave memory (blank at the start): %" PRIu64 " bytes read, %" PRIu64 " bytes written, %" PRIu64
               " sectors erased; %s\n",
