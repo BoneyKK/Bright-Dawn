@@ -32,7 +32,7 @@ In `src/nds`:
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Buttons and lid (`keypad`) | The main program's button register, and the X and Y buttons and the lid sensor as the second processor passes them on. Nothing presses a button yet. The register that raises an interrupt on a button combination is not modelled |
 | Channel to the second processor (`ipc`) | The synchronisation value and the two queues of words, with their status bits, error flag and interrupt requests |
-| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, three are there: requests to the cartridge (service 11), including those on the save memory, one-off samples of the touch screen (service 6), and sound (service 7, next row). Every word for another service is recorded and not answered. See below |
+| Second processor (`second_processor`) | Not a processor: a stand-in that answers the main program directly. It leaves the console's settings in memory (below), performs the start-up handshake, marks its services as ready, and receives words the way the game's second-processor program does. Of the services, four are there: requests to the cartridge (service 11), including those on the save memory, one-off samples of the touch screen (service 6), sound (service 7, next row), and the check of the second cartridge slot (service 13), which is empty. Every word for another service is recorded and not answered. See below |
 | Sound program (`sound_driver`) | A stand-in for the part of the second processor's program that looks after sound: it takes the main program's lists of commands, carries out the ones that drive the hardware directly, runs the alarms, and keeps the block of memory the two programs share up to date. **It does not play sequences**, which is how the game plays its music: those commands are counted and not carried out. See below |
 | Sound hardware (`sound_hardware`) | The sixteen channels (sampled sound in three formats, square waves, noise), the mixer, the two capture units and the output stage, in steps of one output sample. Registers after GBATEK, mixing arithmetic after NooDS. Its output is counted, not played: there is no audio device yet. Limits are listed in its header |
 | Save memory (`save_memory`) | The cartridge's 256 KiB serial flash chip, by what its commands do: read, write, program, erase a sector. Blank at the start; nothing keeps it in a file between runs yet. Every operation completes at once |
@@ -134,6 +134,16 @@ not run but is the reference for what the main program expects:
   alarm's number and an identifier, once or at regular intervals. If the
   queue to the main program is full, the word is kept back and sent with
   the next firing, as the program does it.
+
+- Service 13, the console's second cartridge slot, the one for Game Boy
+  Advance cartridges. The second-processor program waits for one word from
+  the main program, then compares what the slot reads back with the logo
+  every such cartridge carries, notes the outcome in a flag at
+  `0x027FFC35` and sends the word's number back. Nothing is in that slot
+  here, so the outcome is "no such cartridge". (An empty slot is taken to
+  read as all ones, as in NooDS; the comparison masks bits off its last two
+  values, so it cannot succeed on all ones.) This game's main program
+  ignores the answer word.
 
 - The buttons wired to the second processor. Its program reads its own
   button register from a timer, every four milliseconds, and leaves X, Y and
@@ -394,14 +404,18 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   one routine and sleeps only when its own priority is 14; whether a
   console spends its idle time the same way has not been checked.
 
+- Its one word to service 13 asks whether a cartridge is in the console's
+  second slot. It is told there is none, and no word the program has sent
+  is left unanswered.
+
 What it runs on is still thin. 166 hardware registers it uses have no
 model, the 3D engine and both 2D engines among them; no sequence is
-played, so there is no music; one word to service 13 is unanswered; DMA
-transfers timed by the horizontal blank never start.
+played, so there is no music; DMA transfers timed by the horizontal blank
+never start.
 
 Next: the display's other timed events, then video memory and the first
-drawing; for sound, the sequence player, and one request to service 13.
-Interrupts in translated code before translated game code is run.
+drawing; for sound, the sequence player. Interrupts in translated code
+before translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million
 instructions per second in a release build on the development machine.

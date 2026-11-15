@@ -480,3 +480,41 @@ TEST(second_processor_answers_unknown_touch_requests_as_the_program_does) {
   f.send(SecondProcessor::word(6, true, 0x03000000));
   CHECK(f.ipc.waiting_words() == 0);
 }
+
+TEST(second_processor_finds_the_second_slot_empty) {
+  Fixture f;
+  f.bus.write8(SecondProcessor::kSecondSlotFlags, 0xFF);
+  f.bus.write8(SecondProcessor::kSecondSlotFlags - 1, 0xEE);
+  f.bus.write8(SecondProcessor::kSecondSlotFlags + 1, 0xEE);
+  // The word the game's main program sends: "look at the second slot".
+  f.send(0x0000004D);
+  // No cartridge of that kind: bit 0 of the flags is cleared, the rest left.
+  CHECK(f.bus.read8(SecondProcessor::kSecondSlotFlags) == 0xFE);
+  CHECK(f.bus.read8(SecondProcessor::kSecondSlotFlags - 1) == 0xEE);
+  CHECK(f.bus.read8(SecondProcessor::kSecondSlotFlags + 1) == 0xEE);
+  CHECK(f.written.size() == 1 && f.written[0].first == SecondProcessor::kSecondSlotFlags && f.written[0].second == 1);
+  // The request's number comes back.
+  CHECK(f.receive() == 0x0000004D);
+  CHECK(f.ipc.waiting_words() == 0);
+  CHECK(f.second.unanswered_by_service().empty() && f.second.not_carried_out().empty());
+
+  // From then on the service takes only the notice that a cartridge was
+  // pulled out, on which the program shuts down. Neither that nor any other
+  // word is acted on or answered.
+  f.send(SecondProcessor::word(13, false, 2));
+  f.send(SecondProcessor::word(13, true, 1));
+  CHECK(f.ipc.waiting_words() == 0);
+  CHECK(f.second.not_carried_out().size() == 2);
+  CHECK(f.bus.read8(SecondProcessor::kSecondSlotFlags) == 0xFE);
+}
+
+TEST(second_processor_takes_only_the_check_as_the_second_slot_s_first_word) {
+  Fixture f;
+  f.send(SecondProcessor::word(13, false, 2));
+  CHECK(f.ipc.waiting_words() == 0 && f.written.empty());
+  CHECK(f.second.not_carried_out().size() == 1);
+  // The check itself still works afterwards here (the program would have
+  // stopped), and bits above the low six do not change what the request is.
+  f.send(SecondProcessor::word(13, false, 0x02000041));
+  CHECK(f.receive() == 0x0000004D);
+}
