@@ -109,6 +109,7 @@ add_library(bd_nds STATIC
   src/nds/cartridge.cpp
   src/nds/console.cpp
   src/nds/dma.cpp
+  src/nds/geometry_engine.cpp
   src/nds/interrupts.cpp
   src/nds/ipc.cpp
   src/nds/keypad.cpp

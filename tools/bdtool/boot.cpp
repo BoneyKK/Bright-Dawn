@@ -160,6 +160,21 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   for (const auto& [what, count] : console.sound_hardware().notes())
     std::printf("  not modelled, %" PRIu64 " times: %s\n", count, what.c_str());
 
+  // The 3D engine's command queue.
+  const nds::GeometryEngine::Statistics& geometry = console.geometry().statistics();
+  std::printf("\n3D engine: %" PRIu64 " swaps; at most %" PRIu64 " entries queued; the processor waited for room %" PRIu64
+              " times\n",
+              geometry.swaps, geometry.most_queued, geometry.waits_for_room);
+  std::printf("  status now 0x%08" PRIX32 "; commands carried out, by number:\n", console.geometry().status());
+  for (unsigned number = 0; number < 256; ++number) {
+    if (geometry.commands[number] != 0)
+      std::printf("    0x%02X %-36s %" PRIu64 "\n", number, nds::GeometryEngine::command_name(number),
+                  geometry.commands[number]);
+  }
+  if (geometry.unknown_commands != 0)
+    std::printf("  of those, numbers that are no command: %" PRIu64 "\n", geometry.unknown_commands);
+  std::printf("  vertices are not made into polygons yet: nothing is drawn or counted\n");
+
   nds::VideoMemory& video = console.bus().video_memory();
   std::printf("\nVideo memory: bank controls A to I, as last set:");
   for (unsigned bank = 0; bank < nds::VideoMemory::kBanks; ++bank)
@@ -181,6 +196,9 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
       std::printf("  %" PRIu64 " started in mode %d, fed by the cartridge\n", dma.waiting_for_event[mode], mode);
     } else if (mode == static_cast<int>(nds::Dma::kStartVBlank)) {
       std::printf("  %" PRIu64 " started in mode %d, at the vertical blank\n", dma.waiting_for_event[mode], mode);
+    } else if (mode == static_cast<int>(nds::Dma::kStartGeometry)) {
+      std::printf("  %" PRIu64 " started in mode %d, feeding the 3D engine's queue\n", dma.waiting_for_event[mode],
+                  mode);
     } else if (mode == static_cast<int>(nds::Dma::kStartHBlank)) {
       std::printf("  %" PRIu64 " started in mode %d, at the horizontal blank of each visible line\n",
                   dma.waiting_for_event[mode], mode);

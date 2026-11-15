@@ -36,6 +36,22 @@ class Interrupts {
     changed();
   }
 
+  // For a source that is a level rather than an event: while the level is
+  // up, the source's request stands and cannot be cleared by the program;
+  // when the level drops, so does the request.
+  void set_level(unsigned source, bool up) {
+    const std::uint32_t bit = 1u << source;
+    if (((held_ & bit) != 0) == up) return;
+    if (up) {
+      held_ |= bit;
+      requested_ |= bit;
+    } else {
+      held_ &= ~bit;
+      requested_ &= ~bit;
+    }
+    changed();
+  }
+
   // Called whenever pending() may have changed.
   std::function<void()> on_change;
 
@@ -55,6 +71,7 @@ class Interrupts {
   }
   bool master_ = false;
   std::uint32_t enabled_ = 0, requested_ = 0;
+  std::uint32_t held_ = 0;  // Sources whose level is up.
 };
 
 }  // namespace bd::nds

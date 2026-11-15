@@ -27,7 +27,8 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       watched_bus_(bus_, machine_),
       bios_(watched_bus_),
       dma_(watched_bus_, interrupts_),
-      cartridge_(interrupts_) {
+      cartridge_(interrupts_),
+      geometry_(interrupts_) {
   interrupts_.attach(io_);
   ipc_.attach(io_);
   dma_.attach(io_);
@@ -37,12 +38,18 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   math_unit_.attach(io_);
   keypad_.attach(io_);
   bus_.video_memory().attach(io_);
+  geometry_.attach(io_);
+  geometry_.on_full = [this] { wait_for_geometry_room(); };
+  // A DMA channel can be set to feed the 3D engine's queue whenever it is
+  // less than half full.
+  geometry_.on_less_than_half_full = [this] { dma_.trigger(Dma::kStartGeometry); };
   keypad_.on_change = [this] { second_processor_.report_buttons(keypad_.second_processor_register(touched_)); };
   // A DMA channel can be set to take each word the cartridge delivers.
   cartridge_.on_word_ready = [this] { return dma_.trigger(Dma::kStartCartridge); };
   dma_.on_waiting = [this](unsigned mode) {
     if (mode == Dma::kStartCartridge) cartridge_.pump();
     if (mode == Dma::kStartHBlank) video_timing_.watch_horizontal_blank(true);
+    if (mode == Dma::kStartGeometry && geometry_.less_than_half_full()) dma_.trigger(Dma::kStartGeometry);
   };
   video_timing_.on_horizontal_blank = [this] {
     // Once no channel waits for it any more, the horizontal blank need not
@@ -54,6 +61,7 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   timeline_.on_rescheduled = [this] { set_alarm(); };
   video_timing_.on_vertical_blank = [this] {
     dma_.trigger(Dma::kStartVBlank);
+    geometry_.vertical_blank();
     if (frame_limit_ != 0 && video_timing_.frames() >= frame_limit_ && !frame_limit_reached_) {
       frame_limit_reached_ = true;
       machine_.stop();
@@ -201,6 +209,22 @@ void Console::wait_for_interrupt() {
     }
     if (next - began > kLongestSleep) {
       stop(0, "the processor waited ten seconds of console time for an interrupt that did not come");
+      machine_.stop();
+      return;
+    }
+    timeline_.advance_to(next);
+  }
+  set_alarm();
+}
+
+void Console::wait_for_geometry_room() {
+  catch_up();
+  const Timeline::Time began = timeline_.now();
+  // Room comes when the engine goes on after a swap, at the vertical blank.
+  while (!geometry_.room() && !machine_.stopped()) {
+    const Timeline::Time next = timeline_.next_event();
+    if (next == Timeline::kNever || next - began > kLongestSleep) {
+      stop(0, "the processor is waiting for room in the 3D engine's command queue, which does not come");
       machine_.stop();
       return;
     }

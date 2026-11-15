@@ -188,6 +188,58 @@ TEST(console_runs_dma_at_the_blanks_of_the_display) {
   CHECK(console.dma().statistics().transfers == 193 + 1 + 2);
 }
 
+TEST(console_makes_the_processor_wait_while_the_3d_queue_is_full) {
+  //   02000000  b    .
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  // After "swap buffers" the engine stands still until the vertical blank,
+  // and what is sent meanwhile queues up: 256 entries and the four the
+  // hardware has taken ahead.
+  console.io().write(0x04000540, 4, 0);
+  for (int i = 0; i < 260; ++i) console.io().write(0x04000440, 4, 1);
+  CHECK(console.timeline().now() == 0);
+  CHECK(!console.geometry().room());
+  // The next write does not come back until there is room: at the vertical
+  // blank, which begins with line 192.
+  console.io().write(0x04000440, 4, 2);
+  CHECK(console.timeline().now() == 192 * 2130);
+  CHECK(console.geometry().statistics().waits_for_room == 1);
+  CHECK(console.geometry().statistics().swaps == 1);
+  CHECK(console.geometry().matrix_mode() == 2);
+  CHECK(console.geometry().queued() == 0);
+}
+
+TEST(console_feeds_the_3d_queue_by_dma) {
+  //   02000000  b    .
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  constexpr std::uint32_t kList = 0x02100000;
+  constexpr std::uint32_t kToQueue = 0x80000000 | (7u << 27) | (1u << 26) | (2u << 21);  // Words, to one place.
+  // "Choose the matrix": 2.
+  console.bus().write32(kList, 0x00000010);
+  console.bus().write32(kList + 4, 2);
+  console.io().write(0x040000B0, 4, kList);
+  console.io().write(0x040000B4, 4, 0x04000400);
+  console.io().write(0x040000B8, 4, kToQueue | 2);
+  // The queue is less than half full, so the transfer runs at once.
+  CHECK(console.geometry().matrix_mode() == 2);
+  CHECK(console.dma().statistics().transfers == 1);
+  CHECK((console.io().read(0x040000B8, 4) & 0x80000000) == 0);
+
+  // With the queue half full or more, a transfer waits for it to drain.
+  console.io().write(0x04000540, 4, 0);
+  for (int i = 0; i < 132; ++i) console.io().write(0x04000440, 4, 1);
+  CHECK(!console.geometry().less_than_half_full());
+  console.bus().write32(kList + 4, 3);
+  console.io().write(0x040000B8, 4, kToQueue | 2);
+  CHECK(console.dma().statistics().transfers == 1);
+  CHECK(console.run(192 * 2130 + 10).reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(console.dma().statistics().transfers == 2);
+  CHECK(console.geometry().matrix_mode() == 3);
+}
+
 TEST(console_has_buttons_that_are_not_held) {
   // A program that reads the button register and stops:
   //   02000000  mov  r0, #0x04000000

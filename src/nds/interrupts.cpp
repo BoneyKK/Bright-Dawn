@@ -15,7 +15,7 @@ void Interrupts::attach(Arm9Io& io) {
          });
   io.add(0x04000214, 4, [this] { return requested_; },
          [this](std::uint32_t value, std::uint32_t mask) {
-           requested_ &= ~(value & mask);
+           requested_ = (requested_ & ~(value & mask)) | held_;
            changed();
          });
 }
