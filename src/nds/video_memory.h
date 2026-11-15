@@ -29,8 +29,15 @@
 // Banks C and D can also be handed to the second processor. They are then
 // out of the main processor's reach; nothing here uses them from that side.
 //
-// What the display hardware reads from the banks (textures, palettes, extra
-// palettes) is not here yet: there is no renderer.
+// The 3D engine reads textures and texture palettes from the banks handed to
+// it: textures from four slots of 128 KiB, which banks A to D can fill, and
+// palettes from six slots of 16 KiB, of which bank E fills the first four
+// and banks F and G one each. That is a memory of its own, not reachable by
+// the main processor. Banks at the same slot read ORed together, as
+// elsewhere here; that case is an assumption (NooDS takes the last bank).
+//
+// The extra palettes the 2D display hardware reads from the banks are not
+// here yet.
 #pragma once
 
 #include <array>
@@ -77,6 +84,15 @@ class VideoMemory {
 
   std::uint8_t control(Bank bank) const { return control_[bank]; }
   void set_control(Bank bank, std::uint8_t value);
+  // What the 3D engine reads: a byte of texture memory (addresses 0 to
+  // 0x7FFFF) or of texture palette memory (0 to 0x17FFF), or -1 where no
+  // bank is.
+  static constexpr std::uint32_t kTextureSize = 0x80000, kTexturePaletteSize = 0x18000;
+  int texture(std::uint32_t address) const { return seen(textures_[(address & (kTextureSize - 1)) / kPageSize], address); }
+  int texture_palette(std::uint32_t address) const {
+    return address < kTexturePaletteSize ? seen(texture_palettes_[address / kPageSize], address) : -1;
+  }
+
   // A bank's own contents, wherever it is placed.
   const std::vector<std::uint8_t>& contents(Bank bank) const { return banks_[bank]; }
 
@@ -91,7 +107,13 @@ class VideoMemory {
     void add(std::uint8_t* at) { memory[count++] = at; }
   };
   static constexpr unsigned kMainBackgroundPages = 32, kSubBackgroundPages = 8, kMainSpritePages = 16,
-                            kSubSpritePages = 8, kPlainPages = 64;
+                            kSubSpritePages = 8, kPlainPages = 64, kTexturePages = 32, kTexturePalettePages = 6;
+  static int seen(const Page& page, std::uint32_t address) {
+    if (page.count == 0) return -1;
+    int value = 0;
+    for (unsigned m = 0; m < page.count; ++m) value |= page.memory[m][address & (kPageSize - 1)];
+    return value;
+  }
 
   void place_banks();
   Page& page_at(std::uint32_t address);
@@ -103,6 +125,8 @@ class VideoMemory {
   std::array<Page, kMainSpritePages> main_sprites_{};
   std::array<Page, kSubSpritePages> sub_sprites_{};
   std::array<Page, kPlainPages> plain_{};
+  std::array<Page, kTexturePages> textures_{};
+  std::array<Page, kTexturePalettePages> texture_palettes_{};
   Statistics statistics_;
 };
 

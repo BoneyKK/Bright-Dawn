@@ -230,3 +230,74 @@ TEST(video_memory_uses_that_give_a_bank_no_address) {
     }
   }
 }
+
+TEST(video_memory_textures_for_the_3d_engine) {
+  VideoMemory vm;
+  // Nothing is there until a bank is handed over.
+  CHECK(vm.texture(0) == -1 && vm.texture(0x7FFFF) == -1);
+  // Banks are filled as plain memory and then handed over. Each of A to D
+  // can be any of the four slots of 128 KiB.
+  vm.set_control(VideoMemory::kA, kOn);
+  vm.set_control(VideoMemory::kC, kOn);
+  vm.write(0x06800000, 1, 0x11);  // A's first byte and its last.
+  vm.write(0x0681FFFF, 1, 0x12);
+  vm.write(0x06840000, 1, 0x31);  // C's.
+  vm.write(0x0685FFFF, 1, 0x32);
+  CHECK(vm.texture(0) == -1);
+  vm.set_control(VideoMemory::kA, kOn | 3 | offset(2));
+  vm.set_control(VideoMemory::kC, kOn | 3 | offset(0));
+  CHECK(vm.texture(0x00000) == 0x31 && vm.texture(0x1FFFF) == 0x32);
+  CHECK(vm.texture(0x40000) == 0x11 && vm.texture(0x5FFFF) == 0x12);
+  CHECK(vm.texture(0x20000) == -1 && vm.texture(0x60000) == -1);
+  // The main processor cannot reach them there.
+  CHECK(empty(vm, 0x06800000) && empty(vm, 0x06840000));
+  // Two banks at one slot read ORed together.
+  vm.set_control(VideoMemory::kA, kOn | 3 | offset(0));
+  CHECK(vm.texture(0x00000) == 0x31 && vm.texture(0x1FFFF) == 0x32);
+  CHECK(vm.texture(0x40000) == -1);
+  vm.set_control(VideoMemory::kC, kOn);
+  vm.write(0x06840000, 1, 0x0E);
+  vm.set_control(VideoMemory::kC, kOn | 3);
+  CHECK(vm.texture(0x00000) == 0x1F);
+  // Switched off, a bank is nowhere.
+  vm.set_control(VideoMemory::kA, 3);
+  vm.set_control(VideoMemory::kC, 3);
+  CHECK(vm.texture(0) == -1);
+  // B and D as well.
+  vm.set_control(VideoMemory::kB, kOn);
+  vm.set_control(VideoMemory::kD, kOn);
+  vm.write(0x06820004, 1, 0x21);
+  vm.write(0x06860008, 1, 0x41);
+  vm.set_control(VideoMemory::kB, kOn | 3 | offset(3));
+  vm.set_control(VideoMemory::kD, kOn | 3 | offset(1));
+  CHECK(vm.texture(0x60004) == 0x21 && vm.texture(0x20008) == 0x41);
+  // The texture memory is 512 KiB and repeats.
+  CHECK(vm.texture(0x80000 + 0x60004) == 0x21);
+}
+
+TEST(video_memory_texture_palettes_for_the_3d_engine) {
+  VideoMemory vm;
+  CHECK(vm.texture_palette(0) == -1);
+  // Bank E fills the first four of the six slots of 16 KiB.
+  vm.set_control(VideoMemory::kE, kOn);
+  vm.write(0x06880000, 1, 0x51);
+  vm.write(0x0688FFFF, 1, 0x52);
+  vm.set_control(VideoMemory::kE, kOn | 3);
+  CHECK(vm.texture_palette(0x00000) == 0x51 && vm.texture_palette(0x0FFFF) == 0x52);
+  CHECK(vm.texture_palette(0x10000) == -1 && vm.texture_palette(0x14000) == -1);
+  // Banks F and G fill slot 0, 1, 4 or 5, by their offset.
+  vm.set_control(VideoMemory::kF, kOn);
+  vm.set_control(VideoMemory::kG, kOn);
+  vm.write(0x06890000, 1, 0x61);
+  vm.write(0x06894000, 1, 0x71);
+  vm.set_control(VideoMemory::kF, kOn | 3 | offset(2));
+  vm.set_control(VideoMemory::kG, kOn | 3 | offset(3));
+  CHECK(vm.texture_palette(0x10000) == 0x61 && vm.texture_palette(0x14000) == 0x71);
+  vm.set_control(VideoMemory::kE, 0);
+  vm.set_control(VideoMemory::kF, kOn | 3 | offset(0));
+  vm.set_control(VideoMemory::kG, kOn | 3 | offset(1));
+  CHECK(vm.texture_palette(0x00000) == 0x61 && vm.texture_palette(0x04000) == 0x71);
+  CHECK(vm.texture_palette(0x08000) == -1 && vm.texture_palette(0x10000) == -1);
+  // There is nothing above the six slots.
+  CHECK(vm.texture_palette(0x18000) == -1 && vm.texture_palette(0xFFFFFFFF) == -1);
+}
