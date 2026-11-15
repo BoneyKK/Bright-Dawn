@@ -41,11 +41,18 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   cartridge_.on_word_ready = [this] { return dma_.trigger(Dma::kStartCartridge); };
   dma_.on_waiting = [this](unsigned mode) {
     if (mode == Dma::kStartCartridge) cartridge_.pump();
+    if (mode == Dma::kStartHBlank) video_timing_.watch_horizontal_blank(true);
+  };
+  video_timing_.on_horizontal_blank = [this] {
+    // Once no channel waits for it any more, the horizontal blank need not
+    // be an event.
+    if (!dma_.trigger(Dma::kStartHBlank)) video_timing_.watch_horizontal_blank(false);
   };
   interrupts_.on_change = [this] { machine_.set_interrupt_line(interrupts_.pending()); };
   timeline_.on_refresh = [this] { catch_up(); };
   timeline_.on_rescheduled = [this] { set_alarm(); };
   video_timing_.on_vertical_blank = [this] {
+    dma_.trigger(Dma::kStartVBlank);
     if (frame_limit_ != 0 && video_timing_.frames() >= frame_limit_ && !frame_limit_reached_) {
       frame_limit_reached_ = true;
       machine_.stop();

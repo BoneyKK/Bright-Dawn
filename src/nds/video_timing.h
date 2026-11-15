@@ -36,6 +36,14 @@ class VideoTiming : public Timeline::Source {
   std::uint64_t frames() const { return frames_; }
   // Called at the start of each vertical blank.
   std::function<void()> on_vertical_blank;
+  // Called at the start of the horizontal blank of each visible line, while
+  // someone is watching for it.
+  std::function<void()> on_horizontal_blank;
+  // Whether the horizontal blank of visible lines is to be reported through
+  // on_horizontal_blank. Each one is then an event of its own, which costs
+  // time, so it is off unless something waits for it.
+  void watch_horizontal_blank(bool watch);
+  bool watching_horizontal_blank() const { return hblank_watched_; }
 
  private:
   std::uint32_t read_status();
@@ -48,6 +56,7 @@ class VideoTiming : public Timeline::Source {
   unsigned line_ = 0;
   Timeline::Time line_start_ = 0;  // When the current line began.
   bool hblank_done_ = false;       // The horizontal blank of this line has begun.
+  bool hblank_watched_ = false;
   std::uint32_t status_ = 0;       // The writable bits of the status register.
   std::uint64_t frames_ = 0;
 };

@@ -57,7 +57,7 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | Save memory (256 KiB serial flash) | Done, tested; the real program reads it. Not yet kept in a file between runs |
 | Console settings the game reads (language, owner, network address) | Done, tested. Fixed values for now; not yet a user setting |
 | BIOS calls | 12 of the 17 the game has wrappers for, tested: 9 natively, 3 that wait for interrupts as this project's own code on the processor |
-| DMA | Transfers that start at once and transfers fed by the cartridge: done, tested. Transfers started by other hardware events: not yet |
+| DMA | Transfers that start at once, transfers fed by the cartridge and transfers timed by the display's blanks: done, tested. Transfers started by other hardware events: not yet |
 | Cartridge slot (reading data) | Done, tested, and used by the real program to read its file tables and overlays |
 | Video and other hardware registers, interrupts in translated code | Not started; unimplemented registers are recorded |
 | Renderer, audio, input, mods, settings menu | Not started |

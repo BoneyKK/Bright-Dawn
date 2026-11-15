@@ -172,6 +172,11 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
     if (dma.waiting_for_event[mode] == 0) continue;
     if (mode == static_cast<int>(nds::Dma::kStartCartridge)) {
       std::printf("  %" PRIu64 " started in mode %d, fed by the cartridge\n", dma.waiting_for_event[mode], mode);
+    } else if (mode == static_cast<int>(nds::Dma::kStartVBlank)) {
+      std::printf("  %" PRIu64 " started in mode %d, at the vertical blank\n", dma.waiting_for_event[mode], mode);
+    } else if (mode == static_cast<int>(nds::Dma::kStartHBlank)) {
+      std::printf("  %" PRIu64 " started in mode %d, at the horizontal blank of each visible line\n",
+                  dma.waiting_for_event[mode], mode);
     } else {
       std::printf("  %" PRIu64 " started in mode %d, which waits for an event that never comes yet\n",
                   dma.waiting_for_event[mode], mode);
