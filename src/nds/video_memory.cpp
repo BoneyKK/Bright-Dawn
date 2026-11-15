@@ -36,6 +36,8 @@ void VideoMemory::place_banks() {
   main_sprites_.fill(Page{});
   sub_sprites_.fill(Page{});
   plain_.fill(Page{});
+  textures_.fill(Page{});
+  texture_palettes_.fill(Page{});
 
   for (unsigned bank = 0; bank < kBanks; ++bank) {
     if ((control_[bank] & kEnable) == 0) continue;
@@ -57,19 +59,23 @@ void VideoMemory::place_banks() {
       case kB:
         if (use == 1) place(main_backgrounds_, offset * 8);
         if (use == 2) place(main_sprites_, (offset & 1) * 8);
-        break;  // 3: textures.
+        if (use == 3) place(textures_, offset * 8);
+        break;
       case kC:
         if (use == 1) place(main_backgrounds_, offset * 8);
+        if (use == 3) place(textures_, offset * 8);
         if (use == 4) place(sub_backgrounds_, 0);
-        break;  // 2: the second processor's. 3: textures.
+        break;  // 2: the second processor's.
       case kD:
         if (use == 1) place(main_backgrounds_, offset * 8);
+        if (use == 3) place(textures_, offset * 8);
         if (use == 4) place(sub_sprites_, 0);
-        break;  // 2: the second processor's. 3: textures.
+        break;  // 2: the second processor's.
       case kE:
         if (use == 1) place(main_backgrounds_, 0);
         if (use == 2) place(main_sprites_, 0);
-        break;  // 3: texture palettes. 4: extra background palettes.
+        if (use == 3) place(texture_palettes_, 0);
+        break;  // 4: extra background palettes.
       case kF:
       case kG: {
         // One page, at 0, 1, 4 or 5 by the offset, and again two pages on.
@@ -82,7 +88,8 @@ void VideoMemory::place_banks() {
           main_sprites_[first].add(memory);
           main_sprites_[first + 2].add(memory);
         }
-        break;  // 3: texture palettes. 4, 5: extra palettes.
+        if (use == 3) texture_palettes_[first].add(memory);
+        break;  // 4, 5: extra palettes.
       }
       case kH:
         if (use == 1) {
