@@ -115,8 +115,10 @@ Developer options: `-DBD_SANITIZE=ON` (AddressSanitizer + UBSan on GCC/Clang),
 
 Every change that reaches `main` with all checks passing is published
 automatically as a pre-release on the repository's Releases page, for Windows
-and Linux (64-bit). The packages contain `bright-dawn` and `bdtool`; they
-include no ROM and no game data.
+and Linux (64-bit). A package holds what a player needs and nothing else:
+`bright-dawn`, this project's licence and the licences of the third-party code
+built into it (`licenses/`). No ROM, no game data, and none of the developer
+tools or documents; those are built from this repository.
 
 ## Using bright-dawn
 
@@ -163,8 +165,8 @@ build/bdtool survey path/to/your-rom.nds
 
 ### How you can help
 
-Run `bdtool validate`, `bdtool info`, `bdtool survey` and `bdtool boot` on your
-ROM and share the output, including its first line, which names the build. It
+Build the repository, run `bdtool validate`, `bdtool info`, `bdtool survey` and
+`bdtool boot` on your ROM and share the output, including its first line, which names the build. It
 contains file names, sizes, addresses and statistics only, no game content. [docs/ROM_SURVEY.md](docs/ROM_SURVEY.md) lists the questions that
 are still open.
 

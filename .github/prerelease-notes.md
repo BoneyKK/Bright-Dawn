@@ -1,16 +1,23 @@
 Automated pre-release, built from `main` after all checks passed.
 
-**This does not run the game.** The project is at an early stage; this package
-contains `bdtool`, a command-line tool that validates and inspects a ROM you
-supply yourself, and can run the game's start-up code as a diagnostic
-(`bdtool boot`). No ROM and no game data are included.
+**Early and not yet playable.** `bright-dawn` runs Golden Sun: Dark Dawn from
+a ROM you supply yourself, in a window, with every instruction of the game
+interpreted: about a third of the console's speed, without sound, and
+untried beyond the first screens. No ROM and no game data are included.
 
 - `bright-dawn-windows-x86_64.zip`: Windows, 64-bit
-- `bright-dawn-linux-x86_64.tar.gz`: Linux, 64-bit (statically linked)
+- `bright-dawn-linux-x86_64.tar.gz`: Linux, 64-bit (needs X11 or Wayland)
 - `SHA256SUMS.txt`: checksums of the packages
 
-Unpack, then run `bdtool --help`. See the README for what works today.
+Unpack, then start `bright-dawn` with the path of your ROM, for example by
+dragging the ROM onto it on Windows, or `./bright-dawn your-rom.nds` on
+Linux. `bright-dawn --help` lists the keys and options.
 
-`bdtool --version` prints this release's tag, and `validate`, `info`, `survey`
-and `boot` print it as their first line. Please include that line when sharing
-output.
+Keyboard: arrow keys, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter =
+Start, Right Shift = Select. The left mouse button on the touch screen is the
+stylus. Controllers work by button position, as on the DS. F11 or Alt+Enter:
+full screen. Tab: screens side by side or stacked. F12: sharp whole-number
+scaling or filling the window.
+
+Nothing is saved between runs yet. `bright-dawn --version` prints this
+release's tag; please include it when reporting a problem.
