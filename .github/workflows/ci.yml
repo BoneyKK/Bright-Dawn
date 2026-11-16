@@ -77,8 +77,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install the ARM cross-toolchain
-        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+      # SDL will not configure on Linux without X11 or Wayland headers.
+      - name: Install the ARM cross-toolchain and SDL's build dependencies
+        run: >
+          sudo apt-get update && sudo apt-get install -y clang lld llvm
+          libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev
+          libwayland-dev libxkbcommon-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev
+          libudev-dev libdbus-1-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdecor-0-dev
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBD_SANITIZE=ON -DBD_WERROR=ON
       - name: Build
@@ -91,8 +96,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install Clang and the ARM cross-toolchain
-        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+      - name: Install Clang, the ARM cross-toolchain and SDL's build dependencies
+        run: >
+          sudo apt-get update && sudo apt-get install -y clang lld llvm
+          libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev
+          libwayland-dev libxkbcommon-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev
+          libudev-dev libdbus-1-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdecor-0-dev
       - name: Configure
         run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBD_WERROR=ON
