@@ -667,3 +667,38 @@ t_excret:
         orrs    r4, r7
         adds    r0, r0, r4
         pop     {r4, r5, r6, r7, pc}
+
+@ ---------------------------------------------------------------------------
+@ lowentry: a function whose entry point is not its lowest address: its loop
+@ lies before the entry and is reached by a branch back, the way hand-written
+@ routines are sometimes laid out. Code is written out in address order, so
+@ such a function must start with a jump to its entry. Computes
+@ (a ^ 0x55) + 3 * b.
+@ ---------------------------------------------------------------------------
+        .arm
+lowentry_a_loop:
+        add     r0, r0, r1
+        subs    r2, r2, #1
+        bne     lowentry_a_loop
+        bx      lr
+        .global a_lowentry
+        .type a_lowentry, %function
+a_lowentry:
+        eor     r0, r0, #0x55
+        mov     r2, #3
+        b       lowentry_a_loop
+
+        .thumb
+lowentry_t_loop:
+        adds    r0, r0, r1
+        subs    r2, r2, #1
+        bne     lowentry_t_loop
+        bx      lr
+        .global t_lowentry
+        .thumb_func
+        .type t_lowentry, %function
+t_lowentry:
+        movs    r2, #0x55
+        eors    r0, r2
+        movs    r2, #3
+        b       lowentry_t_loop

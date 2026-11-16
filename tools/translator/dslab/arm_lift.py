@@ -421,6 +421,13 @@ def lift_function(fn, names: dict, image=None) -> str:
              f"void {names[(fn.addr, fn.thumb)]}(Cpu& c) {{"]
     prev = None
     addresses = sorted(fn.insns)
+    labels = set(fn.labels)
+    # The code is written out in address order, but a function can be
+    # entered above its lowest address (code before the entry point, reached
+    # by a branch back): then it starts with a jump to the entry.
+    if addresses and addresses[0] != fn.addr:
+        labels.add(fn.addr)
+        lines.append(f"    goto L_{fn.addr:08x};")
     # How many instructions run from each place that code is entered at (the
     # start and every label) up to the next one: added to c.executed there,
     # so that console time passes with the translated code. Instructions
@@ -428,7 +435,7 @@ def lift_function(fn, names: dict, image=None) -> str:
     counts = {}
     start = None
     for a in addresses:
-        if start is None or a in fn.labels:
+        if start is None or a in labels:
             start = a
             counts[start] = 0
         counts[start] += 1
@@ -437,7 +444,7 @@ def lift_function(fn, names: dict, image=None) -> str:
         if prev is not None and prev.end != a and not ends_flow(prev):
             lines.append(f"    ds::unhandled(c, {hexc(prev.end)}, \"code continues into data\"); return;")
         prev = i
-        if a in fn.labels:
+        if a in labels:
             lines.append(f"L_{a:08x}:")
         if a in counts:
             lines.append(f"    c.executed += {counts[a]};")
