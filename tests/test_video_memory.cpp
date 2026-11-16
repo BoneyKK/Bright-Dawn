@@ -301,3 +301,46 @@ TEST(video_memory_texture_palettes_for_the_3d_engine) {
   // There is nothing above the six slots.
   CHECK(vm.texture_palette(0x18000) == -1 && vm.texture_palette(0xFFFFFFFF) == -1);
 }
+
+TEST(video_memory_extended_palettes_for_the_2d_display) {
+  VideoMemory vm;
+  for (unsigned slot = 0; slot < 5; ++slot) CHECK(vm.extended_palette(false, slot, 0) == -1 && vm.extended_palette(true, slot, 0) == -1);
+  // Bank E gives the main screen's backgrounds their four slots of 8 KiB.
+  vm.set_control(VideoMemory::kE, kOn);
+  vm.write(0x06880000, 1, 0x51);
+  vm.write(0x06887FFF, 1, 0x52);
+  vm.set_control(VideoMemory::kE, kOn | 4);
+  CHECK(vm.extended_palette(false, 0, 0) == 0x51 && vm.extended_palette(false, 3, 0x1FFF) == 0x52);
+  CHECK(vm.extended_palette(false, 4, 0) == -1 && vm.extended_palette(true, 0, 0) == -1);
+  vm.set_control(VideoMemory::kE, 0);
+  // Banks F and G give two of them, 0 and 1 or 2 and 3, or the sprites' slot.
+  vm.set_control(VideoMemory::kF, kOn);
+  vm.set_control(VideoMemory::kG, kOn);
+  vm.write(0x06890000, 1, 0x61);
+  vm.write(0x06892000, 1, 0x62);
+  vm.write(0x06894000, 1, 0x71);
+  vm.set_control(VideoMemory::kF, kOn | 4 | offset(1));
+  vm.set_control(VideoMemory::kG, kOn | 5);
+  CHECK(vm.extended_palette(false, 2, 0) == 0x61 && vm.extended_palette(false, 3, 0) == 0x62);
+  CHECK(vm.extended_palette(false, 0, 0) == -1 && vm.extended_palette(false, 4, 0) == 0x71);
+  vm.set_control(VideoMemory::kF, kOn | 4);
+  CHECK(vm.extended_palette(false, 0, 0) == 0x61 && vm.extended_palette(false, 1, 0) == 0x62 && vm.extended_palette(false, 2, 0) == -1);
+  // Banks H and I do the same for the second screen.
+  vm.set_control(VideoMemory::kH, kOn);
+  vm.set_control(VideoMemory::kI, kOn);
+  vm.write(0x06898000, 1, 0x81);
+  vm.write(0x0689E000, 1, 0x82);
+  vm.write(0x068A0000, 1, 0x91);
+  vm.set_control(VideoMemory::kH, kOn | 2);
+  vm.set_control(VideoMemory::kI, kOn | 3);
+  CHECK(vm.extended_palette(true, 0, 0) == 0x81 && vm.extended_palette(true, 3, 0) == 0x82 && vm.extended_palette(true, 4, 0) == 0x91);
+}
+
+TEST(video_memory_peek_reads_without_counting) {
+  VideoMemory vm;
+  vm.set_control(VideoMemory::kA, kOn | 1);
+  vm.write(0x06000010, 4, 0x12345678);
+  CHECK(vm.peek(0x06000010, 4) == 0x12345678 && vm.peek(0x06000012, 1) == 0x34);
+  CHECK(vm.peek(0x06200000, 2) == 0);
+  CHECK(vm.statistics().reads_with_no_bank == 0);
+}
