@@ -5,7 +5,7 @@
 #include "gfx/screen_image.h"
 #include "gfx/screen_layout.h"
 #include "input/bindings.h"
-#include "platform/frame_pacer.h"
+#include "platform/frame_clock.h"
 #include "test.h"
 
 namespace {
@@ -138,28 +138,84 @@ TEST(stick_presses_the_directions_it_is_pushed_past_the_threshold) {
   CHECK(directions_from_stick(0, 32767) == bit(DsButton::Down));
 }
 
-TEST(frame_pacer_keeps_the_console_rate_without_drift) {
-  bd::platform::FramePacer pacer;
-  // One frame is 560190 * 10^9 / 33513982 ns: 16715113 and a fraction.
-  std::uint64_t next = pacer.frame_shown(0);
-  CHECK(next == 16715113);
-  for (int frame = 2; frame <= 100000; ++frame) next = pacer.frame_shown(next);
-  CHECK(next == 1671511311308ull);
-  CHECK(pacer.restarts() == 0);
+TEST(frame_clock_makes_a_step_due_after_one_console_frame_of_real_time) {
+  bd::platform::FrameClock clock;
+  clock.tick(1000);  // Starts the clock; no time yet.
+  CHECK(!clock.step_due());
+  CHECK(clock.alpha() == 0);
+  // One step is 560190 * 10^9 / 33513982 ns: 16715113 and a fraction.
+  CHECK(clock.until_due() == 16715114);
+  clock.tick(1000 + 16715113);
+  CHECK(!clock.step_due());
+  CHECK(clock.until_due() == 1);
+  clock.tick(1000 + 16715114);
+  CHECK(clock.step_due() && clock.until_due() == 0);
+  clock.step_taken();
+  CHECK(!clock.step_due());
+  // Taking a step that is not there leaves the account empty.
+  clock.step_taken();
+  CHECK(clock.alpha() == 0);
 }
 
-TEST(frame_pacer_starts_again_when_far_behind) {
-  bd::platform::FramePacer pacer;
-  std::uint64_t next = pacer.frame_shown(1000);
-  CHECK(next == 1000 + 16715113);
-  // Four frames late is still caught up on.
-  next = pacer.frame_shown(next + 4 * 16715113);
-  CHECK(pacer.restarts() == 0);
-  CHECK(next == 1000 + 33430226);  // Two frames on from the start, the fractions included.
-  // More than that, and the count starts from now.
-  const std::uint64_t late = next + 4 * 16715113 + 1;
-  CHECK(pacer.frame_shown(late) == late + 16715113);
-  CHECK(pacer.restarts() == 1);
+TEST(frame_clock_says_how_far_into_the_next_step_real_time_is) {
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  clock.tick(8357556);  // Half a step, to within a nanosecond.
+  CHECK(clock.alpha() > 0.4999999 && clock.alpha() < 0.5);
+  // Time that runs backwards adds nothing.
+  clock.tick(100);
+  CHECK(clock.alpha() > 0.4999999 && clock.alpha() < 0.5);
+}
+
+TEST(frame_clock_keeps_the_console_rate_without_drift) {
+  // Ticks every millisecond for 100 seconds, taking every step that is due:
+  // exactly 100 * 10^9 * 33513982 / (560190 * 10^9) steps, rounded down.
+  bd::platform::FrameClock clock;
+  std::uint64_t steps = 0;
+  for (std::uint64_t ms = 0; ms <= 100000; ++ms) {
+    clock.tick(ms * 1000000);
+    while (clock.step_due()) {
+      clock.step_taken();
+      ++steps;
+    }
+  }
+  CHECK(steps == 5982);
+  CHECK(clock.drops() == 0);
+}
+
+TEST(frame_clock_shows_a_faster_screen_more_pictures_than_steps) {
+  // A screen refreshed 120 times a second: two pictures a step, give or
+  // take the difference between 120 and twice 59.83.
+  bd::platform::FrameClock clock;
+  std::uint64_t steps = 0, pictures = 0;
+  for (std::uint64_t refresh = 0; refresh <= 1200; ++refresh) {
+    clock.tick(refresh * 1'000'000'000ull / 120);
+    while (clock.step_due()) {
+      clock.step_taken();
+      ++steps;
+    }
+    ++pictures;
+  }
+  CHECK(steps == 598);  // Ten seconds: 59.83 a second, rounded down.
+  CHECK(pictures == 1201);
+  CHECK(clock.drops() == 0);
+}
+
+TEST(frame_clock_drops_time_it_cannot_catch_up_on) {
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  // Four steps' worth and a little more are kept, to be caught up on.
+  clock.tick(4 * 16715113);
+  CHECK(clock.drops() == 0);
+  // A second is far more: one step is left, and the rest dropped.
+  clock.tick(4 * 16715113 + 1'000'000'000ull);
+  CHECK(clock.drops() == 1);
+  CHECK(clock.step_due());
+  clock.step_taken();
+  CHECK(!clock.step_due() && clock.alpha() == 0);
+  // A very long pause is no different, and does not overflow.
+  clock.tick(~std::uint64_t{0} / 2);
+  CHECK(clock.drops() == 2 && clock.step_due());
 }
 
 TEST(buttons_are_found_by_name_in_any_case) {
@@ -203,4 +259,52 @@ TEST(scripted_touches_are_read_and_found_by_frame) {
   CHECK(scripted_touch(script, 599) == nullptr);
   CHECK(scripted_touch(script, 600) == &script[0]);
   CHECK(scripted_touch(script, 1) == &script[1]);
+}
+
+TEST(frame_clock_shows_frames_run_on_time) {
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  // Each frame is run in a millisecond: shown, and the next not yet due.
+  CHECK(clock.frame_done(1000000));
+  CHECK(!clock.step_due());
+}
+
+TEST(frame_clock_catches_up_after_a_hitch_before_showing_again) {
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  // Three steps of real time pass during one frame; then frames are run
+  // quickly. The three already due are run unshown, and the one after is
+  // shown.
+  std::uint64_t now = 3 * 16715114;
+  CHECK(!clock.frame_done(now));
+  CHECK(!clock.frame_done(now += 1000));
+  CHECK(!clock.frame_done(now += 1000));
+  CHECK(clock.frame_done(now += 1000));
+  CHECK(!clock.step_due());
+  CHECK(clock.drops() == 0);
+}
+
+TEST(frame_clock_shows_every_frame_when_the_computer_cannot_keep_up) {
+  // Each frame takes three steps of real time: time is dropped, and from
+  // then on every frame is shown.
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  std::uint64_t now = 0, shown = 0;
+  for (int frame = 0; frame < 100; ++frame) shown += clock.frame_done(now += 3 * 16715114) ? 1 : 0;
+  CHECK(shown == 99);
+  CHECK(clock.drops() > 0);
+}
+
+TEST(frame_clock_shows_a_frame_after_four_unshown_in_a_row) {
+  // Each frame takes one and a half steps: the game falls behind by half a
+  // step a frame. Four frames go unshown, then one is shown regardless.
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  std::uint64_t now = 0;
+  CHECK(!clock.frame_done(now += 25072670));
+  CHECK(!clock.frame_done(now += 25072670));
+  CHECK(!clock.frame_done(now += 25072670));
+  CHECK(!clock.frame_done(now += 25072670));
+  CHECK(clock.frame_done(now += 25072670));
+  CHECK(clock.drops() == 0);
 }

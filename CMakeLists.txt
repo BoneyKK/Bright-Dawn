@@ -68,7 +68,7 @@ target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(bd_core PUBLIC bd_build_flags)
 
 add_library(bd_platform STATIC
-  src/platform/frame_pacer.cpp
+  src/platform/frame_clock.cpp
   src/platform/paths.cpp
 )
 target_link_libraries(bd_platform PUBLIC bd_core)
@@ -176,6 +176,36 @@ if(BD_BUILD_APP)
   add_executable(bright-dawn WIN32 src/app/main.cpp)
   target_link_libraries(bright-dawn PRIVATE bd_nds bd_gfx bd_input bd_platform ${BD_SDL_TARGET})
   set_target_properties(bright-dawn PROPERTIES BD_SYSTEM_LIBC ON)
+
+  # The game with its code translated to C++, from the user's own ROM by
+  # tools/gamebuilder/build_game.py. The translation is derived from the
+  # game, so it is made on the user's machine, outside this repository, and
+  # is never part of a package. BD_TRANSLATED_DIR is what translate_game.py
+  # wrote: table.cpp and a folder of code_NNN.cpp files per module.
+  set(BD_TRANSLATED_DIR "" CACHE PATH "Translated game code to build bright-dawn-game from")
+  if(BD_TRANSLATED_DIR)
+    if(NOT EXISTS "${BD_TRANSLATED_DIR}/table.cpp")
+      message(FATAL_ERROR "BD_TRANSLATED_DIR: no table.cpp in ${BD_TRANSLATED_DIR}")
+    endif()
+    file(GLOB BD_TRANSLATED_SOURCES CONFIGURE_DEPENDS "${BD_TRANSLATED_DIR}/*/code_*.cpp")
+    list(LENGTH BD_TRANSLATED_SOURCES BD_TRANSLATED_COUNT)
+    message(STATUS "Translated game: ${BD_TRANSLATED_COUNT} files in ${BD_TRANSLATED_DIR}")
+    # Generated code: compiled as it comes, without this project's warning
+    # flags. Each file includes its module's functions.h from its own folder.
+    add_library(bd_translated_game STATIC "${BD_TRANSLATED_DIR}/table.cpp" ${BD_TRANSLATED_SOURCES})
+    target_include_directories(bd_translated_game PRIVATE src/runtime)
+    target_compile_features(bd_translated_game PRIVATE cxx_std_20)
+    if(MSVC)
+      target_compile_options(bd_translated_game PRIVATE /w /bigobj)
+    else()
+      target_compile_options(bd_translated_game PRIVATE -w)
+    endif()
+    add_executable(bright-dawn-game WIN32 src/app/main.cpp)
+    target_compile_definitions(bright-dawn-game PRIVATE BD_TRANSLATED_GAME=1)
+    target_link_libraries(bright-dawn-game PRIVATE bd_nds bd_gfx bd_input bd_platform bd_translated_game
+                          ${BD_SDL_TARGET})
+    set_target_properties(bright-dawn-game PROPERTIES BD_SYSTEM_LIBC ON)
+  endif()
 endif()
 
 # What a player gets (cmake --install): the game's window and the licences
