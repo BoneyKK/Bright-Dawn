@@ -725,3 +725,83 @@ TEST(renderer_anti_aliasing) {
   f.draw();
   CHECK(f.at(10, 1) == (kRed | kSolid));
 }
+
+TEST(renderer_textures_can_be_smoothed_in_3d_scenes) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures);
+  f.fill_textures();
+  // As in renderer_textures_with_colours_as_such: red is the column, green
+  // the row, and texel (2, 2) is not there.
+  for (u32 t = 0; t < 8; ++t)
+    for (u32 s = 0; s < 8; ++s) f.texture_word((t * 8 + s) * 2, 0x8000 | s | t << 5);
+  f.texture_word((2 * 8 + 2) * 2, 2 | 2u << 5);
+  f.hand_over_textures();
+  CHECK(f.r.texture_filter() == PolygonRenderer::TextureFilter::Nearest);
+  f.textured_square(8, format(7));
+  f.draw();
+  const PolygonRenderer::Image nearest = f.r.image();
+
+  // Pixel (x, y) is at texture coordinates (16x, 16y), in sixteenths: the
+  // corner the four texels around it share, whose middles are half a texel
+  // away. Each is a quarter. Red at (3, 5): texels 2 and 3, made six bits,
+  // 5 and 7, half each: 6. Green: rows 4 and 5, 9 and 11: 10.
+  f.r.set_texture_filter(PolygonRenderer::TextureFilter::Bilinear);
+  f.frame.polygons.back().flat = false;
+  f.draw();
+  CHECK(f.at(3, 5) == rgba(6, 10, 0, 63));
+  // At the edge the texels are held: (0, 0) is texel (0, 0) four times.
+  CHECK(f.at(0, 0) == kSolid);
+  // Texel (2, 2) is not there. Pixel (3, 3) has three quarters of the four
+  // there, so it is drawn, from those three: red 64 * (7 + 5 + 7) / 192 and
+  // green 64 * (5 + 7 + 7) / 192, rounded, 6 each. Opaque: a texture whose
+  // texels are there or not stays so.
+  CHECK(f.at(3, 3) == rgba(6, 6, 0, 63));
+  CHECK(f.at(2, 2) == rgba(4, 4, 0, 63));
+  CHECK(f.drawn_in_all() == 64);
+
+  // A polygon without perspective, as a HUD is drawn, is not smoothed.
+  f.frame.polygons.back().flat = true;
+  f.draw();
+  CHECK(f.r.image() == nearest);
+}
+
+TEST(renderer_smoothing_keeps_outlines_and_mixes_alpha) {
+  Fixture f;
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kAlphaBlending);
+  f.fill_textures();
+  // One texel there, in eight by eight: under half of what any pixel is
+  // mixed from, so nothing is drawn.
+  f.texture_word((2 * 8 + 2) * 2, 0x8000 | 31);
+  f.hand_over_textures();
+  f.r.set_texture_filter(PolygonRenderer::TextureFilter::Bilinear);
+  f.textured_square(8, format(7));
+  f.draw();
+  CHECK(f.drawn_in_all() == 0);
+  // Half there: texels 4 to 7 of each row. Pixel 4 is half texel 3 and half
+  // texel 4, so it is drawn; pixel 3 is not: as many as without smoothing.
+  f.clear();
+  f.fill_textures();
+  for (u32 t = 0; t < 8; ++t)
+    for (u32 s = 0; s < 8; ++s) f.texture_word((t * 8 + s) * 2, s >= 4 ? 0x8000 | 31 : 0);
+  f.hand_over_textures();
+  f.textured_square(8, format(7));
+  f.draw();
+  CHECK(f.drawn_on_line(3) == 4 && f.drawn(4, 3) && !f.drawn(3, 3) && f.at(4, 3) == rgba(63, 0, 0, 63));
+
+  // An alpha of their own: mixed by weight and alpha. Texel 0 is red and
+  // solid (63), texel 1 green at 27; pixel (1, 0) is half of each, the row
+  // above being held at row 0. Alpha (128 * 63 + 128 * 27) / 256 = 45, red
+  // 128 * 63 * 63 / 11520 = 44 and green 128 * 27 * 63 / 11520 = 19,
+  // rounded.
+  f.clear();
+  f.fill_textures();
+  for (u32 i = 0; i < 64; ++i) f.texture_byte(i, 0);
+  f.texture_byte(0, 1 | 7u << 5);
+  f.texture_byte(1, 2 | 3u << 5);
+  f.palette_word(2, 0x001F);
+  f.palette_word(4, 0x03E0);
+  f.hand_over_textures();
+  f.textured_square(8, format(1));
+  f.draw();
+  CHECK(f.at(1, 0) == rgba(44, 19, 0, 45));
+}

@@ -162,6 +162,7 @@ const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame&
     // The palette's address is in units of 16 bytes, of 8 for palettes of
     // four colours.
     shape.palette_address = polygon.palette << (shape.format == 2 ? 3 : 4);
+    shape.smooth = texture_filter_ == TextureFilter::Bilinear && shape.format != 0 && !polygon.flat;
     shapes_.push_back(shape);
   }
 
@@ -542,12 +543,15 @@ void PolygonRenderer::draw_polygon(int line, const Shape& shape) {
     const auto toon = [&] { return six_bits_each(toon_table_[(colour & 0x3F) / 2]); };
 
     if (shape.format != 0) {
-      const int s = static_cast<i32>(across(se[0] + 0xFFFF, se[1] + 0xFFFF) - 0xFFFF) >> 4;
-      const int t = static_cast<i32>(across(te[0] + 0xFFFF, te[1] + 0xFFFF) - 0xFFFF) >> 4;
+      // In sixteenths of a texel; the texel is the whole part.
+      const int s16 = static_cast<i32>(across(se[0] + 0xFFFF, se[1] + 0xFFFF) - 0xFFFF);
+      const int t16 = static_cast<i32>(across(te[0] + 0xFFFF, te[1] + 0xFFFF) - 0xFFFF);
+      const int s = shape.smooth ? s16 : s16 >> 4;
+      const int t = shape.smooth ? t16 : t16 >> 4;
       if (s != last_s || t != last_t) {
         last_s = s;
         last_t = t;
-        texel_colour = texel(shape, s, t);
+        texel_colour = shape.smooth ? smoothed_texel(shape, s16, t16) : texel(shape, s, t);
       }
       const u32 tex = texel_colour;
       u32 mixed = 0;
@@ -707,6 +711,44 @@ void PolygonRenderer::finish_line(int line) {
         pixel.colour = (pixel.colour & ~kAlphaMask) | (u32{pixel.edge_alpha} << 18);
     }
   }
+}
+
+std::uint32_t PolygonRenderer::smoothed_texel(const Shape& shape, int s16, int t16) const {
+  // A texel's middle is half a texel into it: the four texels whose middles
+  // are around the point, each weighted by how near it is, in 256ths.
+  const int s = s16 - 8, t = t16 - 8;
+  const int s0 = s >> 4, t0 = t >> 4;
+  const u32 fs = static_cast<u32>(s & 15), ft = static_cast<u32>(t & 15);
+  const u32 texels[4] = {texel(shape, s0, t0), texel(shape, s0 + 1, t0), texel(shape, s0, t0 + 1),
+                         texel(shape, s0 + 1, t0 + 1)};
+  const u32 weights[4] = {(16 - fs) * (16 - ft), fs * (16 - ft), (16 - fs) * ft, fs * ft};
+
+  u32 parts[3] = {0, 0, 0};
+  if (shape.format == 1 || shape.format == 6) {
+    // An alpha of their own: mixed by weight and alpha, so that what is not
+    // there does not darken what is.
+    u32 alpha_sum = 0;  // Up to 256 * 63.
+    for (int i = 0; i < 4; ++i) {
+      const u32 a = weights[i] * alpha_of(texels[i]);
+      alpha_sum += a;
+      for (unsigned p = 0; p < 3; ++p) parts[p] += a * part_of(texels[i], p * 6);
+    }
+    if (alpha_sum == 0) return 0;
+    u32 mixed = ((alpha_sum + 128) / 256) << 18;
+    for (unsigned p = 0; p < 3; ++p) mixed |= ((parts[p] + alpha_sum / 2) / alpha_sum) << (p * 6);
+    return mixed;
+  }
+  // There or not: drawn where at least half the weight is there, from what is.
+  u32 covered = 0;
+  for (int i = 0; i < 4; ++i) {
+    if (alpha_of(texels[i]) == 0) continue;
+    covered += weights[i];
+    for (unsigned p = 0; p < 3; ++p) parts[p] += weights[i] * part_of(texels[i], p * 6);
+  }
+  if (covered * 2 < 256) return 0;
+  u32 mixed = 0x3Fu << 18;
+  for (unsigned p = 0; p < 3; ++p) mixed |= ((parts[p] + covered / 2) / covered) << (p * 6);
+  return mixed;
 }
 
 std::uint32_t PolygonRenderer::texel(const Shape& shape, int s, int t) const {

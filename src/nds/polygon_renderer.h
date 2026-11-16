@@ -38,6 +38,16 @@
 //   line, ahead of the display, and tells a program when it falls behind;
 //   that never happens here.
 // - Other resolutions than the hardware's.
+//
+// One choice that is not the hardware's: textures may be smoothed
+// (TextureFilter::Bilinear), each pixel then mixed from the four texels
+// nearest to it, where the DS takes the one it falls on. That is for the
+// 3D scenes only: polygons drawn without perspective (a game's HUD and
+// menus, see GeometryEngine::Polygon::flat) are always drawn texel for
+// texel. Textures whose texels are either there or not (all but the two
+// formats with an alpha of their own) stay so, keeping their outlines
+// sharp: a pixel is drawn where at least half of what it is mixed from is
+// there, mixed from what is.
 #pragma once
 
 #include <array>
@@ -86,7 +96,15 @@ class PolygonRenderer {
   // alpha of its own).
   using Image = std::vector<std::uint32_t>;  // kWidth * kHeight, line after line.
 
+  enum class TextureFilter {
+    Nearest,   // The texel a pixel falls on, as on the DS. The default.
+    Bilinear,  // Mixed from the four nearest texels, in 3D scenes.
+  };
+
   void attach(Arm9Io& io);
+
+  void set_texture_filter(TextureFilter filter) { texture_filter_ = filter; }
+  TextureFilter texture_filter() const { return texture_filter_; }
 
   std::uint32_t control() const { return control_; }
   void write_control(std::uint32_t value, std::uint32_t mask);
@@ -132,14 +150,18 @@ class PolygonRenderer {
     std::uint32_t texture_address = 0, palette_address = 0;
     int size_s = 0, size_t_ = 0;
     bool repeat_s = false, repeat_t = false, flip_s = false, flip_t = false, transparent_0 = false;
+    bool smooth = false;           // Its texels mixed (TextureFilter::Bilinear).
   };
 
   void draw_line(int line);
   void draw_polygon(int line, const Shape& shape);
   void finish_line(int line);
   std::uint32_t texel(const Shape& shape, int s, int t) const;
+  // The four texels around a point given in sixteenths of a texel, mixed.
+  std::uint32_t smoothed_texel(const Shape& shape, int s16, int t16) const;
   Pixel& at(int layer, int line, int x) { return layers_[layer][static_cast<std::size_t>(line * kWidth + x)]; }
 
+  TextureFilter texture_filter_ = TextureFilter::Nearest;
   std::uint32_t control_ = 0;
   std::array<std::uint16_t, 8> edge_colours_{};
   std::uint32_t alpha_reference_ = 0;
