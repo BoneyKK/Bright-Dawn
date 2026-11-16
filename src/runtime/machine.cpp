@@ -372,22 +372,39 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     return true;
   }
 
+  // The full state is read from the interpreter only when it is needed;
+  // after most instructions the program counter and status register are
+  // enough. `state` is the current state while `have_state` holds.
   bd_arm_state state;
   load_interpreter(start, &state);
+  bool have_state = true;
+  u32 pc = state.r[15], cpsr = state.cpsr;
+  const auto current = [&]() -> const bd_arm_state& {
+    if (!have_state) {
+      bd_arm_core_get_state(core_, &state);
+      have_state = true;
+    }
+    return state;
+  };
+  const auto restart_at = [&](u32 address) {
+    load_interpreter(address, &state);
+    have_state = true;
+    pc = state.r[15];
+    cpsr = state.cpsr;
+  };
   for (;;) {
-    const u32 pc = state.r[15];
-    const bool thumb = (state.cpsr & kThumbBit) != 0;
+    const bool thumb = (cpsr & kThumbBit) != 0;
     const u32 size = thumb ? 2 : 4;
     const u32 next = (pc + size) | (thumb ? 1u : 0u);  // As a return address.
 
     // An interrupt is taken between instructions. The link register gets the
     // address of the instruction that was about to run, plus 4, in either
     // instruction set; handlers return with "subs pc, lr, #4".
-    if (interrupt_line_ && (state.cpsr & 0x80u) == 0) {
-      store_from_interpreter(state);
+    if (interrupt_line_ && (cpsr & 0x80u) == 0) {
+      store_from_interpreter(current());
       enter_exception(0x12, pc + 4, thumb);
       ++statistics_.interrupts_taken;
-      load_interpreter(system_.exception_vectors() + 0x18, &state);
+      restart_at(system_.exception_vectors() + 0x18);
       continue;
     }
 
@@ -396,48 +413,50 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     const u32 opcode = thumb ? bus_.read16(pc) : bus_.read32(pc);
     const bool is_swi = thumb ? (opcode & 0xFF00u) == 0xDF00u
                               : ((opcode & 0x0F000000u) == 0x0F000000u &&
-                                 condition_holds(opcode >> 28, state.cpsr));
+                                 condition_holds(opcode >> 28, cpsr));
     if (is_swi) {
-      store_from_interpreter(state);
+      store_from_interpreter(current());
       const u32 go = system_.software_interrupt(cpu_, thumb ? (opcode & 0xFFu) : ((opcode >> 16) & 0xFFu), next);
       if (stopped_) return true;
-      load_interpreter(go, &state);
+      restart_at(go);
       continue;
     }
 
     if (instruction_limit_ != 0 && ++instructions_this_call_ > instruction_limit_) {
-      store_from_interpreter(state);
+      store_from_interpreter(current());
       limit_reached_ = true;
       give_up(pc, "instruction limit reached while interpreting");
       return true;
     }
-    const u32 mode_before = state.cpsr & kModeMask;
-    bd_arm_state after;
+    const u32 pc_before = pc;
+    const u32 mode_before = cpsr & kModeMask;
     bd_arm_core_step(core_);
-    bd_arm_core_get_state(core_, &after);
+    have_state = false;
+    bd_arm_core_get_pc_cpsr(core_, &pc, &cpsr);
     ++statistics_.interpreted_instructions;
     if (statistics_.interpreted_instructions >= alarm_at_) {
       alarm_at_ = ~std::uint64_t{0};
       system_.alarm();
     }
     if (stopped_) {  // A handler called during the instruction ended the run.
-      store_from_interpreter(after);
+      store_from_interpreter(current());
       return true;
     }
 
     // An undefined instruction: the interpreter took the exception. (Mode and
     // vector together, because code may also enter that mode on purpose.)
-    if ((after.cpsr & kModeMask) == 0x1B && mode_before != 0x1B && after.r[15] == 0x00000004u) {
-      store_from_interpreter(state);
-      give_up(pc, "undefined instruction in interpreted code");
+    // The processor is left as it was before the instruction.
+    if ((cpsr & kModeMask) == 0x1B && mode_before != 0x1B && pc == 0x00000004u) {
+      bd_arm_state before;
+      bd_arm_core_get_state_before_undefined(core_, &before);
+      store_from_interpreter(before);
+      give_up(pc_before, "undefined instruction in interpreted code");
       return true;
     }
-    if (!bd_arm_core_branched(core_)) {
-      state = after;
-      continue;
-    }
+    if (!bd_arm_core_branched(core_)) continue;
 
     // The flow of control changed. Where to?
+    const bd_arm_state& after = current();
     const u32 target = after.r[15] | ((after.cpsr & kThumbBit) ? 1u : 0u);
 
     // 1. To where a translated call site is waiting: back to native code.
@@ -462,7 +481,7 @@ bool Machine::interpret(u32 start, u32* continue_at) {
       ds::enter(cpu_, next);
       function(cpu_);
       if (ds::leave(cpu_, next)) return true;  // Control went to an outer call site.
-      load_interpreter(next, &state);
+      restart_at(next);
       continue;
     }
 
@@ -473,7 +492,6 @@ bool Machine::interpret(u32 start, u32* continue_at) {
       give_up(after.r[15], "execution reached an address where there is no memory");
       return true;
     }
-    state = after;
   }
 }
 

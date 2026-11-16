@@ -42,6 +42,9 @@ static int bd_discard_message(const char* format, ...) {
 struct bd_arm_core {
   arm7_t cpu;
   bd_arm_host host;
+  /* As each step begins: what taking an undefined-instruction exception
+   * would change. */
+  uint32_t before_pc, before_cpsr, before_r14_und, before_spsr_und;
 };
 
 /* SkyEmu passes addresses as the instruction formed them; the bus aligns. */
@@ -185,6 +188,10 @@ void bd_arm_core_step(bd_arm_core* core) {
   bool fix_writeback = false;
   unsigned base = 0, index_before = 0;
   uint32_t registers_before[37];
+  core->before_pc = cpu->registers[PC];
+  core->before_cpsr = cpu->registers[CPSR];
+  core->before_r14_und = cpu->registers[R13_und + 1];
+  core->before_spsr_und = cpu->registers[SPSR_und];
   /* After a branch the core refills its pipeline over several calls before
    * the next instruction executes. */
   while (cpu->phased_op_id == ARM_PHASED_FILL_PIPE) arm9_exec_instruction(cpu);
@@ -221,6 +228,28 @@ void bd_arm_core_step(bd_arm_core* core) {
       cpu->registers[index_after] = registers_before[index_after];
     }
   }
+}
+
+void bd_arm_core_get_pc_cpsr(const bd_arm_core* core, uint32_t* pc, uint32_t* cpsr) {
+  const uint32_t status = core->cpu.registers[CPSR];
+  *cpsr = status;
+  /* As in get_state. */
+  *pc = core->cpu.registers[PC] & ((status & 0x20u) ? ~1u : ~3u);
+}
+
+void bd_arm_core_get_state_before_undefined(bd_arm_core* core, bd_arm_state* state) {
+  arm7_t* cpu = &core->cpu;
+  const uint32_t pc = cpu->registers[PC], cpsr = cpu->registers[CPSR];
+  const uint32_t r14_und = cpu->registers[R13_und + 1], spsr_und = cpu->registers[SPSR_und];
+  cpu->registers[PC] = core->before_pc;
+  cpu->registers[CPSR] = core->before_cpsr;
+  cpu->registers[R13_und + 1] = core->before_r14_und;
+  cpu->registers[SPSR_und] = core->before_spsr_und;
+  bd_arm_core_get_state(core, state);
+  cpu->registers[PC] = pc;
+  cpu->registers[CPSR] = cpsr;
+  cpu->registers[R13_und + 1] = r14_und;
+  cpu->registers[SPSR_und] = spsr_und;
 }
 
 int bd_arm_core_branched(const bd_arm_core* core) {
