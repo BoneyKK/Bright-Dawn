@@ -1,16 +1,23 @@
-// One of the DS's two 2D display engines: what turns backgrounds, the 3D
-// picture and the registers into a line of the screen.
+// One of the DS's two 2D display engines: what turns backgrounds, sprites,
+// the 3D picture and the registers into a line of the screen.
 //
 // The console has two, one for each screen. Each draws up to four
-// backgrounds and (not here yet) sprites, a line at a time, and mixes them:
+// backgrounds and 128 sprites, a line at a time, and mixes them:
 // - A background is a grid of tiles (16 or 256 colours a tile, scrolled), or
 //   a grid of tiles or a bitmap seen through a matrix (turned, scaled), by
 //   the mode the engine is in and the background's own control register.
 //   Background 0 of the main engine can instead be the 3D picture.
-// - Every background has a priority. For each pixel the two topmost layers
-//   are kept, so that the top one can be blended with the one below.
-// - Two windows (rectangles), and the outside of both, each say which layers
-//   show inside them and whether effects apply.
+// - A sprite is a rectangle of 8 to 64 pixels a side, of tiles (16 or 256
+//   colours) or a bitmap, mirrored or seen through a matrix, placed anywhere.
+//   Sprites are one layer; among them the lower number is on top, unless
+//   priorities say otherwise. A sprite can ask to be blended with what is
+//   below it, or be a window instead of being drawn.
+// - Every background and sprite has a priority. For each pixel the two
+//   topmost layers are kept, so that the top one can be blended with the
+//   one below.
+// - Two windows (rectangles), the window that sprites make, and the outside
+//   of all, each say which layers show inside them and whether effects
+//   apply.
 // - Effects: alpha blending of the top layer with the one below, or
 //   brightening or darkening the top layer. A 3D pixel is blended by its own
 //   alpha.
@@ -25,9 +32,9 @@
 // step.
 //
 // What is not here:
-// - Sprites, and with them the window that sprites make. An engine told to
-//   show sprites notes that it could not.
-// - Mosaic, except its vertical part on tiled backgrounds (as in NooDS).
+// - Mosaic, except its vertical part on tiled backgrounds and on sprites (as
+//   in NooDS).
+// - The alpha of bitmap sprites: they are drawn solid.
 // - The display fed from main memory (display mode 3). Noted when asked for.
 #pragma once
 
@@ -72,10 +79,13 @@ class DisplayEngine {
   static constexpr unsigned kDisplayModeShift = 16;        // 0 off, 1 the picture, 2 a bank, 3 from main memory.
   static constexpr std::uint32_t kExtendedPalettes = 1u << 30;
 
+  static constexpr std::uint32_t kSpriteMemorySize = 0x400;
+
   // `palette` is this engine's kibibyte of palette memory: 256 colours for
-  // backgrounds, then 256 for sprites. It and `video` must outlive the
+  // backgrounds, then 256 for sprites. `sprites` is its kibibyte of sprite
+  // attributes: eight bytes a sprite. They and `video` must outlive the
   // engine.
-  DisplayEngine(Which which, const VideoMemory& video, const std::uint8_t* palette);
+  DisplayEngine(Which which, const VideoMemory& video, const std::uint8_t* palette, const std::uint8_t* sprites);
 
   void attach(Arm9Io& io);
 
@@ -105,7 +115,7 @@ class DisplayEngine {
   // One layer's pixel.
   struct Dot {
     std::uint32_t colour = 0;   // Six bits a part.
-    std::uint8_t priority = 4;
+    std::int8_t priority = 4;   // A sprite's is one less than written: it is above a background of the same.
     std::uint8_t layer = 5;     // 0 to 3 a background, 4 sprites, 5 the backdrop.
     bool from_3d = false;
     std::uint8_t alpha = 0;     // Of a 3D pixel: six bits.
@@ -113,9 +123,12 @@ class DisplayEngine {
   };
 
   std::uint32_t read(std::uint32_t address, unsigned size) const { return video_.peek(address, size); }
-  std::uint32_t colour_of(unsigned index) const;  // Of the backgrounds' standard palette, six bits a part.
+  // A colour of the standard palettes, six bits a part: 0 to 255 the
+  // backgrounds', 256 to 511 the sprites'.
+  std::uint32_t colour_of(unsigned index) const;
   unsigned shown_inside(int x) const;             // The six bits of whichever window `x` is in.
   void place(unsigned background, int x, std::uint32_t colour, bool from_3d = false, std::uint8_t alpha = 0);
+  void draw_sprites(int line, bool window_pass);
   void draw_3d(int line);
   void draw_tiles(unsigned background, int line);
   void draw_matrix_tiles(unsigned background, int line);
@@ -126,6 +139,7 @@ class DisplayEngine {
   const Which which_;
   const VideoMemory& video_;
   const std::uint8_t* const palette_;
+  const std::uint8_t* const sprites_;
   const std::vector<std::uint32_t>* picture_3d_ = nullptr;
   const std::uint32_t vram_;  // Where this engine's backgrounds are in video memory.
 

@@ -22,10 +22,12 @@ constexpr int kBitmapSizes[4][2] = {{128, 128}, {256, 256}, {512, 256}, {512, 51
 
 }  // namespace
 
-DisplayEngine::DisplayEngine(Which which, const VideoMemory& video, const std::uint8_t* palette)
+DisplayEngine::DisplayEngine(Which which, const VideoMemory& video, const std::uint8_t* palette,
+                             const std::uint8_t* sprites)
     : which_(which),
       video_(video),
       palette_(palette),
+      sprites_(sprites),
       vram_(which == kMain ? 0x06000000 : 0x06200000),
       screen_(static_cast<std::size_t>(kWidth) * kHeight, kWhite) {}
 
@@ -136,7 +138,7 @@ void DisplayEngine::place(unsigned background, int x, std::uint32_t colour, bool
   if ((shown_inside(x) & (1u << background)) == 0) return;
   Dot dot;
   dot.colour = colour;
-  dot.priority = static_cast<std::uint8_t>(background_control_[background] & 3);
+  dot.priority = static_cast<std::int8_t>(background_control_[background] & 3);
   dot.layer = static_cast<std::uint8_t>(background);
   dot.from_3d = from_3d;
   dot.alpha = alpha;
@@ -158,7 +160,11 @@ void DisplayEngine::draw_line(int line) {
   top_.fill(backdrop);
   below_.fill(backdrop);
   sprite_window_.fill(false);
-  if ((control_ & kShowSprites) != 0) ++notes_["sprites"];
+  // Sprites first: those that are a window, then those that are drawn.
+  if ((control_ & kShowSprites) != 0) {
+    if ((control_ & kSpriteWindow) != 0) draw_sprites(line, true);
+    draw_sprites(line, false);
+  }
 
   // Which kind each background is goes by the mode; they are placed from the
   // last to the first.
@@ -230,6 +236,126 @@ void DisplayEngine::draw_line(int line) {
         result |= (direction == 1 ? part + (63 - part) * factor / 16 : part - part * factor / 16) << shift;
       }
       shown_line[x] = result;
+    }
+  }
+}
+
+void DisplayEngine::draw_sprites(int line, bool window_pass) {
+  const u32 memory = which_ == kMain ? 0x06400000 : 0x06600000;
+  const bool second = which_ == kSub;
+  // Width and height by shape (square, wide, tall) and size.
+  static constexpr std::uint8_t kSizes[3][4][2] = {{{8, 8}, {16, 16}, {32, 32}, {64, 64}},
+                                                   {{16, 8}, {32, 8}, {32, 16}, {64, 32}},
+                                                   {{8, 16}, {8, 32}, {16, 32}, {32, 64}}};
+  const auto word = [&](u32 at) { return static_cast<u32>(sprites_[at] | sprites_[at + 1] << 8); };
+
+  for (u32 i = 0; i < 128; ++i) {
+    // Three words of attributes a sprite.
+    const u32 a0 = word(i * 8), a1 = word(i * 8 + 2), a2 = word(i * 8 + 4);
+    // Normal, translucent, a window, or a bitmap. Switched off is "no
+    // matrix" with the bit that otherwise doubles the size.
+    const unsigned kind = (a0 >> 10) & 3;
+    if (((a0 >> 8) & 3) == 2 || (kind == 2) != window_pass) continue;
+    const unsigned shape = a0 >> 14;
+    if (shape == 3) continue;  // No such shape.
+    const int width = kSizes[shape][a1 >> 14][0], height = kSizes[shape][a1 >> 14][1];
+    const bool matrix = (a0 & 0x100) != 0;
+    // With a matrix the sprite can be given twice the room to be drawn in.
+    const bool doubled = (a0 & 0x300) == 0x300;
+    const int room_x = doubled ? width * 2 : width, room_y = doubled ? height * 2 : height;
+
+    int y = static_cast<int>(a0 & 0xFF);
+    if (y >= kHeight) y -= 256;
+    const int mosaic_down = ((mosaic_ >> 12) & 0xF) + 1;
+    const int in_y = ((a0 & (1u << 12)) != 0 ? line - line % mosaic_down : line) - y;
+    if (in_y < 0 || in_y >= room_y) continue;
+    int x = static_cast<int>(a1 & 0x1FF);
+    if (x >= kWidth) x -= 512;
+    const std::int8_t priority = static_cast<std::int8_t>(static_cast<int>((a2 >> 10) & 3) - 1);
+
+    // The matrix: one of 32 sets of four numbers, kept in the gaps between
+    // the sprites' attributes.
+    const u32 set = ((a1 >> 9) & 0x1F) * 0x20;
+    const auto number = [&](u32 at) { return static_cast<int>(static_cast<std::int16_t>(word(set + at))); };
+    const int pa = number(0x06), pb = number(0x0E), pc = number(0x16), pd = number(0x1E);
+
+    const bool colours_256 = (a0 & (1u << 13)) != 0;
+    const bool extended = colours_256 && (control_ & (1u << 31)) != 0;
+    // With extended palettes on and no bank for them, the sprite is not drawn.
+    if (kind != 3 && extended && video_.extended_palette(second, 4, 0) < 0) continue;
+
+    // Where the sprite's pixels are. Tiles: numbered in steps of 32 bytes
+    // and laid out as a sheet 32 tiles wide, or (one-dimensional) in steps
+    // the control register sets, one after the other. Bitmaps likewise.
+    const bool one_dimensional = (control_ & (1u << 4)) != 0;
+    const u32 tiles = memory + (a2 & 0x3FF) * (one_dimensional ? 32u << ((control_ >> 20) & 3) : 32u);
+    const int sheet = one_dimensional ? width : (colours_256 ? 128 : 256);
+    u32 bitmap;
+    int bitmap_width;
+    if ((control_ & (1u << 6)) != 0) {
+      bitmap = memory + (a2 & 0x3FF) * ((control_ & (1u << 22)) != 0 ? 256u : 128u);
+      bitmap_width = width;
+    } else {
+      const u32 across = (control_ & (1u << 5)) != 0 ? 0x1F : 0x0F;
+      bitmap = memory + (a2 & across) * 0x10 + (a2 & 0x3FF & ~across) * 0x80;
+      bitmap_width = (control_ & (1u << 5)) != 0 ? 256 : 128;
+    }
+
+    for (int j = 0; j < room_x; ++j) {
+      // Which pixel of the sprite is at pixel `j` of its room.
+      int at_x, px, py;
+      if (matrix) {
+        at_x = x + j;
+        px = ((pa * (j - room_x / 2) + pb * (in_y - room_y / 2)) >> 8) + width / 2;
+        py = ((pc * (j - room_x / 2) + pd * (in_y - room_y / 2)) >> 8) + height / 2;
+        if (px < 0 || px >= width || py < 0 || py >= height) continue;
+      } else {
+        at_x = (a1 & (1u << 12)) != 0 ? x + width - j - 1 : x + j;
+        px = j;
+        py = (a1 & (1u << 13)) != 0 ? height - 1 - in_y : in_y;
+      }
+      if (at_x < 0 || at_x >= kWidth) continue;
+
+      u32 colour;
+      if (kind == 3) {
+        // 16 bits a pixel; the top bit says whether there is one.
+        const u32 pixel = read(bitmap + static_cast<u32>(py * bitmap_width + px) * 2, 2);
+        if ((pixel & 0x8000) == 0) continue;
+        colour = six_bits_each(pixel);
+      } else if (colours_256) {
+        const u32 n = read(tiles + static_cast<u32>(((py / 8) * sheet + py % 8) * 8 + (px / 8) * 64 + px % 8), 1);
+        if (n == 0) continue;
+        if (extended) {
+          // Sixteen palettes of 256 colours.
+          const u32 at = ((a2 & 0xF000) >> 3) + n * 2;
+          colour = six_bits_each(static_cast<u32>(video_.extended_palette(second, 4, at) |
+                                                   video_.extended_palette(second, 4, at + 1) << 8));
+        } else {
+          colour = colour_of(256 + n);
+        }
+      } else {
+        const u32 byte = read(tiles + static_cast<u32>(((py / 8) * sheet + py % 8) * 4 + (px / 8) * 32 + (px % 8) / 2), 1);
+        const u32 n = (px & 1) != 0 ? byte >> 4 : byte & 0xF;
+        if (n == 0) continue;
+        // Sixteen palettes of 16 colours.
+        colour = colour_of(256 + ((a2 >> 12) & 0xF) * 16 + n);
+      }
+
+      const std::size_t at = static_cast<std::size_t>(at_x);
+      if (kind == 2) {
+        sprite_window_[at] = true;
+        continue;
+      }
+      if ((shown_inside(at_x) & 0x10) == 0) continue;
+      // Sprites are one layer: a later one replaces an earlier one only with
+      // a higher priority.
+      Dot& top = top_[at];
+      if (top.layer == 5 || priority < top.priority) {
+        top.colour = colour;
+        top.priority = priority;
+        top.layer = 4;
+        top.translucent = kind == 1;
+      }
     }
   }
 }

@@ -29,21 +29,24 @@ struct Fixture {
   bd::nds::Arm9Io io;
   VideoMemory video;
   std::array<std::uint8_t, 0x400> palette{};
+  std::array<std::uint8_t, 0x400> sprites{};
   DisplayEngine engine;
   const u32 base, vram;
 
   explicit Fixture(DisplayEngine::Which which = DisplayEngine::kMain)
-      : engine(which, video, palette.data()),
+      : engine(which, video, palette.data(), sprites.data()),
         base(DisplayEngine::kBases[which]),
         vram(which == DisplayEngine::kMain ? 0x06000000 : 0x06200000) {
     engine.attach(io);
-    // Banks A to D are the main engine's backgrounds, 512 KiB; bank C is the
-    // second engine's instead.
+    // Banks A to D are the main engine's backgrounds, 512 KiB, and bank E its
+    // sprites; or banks C and D are the second engine's.
     if (which == DisplayEngine::kMain) {
       for (unsigned bank = 0; bank < 4; ++bank)
         video.set_control(static_cast<VideoMemory::Bank>(bank), static_cast<std::uint8_t>(VideoMemory::kEnable | 1 | bank << 3));
+      video.set_control(VideoMemory::kE, VideoMemory::kEnable | 2);
     } else {
       video.set_control(VideoMemory::kC, VideoMemory::kEnable | 4);
+      video.set_control(VideoMemory::kD, VideoMemory::kEnable | 4);
     }
     colour(0, kGrey15);  // The backdrop.
   }
@@ -71,6 +74,37 @@ struct Fixture {
     }
   }
   u32 at(int x, int line = 0) const { return engine.screen()[static_cast<std::size_t>(line * 256 + x)]; }
+
+  // Sprites: the three attribute words of sprite `n`, a byte of the
+  // sprites' pixel memory, a colour of the sprites' palette, and one of the
+  // 32 matrices.
+  void sprite(unsigned n, u32 a0, u32 a1, u32 a2) {
+    const u32 words[3] = {a0, a1, a2};
+    for (unsigned i = 0; i < 3; ++i) {
+      sprites[n * 8 + i * 2] = static_cast<std::uint8_t>(words[i]);
+      sprites[n * 8 + i * 2 + 1] = static_cast<std::uint8_t>(words[i] >> 8);
+    }
+  }
+  void sprite_byte(u32 offset, u32 value) { video.write(vram + 0x400000 + offset, 1, value); }
+  void sprite_word(u32 offset, u32 value) { video.write(vram + 0x400000 + offset, 2, value); }
+  void sprite_colour(unsigned index, u32 value) { colour(256 + index, value); }
+  void matrix(unsigned set, int pa, int pb, int pc, int pd) {
+    const int numbers[4] = {pa, pb, pc, pd};
+    for (unsigned i = 0; i < 4; ++i) {
+      sprites[set * 0x20 + 6 + i * 8] = static_cast<std::uint8_t>(numbers[i]);
+      sprites[set * 0x20 + 7 + i * 8] = static_cast<std::uint8_t>(numbers[i] >> 8);
+    }
+  }
+  // Sprite palette 1 has red, green, blue and white as colours 1 to 4, and
+  // tile 3 (16 colours) has a top row of red, green, blue.
+  void simple_sprite_tile() {
+    sprite_colour(17, kRed15);
+    sprite_colour(18, kGreen15);
+    sprite_colour(19, kBlue15);
+    sprite_colour(20, 0x7FFF);
+    sprite_byte(3 * 32, 0x21);
+    sprite_byte(3 * 32 + 1, 0x03);
+  }
 
   // Background 0 as 16-colour tiles, map in block 1 and tiles in block 1,
   // with one tile (number 1, palette 2) at the top left whose top row is
@@ -509,9 +543,9 @@ TEST(display_what_is_shown_and_the_master_brightness) {
   f.draw();
   CHECK(f.at(0) == kRed);
   // What cannot be shown yet is noted.
-  f.control(0 | show(0) | DisplayEngine::kShowSprites | 3u << 16);
+  f.control(0 | show(0) | 3u << 16);
   f.draw();
-  CHECK(f.engine.notes().count("sprites") == 1 && f.engine.notes().count("the display fed from main memory") == 1);
+  CHECK(f.engine.notes().count("the display fed from main memory") == 1);
 }
 
 TEST(display_the_second_engine_has_its_own_memory) {
@@ -536,4 +570,273 @@ TEST(display_mosaic_down_the_screen) {
   f.background(0, 1u << 8 | 1u << 2);
   f.draw(7);
   CHECK(f.at(0, 3) == kGrey && f.at(0, 4) == kGreen && f.at(0, 7) == kGrey);
+}
+
+namespace {
+
+// Sprite attributes.
+constexpr u32 kSprites = DisplayEngine::kShowSprites;
+constexpr u32 kTile3Palette1 = 3 | 1u << 12;
+constexpr u32 kOff = 1u << 9, kWithMatrix = 1u << 8, kDoubled = 3u << 8;
+constexpr u32 kTranslucent = 1u << 10, kIsWindow = 2u << 10, kBitmap = 3u << 10;
+constexpr u32 kColours256 = 1u << 13;
+constexpr u32 kWide = 1u << 14, kTall = 2u << 14;
+constexpr u32 kMirrored = 1u << 12, kUpsideDown = 1u << 13;
+constexpr u32 priority(u32 p) { return p << 10; }
+constexpr u32 kAllWhite = rgb(62, 62, 62);
+
+}  // namespace
+
+TEST(display_sprites_of_tiles) {
+  Fixture f;
+  f.simple_sprite_tile();
+  f.control(0 | kSprites | kPicture);
+  // An 8 by 8 sprite at (10, 5).
+  f.sprite(0, 5, 10, kTile3Palette1);
+  // The others are switched off (all zeros would be a sprite at the top left).
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.draw(12);
+  CHECK(f.at(10, 5) == kRed && f.at(11, 5) == kGreen && f.at(12, 5) == kBlue && f.at(13, 5) == kGrey);
+  CHECK(f.at(10, 4) == kGrey && f.at(10, 6) == kGrey);
+  // Mirrored across; upside down.
+  f.sprite(0, 5, 10 | kMirrored, kTile3Palette1);
+  f.draw(12);
+  CHECK(f.at(17, 5) == kRed && f.at(16, 5) == kGreen && f.at(15, 5) == kBlue && f.at(10, 5) == kGrey);
+  f.sprite(0, 5, 10 | kUpsideDown, kTile3Palette1);
+  f.draw(12);
+  CHECK(f.at(10, 12) == kRed && f.at(12, 12) == kBlue && f.at(10, 5) == kGrey);
+  // Positions wrap: 510 across is two pixels off the left edge, and 251
+  // down five lines off the top.
+  f.sprite_byte(3 * 32 + 5 * 4, 0x02);
+  f.sprite(0, 251, 510, kTile3Palette1);
+  f.draw(12);
+  CHECK(f.at(0, 0) == kGrey && f.at(0, 5) == kGrey);
+  f.sprite(0, 5, 510, kTile3Palette1);
+  f.draw(12);
+  CHECK(f.at(0, 5) == kBlue && f.at(1, 5) == kGrey);
+  f.sprite(0, 251, 10, kTile3Palette1);
+  f.draw(12);
+  CHECK(f.at(10, 0) == kGreen && f.at(10, 5) == kGrey);
+  // Switched off.
+  f.sprite(0, 5 | kOff, 10, kTile3Palette1);
+  f.draw(12);
+  CHECK(f.at(10, 5) == kGrey);
+  // With sprites not shown, none is.
+  f.sprite(0, 5, 10, kTile3Palette1);
+  f.control(0 | kPicture);
+  f.draw(12);
+  CHECK(f.at(10, 5) == kGrey);
+}
+
+TEST(display_sprite_shapes_and_how_their_tiles_are_laid_out) {
+  Fixture f;
+  f.simple_sprite_tile();
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.control(0 | kSprites | kPicture);
+  // Tiles are numbered in steps of 32 bytes and laid out as a sheet 32 tiles
+  // wide: a sprite 16 wide goes on in the next tile, one 16 tall in the tile
+  // 32 further.
+  f.sprite_byte(4 * 32, 0x02);
+  f.sprite_byte(35 * 32, 0x01);
+  f.sprite(0, 0 | kWide, 0, kTile3Palette1);
+  f.draw(8);
+  CHECK(f.at(0, 0) == kRed && f.at(8, 0) == kGreen && f.at(0, 8) == kGrey);
+  f.sprite(0, 0 | kTall, 0, kTile3Palette1);
+  f.draw(8);
+  CHECK(f.at(0, 0) == kRed && f.at(8, 0) == kGrey && f.at(0, 8) == kRed);
+  // One-dimensional: a sprite's tiles follow one another,
+  f.control(0 | kSprites | kPicture | 1u << 4);
+  f.draw(8);
+  CHECK(f.at(0, 0) == kRed && f.at(0, 8) == kGreen);
+  // and tiles can be numbered in larger steps: of 64 bytes, tile 3 is where
+  // tile 6 was.
+  f.sprite_byte(6 * 32, 0x03);
+  f.control(0 | kSprites | kPicture | 1u << 4 | 1u << 20);
+  f.draw(8);
+  CHECK(f.at(0, 0) == kBlue);
+  // The largest: 64 by 64 (shape square, size 3).
+  f.control(0 | kSprites | kPicture);
+  f.sprite_byte(3 * 32 + 7 * 32 + 3, 0x40);  // Its pixel (63, 0): white.
+  f.sprite(0, 0, 100 | 3u << 14, kTile3Palette1);
+  f.draw(0);
+  CHECK(f.at(100, 0) == kRed && f.at(163, 0) == kAllWhite && f.at(164, 0) == kGrey);
+}
+
+TEST(display_sprites_of_256_colours) {
+  Fixture f;
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.control(0 | kSprites | kPicture);
+  // A byte a pixel; the tile's number still counts in steps of 32 bytes.
+  f.sprite_byte(4 * 32, 7);
+  f.sprite_byte(4 * 32 + 9, 8);
+  f.sprite_colour(7, kRed15);
+  f.sprite_colour(8, kGreen15);
+  f.sprite(0, 0 | kColours256, 0, 4 | 2u << 12);
+  f.draw(1);
+  CHECK(f.at(0, 0) == kRed && f.at(1, 1) == kGreen && f.at(1, 0) == kGrey);
+  // With extended palettes the sprite's palette number chooses one of
+  // sixteen palettes of 256 colours; with no bank for them it is not drawn.
+  f.control(0 | kSprites | kPicture | 1u << 31);
+  f.draw(1);
+  CHECK(f.at(0, 0) == kGrey);
+  f.video.set_control(VideoMemory::kG, VideoMemory::kEnable);
+  f.video.write(0x06894000 + 2 * 0x200 + 7 * 2, 2, kBlue15);
+  f.video.set_control(VideoMemory::kG, VideoMemory::kEnable | 5);
+  f.draw(1);
+  CHECK(f.at(0, 0) == kBlue);
+}
+
+TEST(display_sprites_among_the_layers) {
+  Fixture f;
+  f.simple_tiles();
+  f.simple_sprite_tile();
+  for (unsigned n = 0; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  // A white sprite tile: number 5.
+  f.sprite_byte(5 * 32, 0x44);
+  f.sprite_byte(5 * 32 + 1, 0x44);
+  const u32 white = 5 | 1u << 12;
+  f.control(0 | show(0) | kSprites | kPicture);
+  // Of the same priority, a sprite is above a background.
+  f.sprite(0, 0, 0, white);
+  f.draw();
+  CHECK(f.at(0) == kAllWhite && f.at(3) == kAllWhite && f.at(4) == kGrey);
+  // One priority down it is below it, and shows where the background is
+  // see-through.
+  f.sprite(0, 0, 0, white | priority(1));
+  f.draw();
+  CHECK(f.at(0) == kRed && f.at(2) == kBlue && f.at(3) == kAllWhite);
+  f.background(0, 1u << 8 | 1u << 2 | 1);
+  f.draw();
+  CHECK(f.at(0) == kAllWhite);
+  // Among sprites of one priority the lower number is on top;
+  f.background(0, 1u << 8 | 1u << 2);
+  f.control(0 | kSprites | kPicture);
+  f.sprite(0, 0, 0, kTile3Palette1);
+  f.sprite(1, 0, 0, white);
+  f.draw();
+  CHECK(f.at(0) == kRed && f.at(1) == kGreen && f.at(2) == kBlue && f.at(3) == kAllWhite);
+  // a higher priority is on top whatever the number.
+  f.sprite(0, 0, 0, kTile3Palette1 | priority(2));
+  f.sprite(1, 0, 0, white | priority(1));
+  f.draw();
+  CHECK(f.at(0) == kAllWhite);
+}
+
+TEST(display_translucent_sprites_and_the_window_sprites_make) {
+  Fixture f;
+  f.simple_tiles();
+  f.simple_sprite_tile();
+  for (unsigned n = 0; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.sprite_byte(5 * 32, 0x44);
+  f.sprite_byte(5 * 32 + 1, 0x44);
+  const u32 white = 5 | 1u << 12;
+  f.control(0 | show(0) | kSprites | kPicture);
+  // A sprite that asks to be blended is, with a layer below that allows it,
+  // whatever effect is chosen: eight sixteenths of each here.
+  f.reg(DisplayEngine::kBlendControl, 2, 1u << 8);
+  f.reg(DisplayEngine::kBlendAlpha, 2, 8 | 8u << 8);
+  f.sprite(0, 0 | kTranslucent, 0, white);
+  f.draw();
+  CHECK(f.at(0) == rgb(62, 31, 31) && f.at(1) == rgb(31, 62, 31) && f.at(3) == kAllWhite);
+  f.sprite(0, 0, 0, white);
+  f.draw();
+  CHECK(f.at(0) == kAllWhite);
+
+  // A sprite that is a window is not drawn. Where it has pixels, the layers
+  // chosen for the sprites' window show.
+  f.reg(DisplayEngine::kBlendControl, 2, 0);
+  f.sprite_byte(6 * 32, 0x11);
+  f.sprite(0, 0 | kIsWindow, 0, 6 | 1u << 12);
+  f.control(0 | show(0) | kSprites | kPicture | DisplayEngine::kSpriteWindow);
+  f.reg(DisplayEngine::kWindowOutside, 2, 0x0100);
+  f.draw();
+  CHECK(f.at(0) == kRed && f.at(1) == kGreen && f.at(2) == kGrey);
+  // Without the sprites' window switched on, such a sprite does nothing.
+  f.control(0 | show(0) | kSprites | kPicture);
+  f.draw();
+  CHECK(f.at(0) == kRed && f.at(2) == kBlue);
+  // A window can hide sprites (bit 4).
+  f.sprite(0, 0, 0, white);
+  f.control(0 | kSprites | kPicture | DisplayEngine::kWindow0);
+  f.reg(DisplayEngine::kWindowAcross, 2, 0u << 8 | 2);
+  f.reg(DisplayEngine::kWindowAcross + 4, 2, 0u << 8 | 100);
+  f.reg(DisplayEngine::kWindowInside, 2, 0x00);
+  f.reg(DisplayEngine::kWindowOutside, 2, 0x10);
+  f.draw();
+  CHECK(f.at(0) == kGrey && f.at(1) == kGrey && f.at(2) == kAllWhite);
+}
+
+TEST(display_bitmap_sprites) {
+  Fixture f;
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.control(0 | kSprites | kPicture);
+  // 16 bits a pixel. Laid out as a sheet 128 pixels wide; the sprite's
+  // number is its place on the sheet in steps of eight pixels: across in
+  // the low four bits, down in the rest.
+  f.sprite_word(0x810, 0x8000 | kRed15);
+  f.sprite_word(0x812, kGreen15);  // No pixel: the top bit is clear.
+  f.sprite_word(0x810 + 256, 0x8000 | kBlue15);
+  f.sprite(0, 0 | kBitmap, 0, 0x11);
+  f.draw(1);
+  CHECK(f.at(0, 0) == kRed && f.at(1, 0) == kGrey && f.at(0, 1) == kBlue);
+  // One-dimensional: the number counts in steps of 128 bytes and the
+  // sprite's lines follow one another.
+  f.control(0 | kSprites | kPicture | 1u << 6);
+  f.sprite_word(2 * 128, 0x8000 | kGreen15);
+  f.sprite_word(2 * 128 + 16, 0x8000 | kRed15);
+  f.sprite(0, 0 | kBitmap, 0, 2);
+  f.draw(1);
+  CHECK(f.at(0, 0) == kGreen && f.at(0, 1) == kRed);
+  f.sprite(0, 0 | kBitmap, 0 | kUpsideDown, 2);
+  f.draw(7);
+  CHECK(f.at(0, 7) == kGreen && f.at(0, 6) == kRed);
+}
+
+TEST(display_sprites_through_a_matrix) {
+  Fixture f;
+  f.simple_sprite_tile();
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.control(0 | kSprites | kPicture);
+  // Matrix 1, the one that changes nothing.
+  f.matrix(1, 0x100, 0, 0, 0x100);
+  f.sprite(0, 0 | kWithMatrix, 0 | 1u << 9, kTile3Palette1);
+  f.draw(1);
+  CHECK(f.at(0, 0) == kRed && f.at(1, 0) == kGreen && f.at(2, 0) == kBlue && f.at(3, 0) == kGrey && f.at(0, 1) == kGrey);
+  // Twice as large about its middle: without more room, only the middle
+  // shows: pixels 2 to 5 of the sprite's rows 2 to 5, each two wide and two
+  // high. Row 2 gets a blue pixel at 2 for this.
+  f.sprite_byte(3 * 32 + 2 * 4 + 1, 0x03);
+  f.matrix(1, 0x80, 0, 0, 0x80);
+  f.draw(3);
+  CHECK(f.at(0, 0) == kBlue && f.at(1, 0) == kBlue && f.at(2, 0) == kGrey && f.at(0, 1) == kBlue && f.at(0, 2) == kGrey);
+  // With twice the room, all of it: 16 by 16 from the same corner.
+  f.sprite(0, 0 | kDoubled, 0 | 1u << 9, kTile3Palette1);
+  f.draw(2);
+  CHECK(f.at(0, 0) == kRed && f.at(1, 0) == kRed && f.at(2, 0) == kGreen && f.at(4, 0) == kBlue && f.at(6, 0) == kGrey);
+  CHECK(f.at(0, 1) == kRed && f.at(0, 2) == kGrey);
+  // A quarter turn.
+  f.matrix(1, 0, 0x100, 0x100, 0);
+  f.sprite(0, 0 | kWithMatrix, 0 | 1u << 9, kTile3Palette1);
+  f.draw(2);
+  CHECK(f.at(0, 0) == kRed && f.at(0, 1) == kGreen && f.at(0, 2) == kBlue && f.at(1, 0) == kGrey);
+}
+
+TEST(display_sprite_mosaic_and_the_second_engine_s_sprites) {
+  Fixture f;
+  f.simple_sprite_tile();
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.control(0 | kSprites | kPicture);
+  // Steps of two lines: line 1 shows what line 0 does.
+  f.reg(DisplayEngine::kMosaic, 2, 1u << 12);
+  f.sprite(0, 0 | 1u << 12, 0, kTile3Palette1);
+  f.draw(2);
+  CHECK(f.at(0, 0) == kRed && f.at(0, 1) == kRed && f.at(0, 2) == kGrey);
+
+  Fixture second(DisplayEngine::kSub);
+  second.simple_sprite_tile();
+  for (unsigned n = 1; n < 128; ++n) second.sprite(n, kOff, 0, 0);
+  second.control(0 | kSprites | kPicture);
+  second.sprite(0, 0, 0, kTile3Palette1);
+  second.draw();
+  CHECK(second.at(0) == kRed && second.at(1) == kGreen && second.at(2) == kBlue);
 }
