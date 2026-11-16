@@ -1,5 +1,12 @@
 // The launcher: what the window program shows when it is started without a
-// ROM, so that a player never needs the command line. Its pages:
+// ROM, so that a player never needs the command line.
+//
+// Until the game has been built for this version of Bright Dawn, it is the
+// setup instead: one page, on which the player chooses their ROM and builds
+// the game, and only then goes on to the launcher. Behind both is the book
+// of the game's main menu, read from that ROM (app/backdrop.h).
+//
+// The launcher's pages:
 //   Play      choose the ROM (remembered), and play it;
 //   Build     build the game library from the ROM, its code translated to
 //             C++ and compiled for this computer, following the builder as
@@ -17,10 +24,12 @@
 #include <string>
 
 #include "app/app.h"
+#include "app/backdrop.h"
 #include "app/build_tools.h"
 #include "app/child_process.h"
 #include "app/fetch.h"
 #include "app/settings_book.h"
+#include "rom/rom.h"
 #include "ui/build_progress.h"
 
 namespace bd::app {
@@ -46,6 +55,12 @@ class Launcher {
   enum class BuiltState { None, Ready, OtherVersion, Broken };
 
   void choose_rom(const std::filesystem::path& path);
+  // The game's menu pictures from the ROM, now open, for the backdrop.
+  void read_menu_art(const rom::Rom& rom);
+  // Whether the setup has to be gone through first: the game is not built
+  // for this version (the build of the developers' own, with the game linked
+  // in, needs none).
+  bool needs_setup() const;
   void check_tools();
   void check_built_game();
   bool building() const { return fetch_ != nullptr || build_ != nullptr; }
@@ -59,12 +74,16 @@ class Launcher {
   void play(LauncherChoice& choice);
 
   void draw(LauncherChoice& choice, bool& done);
+  void draw_setup(LauncherChoice& choice, bool& done);
+  void draw_rom_chooser();
   void draw_play(LauncherChoice& choice, bool& done);
   void draw_build();
   void draw_log();
 
   App& app_;
   Page page_ = Page::Play;
+  bool setup_ = false;  // The setup is shown instead of the launcher.
+  Backdrop backdrop_;
   SettingsBook book_;
   std::filesystem::path rom_;
   RomCheck rom_check_;

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "assets/screen_picture.h"
 #include "core/log.h"
 #include "core/version.h"
 #include "game_library_host.h"
@@ -20,6 +21,10 @@ namespace bd::app {
 namespace {
 
 constexpr std::size_t kMostOutputLines = 5000;
+
+// In the player's ROM: the upper screen of the main menu's save files, an
+// open book.
+constexpr std::string_view kMenuBook = "data/upscreen/backupStory.bin";
 
 const ImVec4 kGood(0.55f, 0.82f, 0.45f, 1.0f);
 const ImVec4 kBad(0.93f, 0.45f, 0.38f, 1.0f);
@@ -64,7 +69,15 @@ Launcher::Launcher(App& app) : app_(app) {
   if (!remembered.empty()) choose_rom(from_utf8(remembered));
   builder_ = find_builder();
   check_built_game();
+  setup_ = needs_setup();
+  if (setup_) {
+    log::info("launcher", built_state_ == BuiltState::None ? "the setup: the game is not built yet"
+                                                           : "the setup: the game built before cannot be used");
+    check_tools();
+  }
 }
+
+bool Launcher::needs_setup() const { return !app_.translated_build && built_state_ != BuiltState::Ready; }
 
 Launcher::~Launcher() {
   fetch_.reset();
@@ -95,9 +108,22 @@ void Launcher::choose_rom(const std::filesystem::path& path) {
     rom_check_.text = std::string("Golden Sun: Dark Dawn (") + rom::to_string(title->region) + ", " +
                       std::string(title->game_code) + ")";
   }
+  if (rom_check_.ok) read_menu_art(rom.value());
   log::writef(rom_check_.ok ? log::Level::Info : log::Level::Warning, "launcher", "ROM %s: %s", utf8(path).c_str(),
               rom_check_.text.c_str());
   if (rom_check_.ok && app_.settings.value(ui::key::kRom) != utf8(path)) app_.set_setting(ui::key::kRom, utf8(path));
+}
+
+void Launcher::read_menu_art(const rom::Rom& rom) {
+  Result<assets::Picture> book = assets::read_screen_picture(rom, kMenuBook);
+  if (!book) {
+    log::warning("launcher", "the main menu's book is not in the ROM as expected (" + book.error().message +
+                                 "): the launcher is shown without it");
+    backdrop_.clear();
+    return;
+  }
+  log::info("launcher", "the main menu's book, from the ROM, is behind the launcher");
+  backdrop_.set(std::move(book).value());
 }
 
 void Launcher::check_tools() {
@@ -291,22 +317,32 @@ LauncherChoice Launcher::run() {
     if (done) break;
     SDL_SetRenderDrawColor(app_.renderer, 0, 0, 0, 255);
     SDL_RenderClear(app_.renderer);
+    backdrop_.draw(app_.renderer);
+    app_.gui.set_see_through(backdrop_.shown());
     app_.gui.begin_frame();
     draw(choice, done);
     app_.gui.end_frame();
     SDL_RenderPresent(app_.renderer);
     if (!vsync) SDL_Delay(15);
   }
+  app_.gui.set_see_through(false);
+  backdrop_.release();
   return choice;
 }
 
 void Launcher::draw(LauncherChoice& choice, bool& done) {
+  if (setup_) {
+    draw_setup(choice, done);
+    return;
+  }
   const ImGuiViewport* view = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(view->Pos);
   ImGui::SetNextWindowSize(view->Size);
   ImGui::Begin("Bright Dawn", nullptr,
                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
+  // The title on a panel of its own, to be read over the backdrop too.
+  ImGui::BeginChild("title", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
   ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.8f);
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
   ImGui::TextUnformatted("Bright Dawn");
@@ -315,7 +351,7 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
   ImGui::SameLine();
   ImGui::AlignTextToFramePadding();
   ImGui::TextDisabled("%s%s", BD_VERSION, app_.translated_build ? ", the built game" : "");
-  ImGui::Separator();
+  ImGui::EndChild();
 
   const float index_width = ImGui::GetFontSize() * 11;
   ImGui::BeginChild("pages", ImVec2(index_width, 0), ImGuiChildFlags_Borders);
@@ -343,7 +379,53 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
   ImGui::End();
 }
 
-void Launcher::draw_play(LauncherChoice& choice, bool& done) {
+void Launcher::draw_setup(LauncherChoice& choice, bool& done) {
+  const ImGuiViewport* view = ImGui::GetMainViewport();
+  const float em = ImGui::GetFontSize();
+  const float margin = std::min(view->Size.x, view->Size.y) * 0.05f;
+  const float width = std::min(view->Size.x - 2 * margin, em * 50);
+  ImGui::SetNextWindowPos(ImVec2(view->Pos.x + (view->Size.x - width) / 2, view->Pos.y + margin));
+  ImGui::SetNextWindowSize(ImVec2(width, view->Size.y - 2 * margin));
+  ImGui::Begin("Setup", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoBringToFrontOnFocus);
+  ImGui::BeginChild("setup page", ImVec2(0, 0), ImGuiChildFlags_Borders);
+  ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.8f);
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
+  ImGui::TextUnformatted("Bright Dawn");
+  ImGui::PopStyleColor();
+  ImGui::PopFont();
+  ImGui::SameLine();
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextDisabled("%s, setting up", BD_VERSION);
+  ImGui::SameLine(ImGui::GetContentRegionMax().x - em * 5);
+  if (ImGui::Button("Quit", ImVec2(em * 5, 0))) {
+    log::info("launcher", "quit from the setup");
+    choice.kind = LauncherChoice::Quit;
+    done = true;
+  }
+  ImGui::Separator();
+
+  if (built_state_ == BuiltState::Ready) {
+    coloured(kGood, "The game is built: go on to the launcher, below the build's result.");
+  } else if (built_state_ == BuiltState::None) {
+    note("Before the launcher opens, the game is built once from your ROM: its code translated to C++ and "
+         "compiled for this computer, so that it runs natively. Choose your ROM, then build. What the build "
+         "needs and this computer does not have is fetched for it and removed afterwards.");
+  } else {
+    note("The game built before cannot be used (" + built_detail_ +
+         "): Bright Dawn has changed since, and the game has to be built again for this version.");
+  }
+  ImGui::Spacing();
+  draw_rom_chooser();
+  ImGui::Spacing();
+  ImGui::Separator();
+  draw_build();
+  ImGui::EndChild();
+  ImGui::End();
+}
+
+void Launcher::draw_rom_chooser() {
   heading("Your ROM");
   if (rom_.empty())
     note("Choose your own copy of Golden Sun: Dark Dawn, a .nds file. Bright Dawn remembers it.");
@@ -394,6 +476,10 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
   if (ImGui::Button("Use this")) choose_rom(from_utf8(rom_typed_));
   if (!rom_.empty()) coloured(rom_check_.ok ? kGood : kBad, rom_check_.text);
 
+}
+
+void Launcher::draw_play(LauncherChoice& choice, bool& done) {
+  draw_rom_chooser();
   ImGui::Spacing();
   heading("Play");
   if (app_.translated_build) {
@@ -441,7 +527,7 @@ void Launcher::draw_build() {
       ImGui::Unindent();
     }
   };
-  requirement(rom_check_.ok, rom_check_.ok ? "Your ROM" : "Your ROM: choose it on the Play page", "");
+  requirement(rom_check_.ok, rom_check_.ok ? "Your ROM" : setup_ ? "Your ROM: choose it above" : "Your ROM: choose it on the Play page", "");
   requirement(builder_.has_value(), builder_ ? "The builder's files" : "The builder's files were not found",
               builder_ ? utf8(*builder_)
                        : "They come with Bright Dawn, in the folder \"builder\" next to the program.");
@@ -505,6 +591,13 @@ void Launcher::draw_build() {
     coloured(build_failed_ ? kBad : kGood, build_result_);
     if (!library_.empty())
       note("Everything the build printed is in " + utf8(library_.parent_path() / "build.log") + ".");
+  }
+  if (setup_ && !running && built_state_ == BuiltState::Ready) {
+    if (ImGui::Button("Go on to the launcher", ImVec2(ImGui::GetFontSize() * 14, ImGui::GetFontSize() * 2.2f))) {
+      log::info("launcher", "the setup is done");
+      setup_ = false;
+      page_ = Page::Play;
+    }
   }
 
   if (!output_.empty()) {

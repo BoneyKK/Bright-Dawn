@@ -94,6 +94,11 @@ add_library(bd_rom STATIC
 )
 target_link_libraries(bd_rom PUBLIC bd_core)
 
+# Decodes the game's own formats, from the player's ROM, into what the
+# program can show.
+add_library(bd_assets STATIC src/assets/screen_picture.cpp)
+target_link_libraries(bd_assets PUBLIC bd_rom)
+
 # The fallback interpreter. This target wraps third-party code that is
 # compiled as it comes: without this project's warning flags, and without the
 # sanitizers, whose findings in it would not be ours to act on.
@@ -161,7 +166,7 @@ target_link_libraries(bd_input PUBLIC bd_core)
 # What the window program's own screens show and keep, without the screens:
 # the settings and their descriptions, and following the game builder.
 add_library(bd_ui STATIC src/ui/build_progress.cpp src/ui/game_settings.cpp)
-target_link_libraries(bd_ui PUBLIC bd_platform bd_gfx)
+target_link_libraries(bd_ui PUBLIC bd_platform bd_gfx bd_assets)
 
 add_executable(bdtool tools/bdtool/main.cpp tools/bdtool/boot.cpp)
 target_link_libraries(bdtool PRIVATE bd_rom bd_platform bd_nds)
@@ -214,13 +219,14 @@ if(BD_BUILD_APP)
     src/app/app.cpp
     src/app/build_tools.cpp
     src/app/child_process.cpp
+    src/app/backdrop.cpp
     src/app/fetch.cpp
     src/app/game_screen.cpp
     src/app/gui.cpp
     src/app/launcher.cpp
     src/app/settings_book.cpp)
   target_include_directories(bd_app PUBLIC src)
-  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui bd_game_library_host
+  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui bd_game_library_host bd_assets
                         ${BD_SDL_TARGET})
 
   # WIN32: on Windows a window program, which opens no console.
