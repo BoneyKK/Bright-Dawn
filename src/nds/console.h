@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 
@@ -47,6 +48,7 @@ enum class StopReason {
   Returned,          // Control came back to where the entry point was called from.
   InstructionLimit,  // The requested number of interpreted instructions ran.
   FrameLimit,        // The requested number of frames passed.
+  Asked,             // on_frame asked for the run to end.
   Unhandled,         // The program needs something that is not implemented.
 };
 
@@ -91,6 +93,13 @@ class Console : private runtime::System {
   // interpreted and `frame_limit` the frames displayed (0 = no bound);
   // translated code is not counted.
   RunResult run(std::uint64_t instruction_limit, std::uint64_t frame_limit = 0);
+
+  // Called at the start of each vertical blank, when both screens of the
+  // frame are complete, after the hardware's own vertical blank work and
+  // before the frame limit is checked. It may show the screens and change the
+  // buttons and the touch screen. Returning false ends the run
+  // (StopReason::Asked).
+  std::function<bool()> on_frame;
 
   Arm9Bus& bus() { return bus_; }
   Arm9Io& io() { return io_; }
@@ -200,6 +209,7 @@ class Console : private runtime::System {
   std::uint64_t accounted_instructions_ = 0;
   std::uint64_t frame_limit_ = 0;
   bool frame_limit_reached_ = false;
+  bool asked_to_end_ = false;
   std::uint64_t sleeps_ = 0;
   bool stopped_ = false;
   std::uint32_t stop_address_ = 0;

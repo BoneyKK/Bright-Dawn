@@ -69,6 +69,10 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
     display_.vertical_blank();
     dma_.trigger(Dma::kStartVBlank);
     geometry_.vertical_blank();
+    if (on_frame && !asked_to_end_ && !on_frame()) {
+      asked_to_end_ = true;
+      machine_.stop();
+    }
     if (frame_limit_ != 0 && video_timing_.frames() >= frame_limit_ && !frame_limit_reached_) {
       frame_limit_reached_ = true;
       machine_.stop();
@@ -161,6 +165,7 @@ RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limi
   stop_detail_.clear();
   frame_limit_ = frame_limit;
   frame_limit_reached_ = false;
+  asked_to_end_ = false;
   machine_.set_instruction_limit(instruction_limit);
   accounted_instructions_ = machine_.statistics().interpreted_instructions;
   set_alarm();
@@ -170,6 +175,8 @@ RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limi
     result.reason = StopReason::Unhandled;
     result.address = stop_address_;
     result.detail = stop_detail_;
+  } else if (asked_to_end_) {
+    result.reason = StopReason::Asked;
   } else if (frame_limit_reached_) {
     result.reason = StopReason::FrameLimit;
   } else if (machine_.instruction_limit_reached() && instruction_limit != 0) {

@@ -30,12 +30,13 @@ add_executable(bd_tests
   test_user_settings.cpp
   test_video_memory.cpp
   test_formats.cpp
+  test_frontend.cpp
   test_keypad.cpp
   test_math_unit.cpp
   test_narc.cpp
   test_rom.cpp
 )
-target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_nds)
+target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_nds bd_gfx bd_input)
 add_test(NAME unit COMMAND bd_tests)
 
 # End-to-end checks of the command-line tool against a generated ROM.
@@ -120,3 +121,11 @@ bd_cli_test(cli_boot_missing boot ${BD_TEST_DIR}/does_not_exist.nds)
 set_tests_properties(cli_boot_missing PROPERTIES PASS_REGULAR_EXPRESSION "does not exist")
 
 add_subdirectory(guest)
+
+# The window program starts and names its build. (What it shows is checked
+# through the libraries it is made of; opening a window needs a screen.)
+if(TARGET bright-dawn)
+  add_test(NAME app_reports_its_build COMMAND bright-dawn --version)
+  set_tests_properties(app_reports_its_build PROPERTIES
+    PASS_REGULAR_EXPRESSION "^bright-dawn [0-9]+[.][0-9]+[.][0-9]+-[a-z0-9.]+( [(][0-9a-f]+[)])?\n$")
+endif()

@@ -477,14 +477,25 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   that interrupt 72,000 times in the ten seconds. On a console, where
   commands take time, it would come less often.
 
-What it runs on is still thin. 20 hardware registers it uses have no
-model; the screens are made but only written to a file by the trace tool;
-no sequence is played, so there is no music.
+In the window (`bright-dawn`), the title screen waits for the touch
+screen, not for a button: holding Start over frames 600 to 610 leaves frame
+900 exactly as without it, and a touch over the same frames brings up the
+next page, a menu drawn as a book, by frame 900. Its rows are still empty
+at that frame; whether their text comes later or something it needs is
+missing has not been looked into. The window's picture of frame 600
+matches the trace tool's, every pixel of it.
 
-Next: a window to show the screens in and the buttons and touch screen
-read from the keyboard, mouse or a controller, so that the title screen can
-be passed; for sound, the sequence player. Interrupts in
+What it runs on is still thin. 20 hardware registers it uses have no
+model; no sequence is played, so there is no music.
+
+Next: the interpreter's own overhead (below); then what the menu after the
+title screen needs; for sound, the sequence player. Interrupts in
 translated code before translated game code is run.
 
-Speed, for orientation only: the interpreter runs about 20 million
-instructions per second in a release build on the development machine.
+Speed, for orientation only: on the development machine a release build
+runs these 600 frames in about 35 seconds, about 17 frames a second, with
+or without the window: about 9.6 million instructions a second all told.
+The console's rate needs about 34 million. A profile of 60 frames puts
+nearly 40% of the time in copying the processor's state out of the
+interpreter after every instruction, and 16% in memory reads, part of
+them the instruction read twice.

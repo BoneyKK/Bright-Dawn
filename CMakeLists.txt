@@ -9,6 +9,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BD_BUILD_TESTS "Build the unit tests" ON)
 option(BD_SANITIZE "Build with AddressSanitizer and UBSan (GCC/Clang)" OFF)
 option(BD_WERROR "Treat compiler warnings as errors" OFF)
+option(BD_BUILD_APP "Build the game window, bright-dawn (needs SDL 3)" ON)
+option(BD_SYSTEM_SDL "Use an installed SDL 3 instead of building the pinned release" OFF)
 option(BD_STATIC_RUNTIME "Link the C/C++ runtime statically, for release packages" OFF)
 
 # Release packages should run without installing a compiler runtime. Not
@@ -17,7 +19,12 @@ if(BD_STATIC_RUNTIME)
   if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    add_link_options(-static)
+    # Fully static, except for programs that set BD_SYSTEM_LIBC: the window,
+    # which loads the system's display, sound and controller libraries while
+    # it runs, and so must use the system's C library. Its C++ runtime is
+    # still linked in.
+    add_link_options("$<IF:$<BOOL:$<TARGET_PROPERTY:BD_SYSTEM_LIBC>>,-static-libstdc++,-static>"
+                     "$<$<BOOL:$<TARGET_PROPERTY:BD_SYSTEM_LIBC>>:-static-libgcc>")
   endif()
 endif()
 
@@ -61,6 +68,7 @@ target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(bd_core PUBLIC bd_build_flags)
 
 add_library(bd_platform STATIC
+  src/platform/frame_pacer.cpp
   src/platform/paths.cpp
 )
 target_link_libraries(bd_platform PUBLIC bd_core)
@@ -131,10 +139,47 @@ add_library(bd_nds STATIC
 target_include_directories(bd_nds PUBLIC src)
 target_link_libraries(bd_nds PUBLIC bd_build_flags bd_runtime bd_rom)
 
+# Presentation rules and input mapping: what the window needs that does not
+# need a window, so that it can be tested without one.
+add_library(bd_gfx STATIC src/gfx/screen_image.cpp src/gfx/screen_layout.cpp)
+target_link_libraries(bd_gfx PUBLIC bd_core)
+add_library(bd_input STATIC src/input/bindings.cpp)
+target_link_libraries(bd_input PUBLIC bd_core)
+
 add_executable(bdtool tools/bdtool/main.cpp tools/bdtool/boot.cpp)
 target_link_libraries(bdtool PRIVATE bd_rom bd_platform bd_nds)
 
-# A relocatable layout: the tool and its documents side by side.
+# The game in a window. SDL 3 (zlib licence) is the window, input and,
+# later, sound layer. Unless an installed one is asked for, a pinned release
+# is downloaded, checked against its hash and built as a static library with
+# the rest, so that packages need no SDL installed.
+if(BD_BUILD_APP)
+  if(BD_SYSTEM_SDL)
+    find_package(SDL3 REQUIRED CONFIG)
+    set(BD_SDL_TARGET SDL3::SDL3)
+  else()
+    include(FetchContent)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(SDL3
+      URL https://github.com/libsdl-org/SDL/releases/download/release-3.2.26/SDL3-3.2.26.tar.gz
+      URL_HASH SHA256=dad488474a51a0b01d547cd2834893d6299328d2e30f479a3564088b5476bae2
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(SDL3)
+    set(BD_SDL_TARGET SDL3::SDL3-static)
+  endif()
+  # WIN32: on Windows a window program, which opens no console.
+  add_executable(bright-dawn WIN32 src/app/main.cpp)
+  target_link_libraries(bright-dawn PRIVATE bd_nds bd_gfx bd_input bd_platform ${BD_SDL_TARGET})
+  set_target_properties(bright-dawn PROPERTIES BD_SYSTEM_LIBC ON)
+  install(TARGETS bright-dawn RUNTIME DESTINATION .)
+endif()
+
+# A relocatable layout: the programs and their documents side by side.
 install(TARGETS bdtool RUNTIME DESTINATION .)
 install(FILES LICENSE README.md DESTINATION .)
 

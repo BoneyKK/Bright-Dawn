@@ -128,7 +128,7 @@ metadata.
 | Decision | Reason |
 | --- | --- |
 | C++20, CMake | The recompiler's output is C; C++ is the common language for the surrounding runtime and for the graphics, audio and windowing libraries likely to be used. |
-| One third-party source file so far | SkyEmu's `arm7.h` (MIT) is the fallback interpreter, chosen after comparing six candidates on licence and fit and then proving it on the test corpus. Each later dependency is assessed the same way; SDL 3 (zlib licence) is the expected choice for `platform`. |
+| Third-party code kept to a minimum | SkyEmu's `arm7.h` (MIT) is the fallback interpreter, chosen after comparing six candidates on licence and fit and then proving it on the test corpus. Each later dependency is assessed the same way. SDL 3 (zlib licence) is the window, input and, later, sound layer: a pinned release, downloaded and checked against its hash by the build. Only the window program (`src/app`) uses it; `gfx` and `input` hold the rules that need no window, and are tested without one. |
 | The interpreter sits behind a C interface of its own | Nothing but one wrapper file includes the third-party header, so the interpreter can be replaced without touching the runtime. |
 | The translator stays in Python | It is the owner's tested code and runs once, offline. Rewriting it would discard its test history for no gain. |
 | Errors as values (`Result<T>`) in parsers | Input is untrusted and failures are expected; callers must handle them. |
