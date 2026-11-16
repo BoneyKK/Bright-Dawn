@@ -16,8 +16,8 @@ program then runs natively. Then the launcher opens: play, the settings, and
 the log, over the book of the game's main menu, read from your ROM. Nothing needs installing for that: the compiler
 (and on Windows, Python, if it is not installed) is downloaded for the build,
 checked, and deleted with everything else the build made; about 2 GB of free
-space is needed while it runs. The built game does not get far yet:
-interrupts are not yet taken in translated code.
+space is needed while it runs. The built game gets as far as the
+interpreted one (the name entry) and runs about twice as fast.
 
 Keyboard: arrow keys, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter =
 Start, Right Shift = Select. The left mouse button on the touch screen is the

@@ -52,8 +52,6 @@ In `src/nds`:
 
 Not present at all: video, input, and a device for the sound to come out
 of.
-Interrupts in translated code are not present either: the tool that exists
-runs everything in the interpreter.
 
 The handshake follows what NooDS does when it stands in for the second
 processor, and matches what the game's own code waits for, read from its
@@ -505,11 +503,25 @@ frame) and the window froze. A program that sleeps 100,000 times in a row
 without time passing is now stopped, with that explanation, after one
 frame.
 
-Next: interrupts taken in translated code, at the points where it can be
-left (its calls and its sleeps), and time passing while it runs, so that
-the translated game can get as far as the interpreted one. Then playing on
-from the name entry, by hand and with scripted input; the save memory kept
-in a file; for sound, the sequence player.
+Interrupts are now taken in translated code where it polls for them (see
+ARCHITECTURE.md, "The boundary between translated code and the runtime"),
+and time passes with the instructions it counts. With that, the built game
+runs as far as the interpreted one: the title screen, and with a touch and a
+button press, the name entry, the same pictures (the clouds and fog drift a
+little differently: the two count time differently). On the development
+machine, a release build: 600 frames in 11 seconds instead of 24, 1500 frames
+(to the name entry) in 26 instead of 58; about 135 places are still
+interpreted, among them code the game copies into the fast memories at run
+time.
+
+Getting there turned up a fault in the translator: a function whose entry
+lies above its lowest address (a loop placed before the entry) started at
+the wrong instruction. The game has such routines in its overlays, which
+decode parts of themselves when they are loaded; one of them, started
+wrongly, overwrote code of the main program. Fixed, with a guest test.
+
+Next: playing on from the name entry, by hand and with scripted input; the
+save memory kept in a file; for sound, the sequence player.
 
 Speed, for orientation only: on the development machine a release build
 ran these 600 frames in about 35 seconds, with or without the window. A
