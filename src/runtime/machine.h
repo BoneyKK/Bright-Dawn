@@ -18,6 +18,7 @@
 // and any call sites inside it are told to give up.
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -100,10 +101,25 @@ struct Statistics {
   // comparisons found that memory held something else.
   std::uint64_t translations_checked = 0;
   std::uint64_t translations_rejected = 0;
+  // Times the native frames of translated code were let go of because the
+  // call sites waiting in them were nested too deep (see Machine).
+  std::uint64_t nesting_dropped = 0;
 };
 
+// Call sites that are never returned to. Some code uses a call instruction
+// as a long jump (Thumb's "bl" reaches further than "b"), going round a loop
+// of such "calls" that never return. Each one is a native call in the
+// translated code, so the native stack would grow with every pass until it
+// overflowed. When the call sites waiting reach kDeepestNesting, the
+// machine therefore lets go of all of them: every native frame above the
+// outermost run returns, and execution continues from the processor model
+// where it was. Control that comes back to one of those call sites later is
+// still followed, only no longer natively at once (a return to an address
+// no call site waits for: see Statistics::returns_elsewhere).
 class Machine {
  public:
+  static constexpr std::uint32_t kDeepestNesting = 1024;
+
   // `table` ends with an entry whose function is null. All three arguments
   // must outlive the machine.
   Machine(Bus& bus, System& system, const TranslatedEntry* table);
@@ -175,6 +191,13 @@ class Machine {
   // Whether a call or jump to `address` would run translated code right now.
   bool is_translated(std::uint32_t address) { return lookup(address) != nullptr; }
 
+  // Where guest code was last entered through the runtime: a translated
+  // function it called or jumped to, or the address the interpreter started
+  // at. Translated functions calling one another directly do not change it.
+  // For reports of a crash or a hang, so readable from any thread (and from
+  // a signal handler: it is lock-free).
+  const std::atomic<std::uint32_t>& last_entered() const { return last_entered_; }
+
   const Statistics& statistics() const { return statistics_; }
   void clear_statistics() { statistics_ = Statistics(); }
 
@@ -233,6 +256,12 @@ class Machine {
   void arrive(int call_site);
   void run_from(std::uint32_t address);
   bool interrupt_due() const { return interrupt_line_ && (cpu_.cpsr_ctrl & 0x80u) == 0; }
+  // When the call sites waiting are nested kDeepestNesting deep above the
+  // outermost run: arranges for all of them to give up and for the run the
+  // giving up ends in (the outermost, or one at its depth entered through a
+  // jump) to go on at `continue_at`, and returns true. The caller returns at
+  // once, as after ds::leave returning true.
+  bool drop_deep_nesting(std::uint32_t continue_at);
   // Runs from `address` (an exception vector) until control comes back to
   // `back_to` with stack pointer `stack_pointer`, as if a call site waited
   // there. Returns true when control went to an outer call site instead.
@@ -263,6 +292,14 @@ class Machine {
   bool interrupt_line_ = false;
   std::uint64_t alarm_at_ = ~std::uint64_t{0};
   std::uint64_t executed_ = 0;  // Not counting cpu_.executed, which is added in.
+  std::atomic<std::uint32_t> last_entered_{0};
+  // run_from calls in progress, and the depth the outermost one began at.
+  std::uint32_t runs_ = 0;
+  std::uint32_t floor_depth_ = 0;
+  // Set by drop_deep_nesting: where execution goes on once the call sites
+  // above the outermost run have given up.
+  bool resume_ = false;
+  std::uint32_t resume_at_ = 0;
 };
 
 }  // namespace bd::runtime

@@ -243,10 +243,27 @@ void Machine::stop() {
 // Execution continues at `address`, by whatever means, until control arrives
 // at a waiting call site.
 void Machine::run_from(u32 address) {
+  const bool outermost = runs_ == 0;
+  if (outermost) floor_depth_ = cpu_.depth;
+  ++runs_;
+  struct Leaving {
+    u32& runs;
+    ~Leaving() { --runs; }
+  } leaving{runs_};
   for (;;) {
     if (stopped_) return;
     if (const Function function = lookup(address)) {
+      last_entered_.store(address, std::memory_order_relaxed);
       function(cpu_);
+      if (resume_ && cpu_.unwind == 0) {
+        // The call sites nested above the outermost run gave up
+        // (drop_deep_nesting), down to this run's depth. This is the
+        // outermost run, or one at the same depth entered through a jump:
+        // either goes on where execution was going.
+        resume_ = false;
+        address = resume_at_;
+        continue;
+      }
       if (cpu_.unwind != 0) return;  // Control went to an outer call site.
       // The function returned to cpu_.ret_to. Normally a call site waits there.
       const int site = waiting_call_site(cpu_.ret_to, cpu_.r[13]);
@@ -259,22 +276,44 @@ void Machine::run_from(u32 address) {
       address = cpu_.ret_to;
       continue;
     }
-    if (interpret(address, &address)) return;
+    if (interpret(address, &address)) {
+      if (resume_ && cpu_.unwind == 0) {
+        // As above: the interpreted code had called the translated code in
+        // which the call sites piled up.
+        resume_ = false;
+        address = resume_at_;
+        continue;
+      }
+      return;
+    }
     // The interpreter met a jump to a translated function; go round again.
     ++statistics_.native_jumps_from_interpreter;
   }
+}
+
+bool Machine::drop_deep_nesting(u32 continue_at) {
+  if (runs_ == 0 || cpu_.unwind != 0 || stopped_ || cpu_.depth < floor_depth_ + kDeepestNesting) return false;
+  ++statistics_.nesting_dropped;
+  // Every call site above the outermost run's gives up: as many as there
+  // are, each counting one down in ds::leave.
+  cpu_.unwind = cpu_.depth - floor_depth_;
+  resume_ = true;
+  resume_at_ = continue_at;
+  return true;
 }
 
 void Machine::dispatch_call(u32 address) {
   count_translated();
   // The processor is about to run `address`: an interrupt can come first.
   if (interrupt_due() && interrupt(address)) return;
+  if (drop_deep_nesting(address)) return;
   run_from(address);
 }
 
 void Machine::dispatch_jump(u32 address) {
   count_translated();
   if (interrupt_due() && interrupt(address)) return;
+  if (drop_deep_nesting(address)) return;
   // A jump to exactly where a call site is waiting is a return: for example
   // "pop {r3}; bx r3", which the translator does not recognise as one.
   const int site = waiting_call_site(address, cpu_.r[13]);
@@ -297,6 +336,9 @@ bool Machine::interrupt(u32 next) {
   count_translated();
   if (stopped_) return true;  // Every call site gives up (see stop).
   if (!interrupt_due()) return false;
+  // Taken from the outermost run instead, when the nesting is too deep: the
+  // interpreter or the next poll takes it there.
+  if (drop_deep_nesting(next)) return true;
   ++statistics_.interrupts_taken;
   ++statistics_.interrupts_in_translated_code;
   // The interrupted code waits for the handler's return to `next` like a call
@@ -349,6 +391,7 @@ void Machine::call_function(u32 address, u32 return_address) {
     instructions_this_call_ = 0;
     limit_reached_ = false;
     stopped_ = false;
+    resume_ = false;
   }
   cpu_.r[14] = return_address;
   ds::enter(cpu_, return_address);
@@ -400,6 +443,7 @@ void Machine::store_from_interpreter(const bd_arm_state& state) {
 // (returns true), or reaches a jump to a translated function (returns false
 // with its address in *continue_at and the model up to date).
 bool Machine::interpret(u32 start, u32* continue_at) {
+  last_entered_.store(start, std::memory_order_relaxed);
   ++statistics_.interpreter_entries[start];
   if (core_ == nullptr) {
     give_up(start, "the interpreter could not be created");

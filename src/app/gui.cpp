@@ -1,12 +1,19 @@
 #include "app/gui.h"
 
 #include <cmath>
+#include <cstdio>
 
+#include "app/menu_skin.h"
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_sdlrenderer3.h"
 #include "imgui.h"
 
 namespace bd::app {
+namespace {
+
+constexpr float kFontSize = 18.0f;  // Before the display's scale.
+
+}  // namespace
 
 Gui::~Gui() { shutdown(); }
 
@@ -16,6 +23,7 @@ void Gui::shutdown() {
   ImGui_ImplSDLRenderer3_Shutdown();
   ImGui_ImplSDL3_Shutdown();
   ImGui::DestroyContext();
+  plain_ = outlined_ = nullptr;
 }
 
 bool Gui::init(SDL_Window* window, SDL_Renderer* renderer, std::string& error) {
@@ -47,10 +55,53 @@ bool Gui::init(SDL_Window* window, SDL_Renderer* renderer, std::string& error) {
   return true;
 }
 
-void Gui::set_see_through(bool see_through) {
-  if (see_through == see_through_) return;
-  see_through_ = see_through;
+void Gui::set_game_look(bool game_look) {
+  if (game_look == game_look_) return;
+  game_look_ = game_look;
   if (started_) apply_style();
+}
+
+void Gui::set_game_font(std::shared_ptr<const assets::Font> font) {
+  if (!started_) return;
+  ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+  if (plain_ != nullptr) {
+    ImGui::GetIO().FontDefault = nullptr;
+    atlas->RemoveFont(outlined_);
+    atlas->RemoveFont(plain_);
+    plain_ = outlined_ = nullptr;
+  }
+  plain_source_ = GameFontSource{font, false};
+  outlined_source_ = GameFontSource{font, true};
+  if (font != nullptr) {
+    const auto add = [&](GameFontSource& source, const char* name) {
+      ImFontConfig config;
+      config.FontLoader = game_font_loader();
+      config.FontData = &source;
+      config.FontDataSize = 1;
+      config.FontDataOwnedByAtlas = false;
+      std::snprintf(config.Name, sizeof config.Name, "%s", name);
+      ImFont* added = atlas->AddFont(&config);
+      // Characters the game's font lacks: from the program's own.
+      ImFontConfig fallback;
+      fallback.MergeMode = true;
+      fallback.DstFont = added;
+      atlas->AddFontDefaultVector(&fallback);
+      return added;
+    };
+    plain_ = add(plain_source_, "game font");
+    outlined_ = add(outlined_source_, "game font, outlined");
+  }
+  apply_style();
+}
+
+ImFont* Gui::outlined_font() const { return outlined_ != nullptr ? outlined_ : ImGui::GetIO().Fonts->Fonts[0]; }
+
+ImFont* Gui::plain_font() const { return plain_ != nullptr ? plain_ : ImGui::GetIO().Fonts->Fonts[0]; }
+
+float Gui::sharp_size(float wanted) const {
+  if (plain_ == nullptr || plain_source_.font == nullptr) return wanted;
+  const assets::Font& font = *plain_source_.font;
+  return static_cast<float>(font.line_height() * game_font_scale(font, wanted));
 }
 
 void Gui::apply_style() {
@@ -66,13 +117,6 @@ void Gui::apply_style() {
   const ImVec4 gold(0.86f, 0.66f, 0.28f, 1.00f), gold_dim(0.55f, 0.42f, 0.18f, 1.00f);
   c[ImGuiCol_WindowBg] = page;
   c[ImGuiCol_ChildBg] = panel;
-  if (see_through_) {
-    // The backdrop shows at the window's edges and faintly through the
-    // pages, which stay dark enough to read on.
-    c[ImGuiCol_WindowBg].w = 0.0f;
-    c[ImGuiCol_ChildBg].w = 0.86f;
-    style.WindowBorderSize = 0.0f;
-  }
   c[ImGuiCol_PopupBg] = panel;
   c[ImGuiCol_Border] = ImVec4(0.35f, 0.29f, 0.20f, 1.00f);
   c[ImGuiCol_Text] = ImVec4(0.93f, 0.89f, 0.80f, 1.00f);
@@ -112,10 +156,63 @@ void Gui::apply_style() {
   style.FramePadding = ImVec2(8, 5);
   style.ItemSpacing = ImVec2(10, 8);
   style.WindowPadding = ImVec2(16, 16);
+  if (game_look_) apply_game_look(style);
   style.ScaleAllSizes(scale);
-  style.FontSizeBase = 18.0f;
-  style.FontScaleDpi = scale;
+  if (plain_ != nullptr) {
+    // Whole screen pixels for each of the font's, near the size the
+    // program's own font would have.
+    const assets::Font& font = *plain_source_.font;
+    const int k = game_font_scale(font, kFontSize * scale);
+    style.FontSizeBase = static_cast<float>(font.line_height() * k);
+    style.FontScaleDpi = 1.0f;
+  } else {
+    style.FontSizeBase = kFontSize;
+    style.FontScaleDpi = scale;
+  }
   ImGui::GetStyle() = style;
+  ImGui::GetIO().FontDefault = plain_;
+}
+
+// The menus' colours (app/menu_skin.h) on parchment and wood: the pages
+// draw nothing of their own, the pictures behind them show.
+void Gui::apply_game_look(ImGuiStyle& style) {
+  ImVec4* c = style.Colors;
+  const ImVec4 clear(0, 0, 0, 0);
+  const ImVec4 paper_dark(0.80f, 0.69f, 0.50f, 1.0f), paper_darker(0.72f, 0.60f, 0.42f, 1.0f);
+  const ImVec4 brown(0.56f, 0.38f, 0.16f, 1.0f), brown_light(0.70f, 0.50f, 0.24f, 1.0f);
+  c[ImGuiCol_WindowBg] = clear;
+  c[ImGuiCol_ChildBg] = clear;
+  c[ImGuiCol_Border] = brown;
+  c[ImGuiCol_PopupBg] = ImVec4(0.93f, 0.86f, 0.70f, 1.0f);
+  c[ImGuiCol_Text] = skin::kInk;
+  c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.33f, 0.20f, 1.0f);
+  c[ImGuiCol_FrameBg] = paper_dark;
+  c[ImGuiCol_FrameBgHovered] = paper_darker;
+  c[ImGuiCol_FrameBgActive] = paper_darker;
+  c[ImGuiCol_Button] = skin::kAction;
+  c[ImGuiCol_ButtonHovered] = ImVec4(0.36f, 0.66f, 0.95f, 1.0f);
+  c[ImGuiCol_ButtonActive] = ImVec4(0.16f, 0.42f, 0.72f, 1.0f);
+  c[ImGuiCol_Header] = paper_dark;
+  c[ImGuiCol_HeaderHovered] = paper_darker;
+  c[ImGuiCol_HeaderActive] = brown_light;
+  c[ImGuiCol_CheckMark] = skin::kChosenText;
+  c[ImGuiCol_SliderGrab] = skin::kAction;
+  c[ImGuiCol_SliderGrabActive] = ImVec4(0.16f, 0.42f, 0.72f, 1.0f);
+  c[ImGuiCol_PlotHistogram] = skin::kAction;
+  c[ImGuiCol_Separator] = brown;
+  c[ImGuiCol_NavCursor] = skin::kChosen;
+  c[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.10f);
+  c[ImGuiCol_ScrollbarGrab] = brown;
+  c[ImGuiCol_ScrollbarGrabHovered] = brown_light;
+  c[ImGuiCol_ScrollbarGrabActive] = skin::kChosenText;
+  c[ImGuiCol_Tab] = paper_dark;
+  c[ImGuiCol_TabHovered] = paper_darker;
+  c[ImGuiCol_TabSelected] = skin::kChosen;
+  c[ImGuiCol_TextSelectedBg] = ImVec4(0.22f, 0.53f, 0.85f, 0.35f);
+  style.WindowBorderSize = 0.0f;
+  style.ChildBorderSize = 0.0f;
+  style.FrameBorderSize = 1.0f;
+  style.WindowPadding = ImVec2(12, 12);
 }
 
 void Gui::process_event(const SDL_Event& event) {

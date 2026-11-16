@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +29,7 @@
 #include "app/app.h"
 #include "app/build_tools.h"
 #include "app/game_screen.h"
+#include "app/hang_watch.h"
 #include "app/launcher.h"
 #include "core/log.h"
 #include "core/version.h"
@@ -97,6 +99,8 @@ constexpr const char* kUsage =
     "                        sharp (nearest)\n"
     "  --textures MODE       3D scenes' textures: sharp (nearest, as on the DS) or\n"
     "                        smooth (bilinear)\n"
+    "  --renderer WAY        drawing the window: vulkan (the default; the system's own\n"
+    "                        where Vulkan cannot be used) or system\n"
     "  --log-level LEVEL     error, warning, info or debug\n"
     "\n"
     "Other options:\n"
@@ -199,6 +203,36 @@ void log_system(SDL_Renderer* renderer) {
   }
 }
 
+// Opens the window and its renderer, hidden until both are there. With
+// `vulkan`, the window is made for Vulkan and drawn with SDL's Vulkan
+// renderer; where that cannot be done (no Vulkan driver, or one too old),
+// the window is made again for the system's own renderer.
+bool open_window(App& a, gfx::Point size, bool vulkan) {
+  const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;
+  if (vulkan) {
+    a.window = SDL_CreateWindow("Bright Dawn", size.x, size.y, flags | SDL_WINDOW_VULKAN);
+    if (a.window != nullptr) a.renderer = SDL_CreateRenderer(a.window, "vulkan");
+    if (a.renderer == nullptr) {
+      log::warning("window", std::string("Vulkan cannot be used, so the system's own renderer draws instead: ") +
+                                 SDL_GetError());
+      if (a.window != nullptr) SDL_DestroyWindow(a.window);
+      a.window = nullptr;
+    }
+  }
+  if (a.renderer == nullptr) {
+    a.window = SDL_CreateWindow("Bright Dawn", size.x, size.y, flags);
+    if (a.window == nullptr) return false;
+    a.renderer = SDL_CreateRenderer(a.window, nullptr);
+    if (a.renderer == nullptr) {
+      SDL_DestroyWindow(a.window);
+      a.window = nullptr;
+      return false;
+    }
+  }
+  SDL_ShowWindow(a.window);
+  return true;
+}
+
 // The launcher's size: generous, within the display.
 void size_for_launcher(SDL_Window* window) {
   if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0) SDL_SetWindowFullscreen(window, false);
@@ -291,9 +325,23 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     return played;
   }
   log::info("game", "started");
-  console.on_frame = [&screen] { return screen.frame(); };
-  const nds::RunResult result = console.run(0, a.options.frames);
-  console.on_frame = nullptr;
+  nds::RunResult result;
+  {
+    // A crash or a hang from here on names where the game's code was.
+    platform::set_crash_guest_address(&console.machine().last_entered());
+    app::HangWatch hang_watch(console.machine().last_entered(), std::chrono::seconds(10));
+    console.on_frame = [&screen, &hang_watch] {
+      hang_watch.pause();
+      const bool go_on = screen.frame();
+      hang_watch.resume();
+      return go_on;
+    };
+    hang_watch.resume();
+    result = console.run(0, a.options.frames);
+    hang_watch.pause();
+    console.on_frame = nullptr;
+    platform::set_crash_guest_address(nullptr);
+  }
   const std::uint64_t frames = console.display().statistics().frames;
   std::printf("%" PRIu64 " frames shown\n", frames);
   const runtime::Statistics& stats = console.machine().statistics();
@@ -302,6 +350,10 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
               " interrupts taken, %" PRIu64 " sleeps",
               frames, stats.interpreted_instructions, stats.interpreter_entries.size(), stats.interrupts_taken,
               console.sleeps());
+  if (stats.nesting_dropped != 0)
+    log::writef(log::Level::Info, "game",
+                "call sites that were never returned to were let go of %" PRIu64 " times (%u deep each time)",
+                stats.nesting_dropped, runtime::Machine::kDeepestNesting);
   for (const auto& [what, count] : console.polygon_renderer().notes())
     log::writef(log::Level::Info, "game", "asked of the 3D hardware and not done: %s (%" PRIu64 " frames)", what.c_str(),
                 count);
@@ -365,7 +417,7 @@ int run(CommandLine& cl, int argc, char** argv) {
     const gfx::Point size = cl.have_source ? gfx::window_size(static_cast<int>(a.settings.number(ui::key::kScale)),
                                                              ui::layout_options(a.settings))
                                            : gfx::Point{1100, 720};
-    if (!SDL_CreateWindowAndRenderer("Bright Dawn", size.x, size.y, SDL_WINDOW_RESIZABLE, &a.window, &a.renderer)) {
+    if (!open_window(a, size, a.settings.choice(ui::key::kRenderer) == "vulkan")) {
       complain(nullptr, std::string("Cannot open a window: ") + SDL_GetError());
       SDL_Quit();
       return 1;
@@ -463,6 +515,8 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kGap, argv[++i]);
     } else if (arg == "--screen-filter" && has_value) {
       cl.overrides.emplace_back(ui::key::kScreenFilter, argv[++i]);
+    } else if (arg == "--renderer" && has_value) {
+      cl.overrides.emplace_back(ui::key::kRenderer, argv[++i]);
     } else if (arg == "--textures" && has_value) {
       cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
     } else if (arg == "--log-level" && has_value) {

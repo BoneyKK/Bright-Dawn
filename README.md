@@ -66,9 +66,9 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | 3D engine | Begun, tested: the command queue, status and interrupt, the matrices and their stacks, the tests a program can ask for, vertices made into polygons (facing, cutting to the view, placing on the screen, the limits of a frame), lighting, and the drawing of a frame's polygons with textures, blending, shadows, fog, edge marking and anti-aliasing at the hardware's resolution. The real program's 3D commands run through it; `bdtool boot --picture` writes the drawn 3D layer of the last frame (the title screen) and `--wireframe` its outlines. Not compared with a console pixel by pixel; no sorting of translucent polygons; nothing puts the frame on a screen yet |
 | Display | Begun, tested: both 2D engines (backgrounds of every kind, sprites, windows, effects, master brightness), the 3D picture among them, the display capture, both screens, a line at a time. On the real ROM the title screen comes out on both screens (`bdtool boot --screens`); looked at, not compared with a console pixel by pixel. Not shown in a window yet |
 | Window (`bright-dawn`) | Begun, tested where it can be without a screen: both screens, stacked or side by side, scaled by whole numbers or to fill the window, with sharp pixels and smooth edges (or plain bilinear, or nearest), full screen; the keyboard, any number of controllers and the mouse as the stylus; the console's frame rate kept. On the real ROM its picture matches the trace tool's pixel for pixel, and a touch passes the title screen |
-| Launcher, settings book, pause menu | Begun: without a ROM on the command line the program opens its launcher (choose the ROM, play, build the game, settings, log); the settings are described once and the book and the settings file are made from the descriptions; Escape pauses the game with a menu. Tried on the real ROM under a virtual display; the settings store is unit tested |
+| Launcher, settings book, pause menu | Begun: without a ROM on the command line the program opens its launcher (choose the ROM, play, build the game, settings, log), dressed in the game's settings menu and font from the ROM; the settings are described once and the book and the settings file are made from the descriptions; Escape pauses the game with a menu. Tried on the real ROM under a virtual display; the settings store and the font reader are unit tested |
 | Textures of 3D scenes, sharp or smooth | Done, tested: nearest (as on the DS) by default; bilinear as a setting, for polygons drawn with perspective only, so that a HUD drawn in 3D keeps its texels |
-| Log | Done, tested: every run writes one, with the system, the settings, what the player did and how the run ended; a crash is noted in it |
+| Log | Done, tested: every run writes one, with the system, the settings, what the player did and how the run ended; a crash is noted in it with where it happened, and a game that stops finishing frames |
 | Interrupts in translated code | Done, tested: taken where the code polls for them (loops, coprocessor and status register writes, calls through the runtime, BIOS calls), with time passing as the code counts its instructions. The built game reaches the name entry like the interpreted one, about twice as fast |
 | High-resolution renderer, audio output, rebinding, mods | Not started |
 
@@ -131,9 +131,11 @@ tests, developer documents or tools beyond the builder's.
 Start `bright-dawn` without anything else. The first time, and again after an
 update, it opens the setup: choose your ROM (it is remembered), and build the
 game from it (next section). Then it opens its launcher: Play, the settings,
-building the game again, and where the log is. Behind both is the book of the
-game's main menu, read from your ROM when it is chosen; nothing of the game
-comes with Bright Dawn. Started with a ROM, it plays it at once, built or not:
+building the game again, and where the log is. Once your ROM is chosen, both
+look like the game's own settings menu: its wooden board, title ribbon,
+parchment strips and message bar, the travel journal's parchment, and the
+game's font, all read from your ROM; nothing of the game comes with Bright
+Dawn. Started with a ROM, it plays it at once, built or not:
 
 ```bash
 build/bright-dawn path/to/your-rom.nds
@@ -169,8 +171,15 @@ The settings are kept in `settings.txt` in the per-user data directory
 (`%LOCALAPPDATA%\BrightDawn` on Windows, `~/.local/share/bright-dawn` on
 Linux), a text file with each setting described. Every run writes a log to
 `logs/` there, keeping the last ten: the system, the settings, what was done
-and how the run ended, including a crash. Please attach it when reporting a
-problem. `--log-level debug` (or Settings, Log) records more.
+and how the run ended, including a crash (where it happened, in the program
+and in the game's code) or the game not finishing a frame for 10 seconds.
+Please attach it when reporting a problem. `--log-level debug` (or Settings,
+Log) records more.
+
+Bright Dawn draws through Vulkan where the computer has it, and through the
+system's own renderer (Direct3D on Windows, OpenGL elsewhere) where it does
+not: *Drawing* (Settings, Display) or `--renderer system` chooses the latter.
+The log says which one is used.
 
 `bright-dawn --help` lists the options. Some change a setting for one run
 (`--scale`, `--side-by-side`, `--textures smooth`, ...); `--no-settings` uses

@@ -3,6 +3,7 @@
 // (tools/translator/dslab/arm_lift.py): counting their instructions, polling
 // before going round a loop, returning through c.ret_to, and leaving an
 // exception handler through ds::return_from_exception and ds::jump.
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -112,11 +113,57 @@ void f_svc(ds::Cpu& c) {
   ds::jump(c, t);
 }
 
+// 0x3000 and 0x3100: a loop made of calls that never return, as code that
+// uses "bl" as a long jump has. 0x3000 calls 0x3100 directly, which calls
+// 0x3000 back through the runtime (as a computed call would), and so on,
+// with the stack pointer unchanged; after kLaps passes, 0x3000 jumps to
+// where the test's call returns to.
+constexpr u32 kLaps = 5000;
+constexpr u32 kLap = 0x8008;  // The pass counter.
+u32 g_deepest = 0;            // The most call sites waiting, seen from 0x3000.
+
+void f_far_b(ds::Cpu& c);
+
+void f_far_a(ds::Cpu& c) {
+  c.executed += 4;
+  g_deepest = std::max(g_deepest, c.depth);
+  const u32 lap = c.rd32(kLap) + 1;
+  c.wr32(kLap, lap);
+  if (lap == kLaps) {
+    ds::jump(c, kReturn);
+    return;
+  }
+  c.r[14] = 0x00003011u;
+  ds::enter(c, 0x00003011u);
+  f_far_b(c);
+  if (ds::leave(c, 0x00003011u)) return;
+  ds::unhandled(c, 0x3010, "a call that never returns returned");
+}
+
+void f_far_b(ds::Cpu& c) {
+  c.executed += 1;
+  c.r[14] = 0x00003105u;
+  ds::enter(c, 0x00003105u);
+  ds::call(c, 0x00003000u);
+  if (ds::leave(c, 0x00003105u)) return;
+  ds::unhandled(c, 0x3104, "a call that never returns returned");
+}
+
+// 0x3200: jumps to 0x3000 through the runtime (a computed jump), so the
+// loop of calls runs in a run nested at the same depth as the outermost.
+void f_far_start(ds::Cpu& c) {
+  c.executed += 1;
+  ds::jump(c, 0x00003000u);
+}
+
 const TranslatedEntry kTable[] = {
     {0x00000008u, f_svc, -1, nullptr, 0},
     {0x00000018u, f_irq, -1, nullptr, 0},
     {0x00001000u, f_wait, -1, nullptr, 0},
     {0x00001100u, f_bios_call, -1, nullptr, 0},
+    {0x00003000u, f_far_a, -1, nullptr, 0},
+    {0x00003100u, f_far_b, -1, nullptr, 0},
+    {0x00003200u, f_far_start, -1, nullptr, 0},
     {0, nullptr, 0, nullptr, 0},
 };
 
@@ -201,4 +248,69 @@ TEST(an_interrupt_comes_before_a_call_through_the_runtime) {
   // The handler's flag was set before the loop first read it.
   CHECK(c.r[0] == 0x1004);
   CHECK((c.cpsr_ctrl & 0x1Fu) == 0x1F && c.r[13] == 0x7000);
+}
+
+TEST(calls_that_never_return_do_not_nest_without_end) {
+  Rig rig;
+  g_deepest = 0;
+  rig.machine.call_function(0x3000, kReturn);
+  const ds::Cpu& c = rig.machine.cpu();
+  CHECK(!rig.machine.stopped());
+  CHECK(rig.hardware.unhandled_count == 0);
+  CHECK(rig.memory.read32(kLap) == kLaps);
+  // Each pass leaves two call sites waiting; they are let go of before
+  // there are too many, and the loop goes on where it was.
+  CHECK(g_deepest <= bd::runtime::Machine::kDeepestNesting + 2);
+  CHECK(rig.machine.statistics().nesting_dropped >= 2 * kLaps / bd::runtime::Machine::kDeepestNesting - 1);
+  CHECK(c.depth == 0);
+  CHECK((c.cpsr_ctrl & 0x1Fu) == 0x1F && c.r[13] == 0x7000);
+}
+
+TEST(deep_nesting_below_interpreted_code_is_let_go_of_too) {
+  Rig rig;
+  g_deepest = 0;
+  // 0x3800, with no translation: "bl 0x3000", which the interpreter runs
+  // as a call into the translated code, where the call sites pile up. Once
+  // they are let go of, the run goes on from the outermost run.
+  rig.memory.write32(0x3800, 0xEBFFFDFEu);
+  rig.machine.call_function(0x3800, kReturn);
+  const ds::Cpu& c = rig.machine.cpu();
+  CHECK(!rig.machine.stopped());
+  CHECK(rig.hardware.unhandled_count == 0);
+  CHECK(rig.memory.read32(kLap) == kLaps);
+  CHECK(rig.machine.statistics().native_calls_from_interpreter == 1);
+  CHECK(rig.machine.statistics().nesting_dropped >= 2 * kLaps / bd::runtime::Machine::kDeepestNesting - 1);
+  CHECK(g_deepest <= bd::runtime::Machine::kDeepestNesting + 3);
+  CHECK(c.depth == 0);
+  CHECK((c.cpsr_ctrl & 0x1Fu) == 0x1F && c.r[13] == 0x7000);
+}
+
+TEST(deep_nesting_below_a_jump_is_let_go_of_too) {
+  Rig rig;
+  g_deepest = 0;
+  rig.machine.call_function(0x3200, kReturn);
+  const ds::Cpu& c = rig.machine.cpu();
+  CHECK(!rig.machine.stopped());
+  CHECK(rig.hardware.unhandled_count == 0);
+  CHECK(rig.memory.read32(kLap) == kLaps);
+  CHECK(rig.machine.statistics().nesting_dropped >= 2 * kLaps / bd::runtime::Machine::kDeepestNesting - 1);
+  CHECK(rig.machine.statistics().returns_elsewhere == 0);
+  CHECK(g_deepest <= bd::runtime::Machine::kDeepestNesting + 2);
+  CHECK(c.depth == 0);
+}
+
+TEST(an_interrupt_in_deep_nesting_is_still_taken) {
+  Rig rig;
+  g_deepest = 0;
+  // The alarm raises the interrupt line partway, while call sites pile up.
+  rig.machine.set_alarm(3000);
+  rig.machine.call_function(0x3000, kReturn);
+  CHECK(!rig.machine.stopped());
+  CHECK(rig.hardware.unhandled_count == 0);
+  CHECK(rig.hardware.alarms == 1);
+  CHECK(rig.memory.read32(kLap) == kLaps);
+  CHECK(rig.machine.statistics().interrupts_taken == 1);
+  CHECK(!rig.machine.interrupt_line());
+  CHECK(g_deepest <= bd::runtime::Machine::kDeepestNesting + 2);
+  CHECK(rig.machine.cpu().depth == 0);
 }

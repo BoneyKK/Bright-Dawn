@@ -42,4 +42,12 @@ Result<Picture> decode_screen_picture(ByteSpan file, std::optional<ByteSpan> pal
 // The screen picture at `path` in the ROM's file system.
 Result<Picture> read_screen_picture(const rom::Rom& rom, std::string_view path);
 
+// Pieces of the menus are kept the same way at other sizes: a palette, then
+// `width` by `height` bytes. Their files do not say the size; the caller
+// knows it. With `clear_zero`, colour 0 is transparent, as it is where a
+// piece is laid over a background.
+Result<Picture> decode_indexed_picture(ByteSpan file, int width, int height, bool clear_zero);
+Result<Picture> read_indexed_picture(const rom::Rom& rom, std::string_view path, int width, int height,
+                                     bool clear_zero);
+
 }  // namespace bd::assets

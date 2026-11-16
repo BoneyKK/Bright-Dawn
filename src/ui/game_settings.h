@@ -22,6 +22,7 @@ inline constexpr std::string_view kScaling = "display.scaling";
 inline constexpr std::string_view kScreenFilter = "display.filter";
 inline constexpr std::string_view kFullscreen = "display.fullscreen";
 inline constexpr std::string_view kVsync = "display.vsync";
+inline constexpr std::string_view kRenderer = "display.renderer";
 inline constexpr std::string_view kTextures = "graphics.textures";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";
 inline constexpr std::string_view kRom = "game.rom";
