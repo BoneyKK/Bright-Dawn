@@ -113,6 +113,11 @@ class GeometryEngine {
     std::uint32_t attributes = 0;    // The polygon attribute word in force when its vertex list began.
     std::uint32_t texture = 0;       // The texture parameter word,
     std::uint32_t palette = 0;       // and the texture palette, when it was made.
+    // Its corners' w does not depend on where they are: it was drawn with a
+    // projection without perspective (orthographic), as a game draws its HUD
+    // and menus in 3D. A presentation choice for 3D scenes, such as smoothed
+    // textures, leaves such polygons as they are.
+    bool flat = false;
   };
 
   struct Frame {
@@ -323,6 +328,9 @@ class GeometryEngine {
   std::uint32_t attributes_ = 0;        // and as in force since the vertex list began.
   std::uint32_t texture_parameters_ = 0, palette_ = 0;
   unsigned list_kind_ = kTriangles;
+  // Bit 0 for the last vertex added, bit 1 for the one before, and so on:
+  // whether the clip matrix it went through was without perspective.
+  std::uint32_t recent_flat_ = 0;
   std::size_t list_vertices_ = 0;       // Vertices of the list so far, or of the strip since it was last broken.
   bool strip_clockwise_ = false;        // A strip of triangles stores every other one the other way round.
   std::size_t placed_ = 0;              // Vertices of the frame already placed on the screen.

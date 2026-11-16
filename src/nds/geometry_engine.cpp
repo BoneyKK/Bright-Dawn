@@ -793,8 +793,13 @@ void GeometryEngine::add_vertex() {
     v.s = static_cast<std::int16_t>(column(0) + raw_s_);
     v.t = static_cast<std::int16_t>(column(1) + raw_t_);
   }
-  through(v, clip());
+  const Matrix& m = clip();
+  // w is the vertex through the last column: without x, y and z in it, it
+  // is the same wherever the vertex is.
+  const bool flat = m[3] == 0 && m[7] == 0 && m[11] == 0;
+  through(v, m);
   vertices.push_back(v);
+  recent_flat_ = (recent_flat_ << 1) | (flat ? 1u : 0u);
   ++list_vertices_;
 
   switch (list_kind_) {
@@ -851,6 +856,8 @@ void GeometryEngine::add_polygon() {
   polygon.attributes = attributes_;
   polygon.texture = texture_parameters_;
   polygon.palette = palette_;
+  const std::uint32_t corner_bits = (1u << corners) - 1;
+  polygon.flat = (recent_flat_ & corner_bits) == corner_bits;
 
   // A strip of triangles stores every other one the other way round.
   if (list_kind_ == kTriangleStrip) {

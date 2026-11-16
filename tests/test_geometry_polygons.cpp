@@ -608,3 +608,42 @@ TEST(polygons_the_count_register) {
   io.write(GeometryEngine::kCounts, 4, 0);
   CHECK(io.read(GeometryEngine::kCounts, 4) == 0x00030001);
 }
+
+TEST(polygons_without_perspective_are_flat) {
+  Fixture f;
+  f.send(GeometryEngine::kViewport, {kWholeScreen});
+  // The matrices as they start, identity: w is the same wherever a vertex is.
+  f.begin(GeometryEngine::kTriangles, kBoth);
+  f.v(-W, -W);
+  f.v(W, -W);
+  f.v(0, W);
+  REQUIRE(f.polygons() == 1);
+  CHECK(f.polygon(0).flat);
+  // A projection with perspective: w from z.
+  f.send(GeometryEngine::kMatrixMode, {0});
+  GeometryEngine::Matrix projection = GeometryEngine::kIdentity;
+  projection[11] = -W;
+  projection[15] = 0;
+  for (std::int32_t value : projection) f.send(GeometryEngine::kMatrixLoad4x4, {static_cast<std::uint32_t>(value)});
+  f.send(GeometryEngine::kMatrixMode, {1});
+  f.begin(GeometryEngine::kTriangles, kBoth);
+  f.v(-W, -W, -2 * W);
+  f.v(W, -W, -2 * W);
+  f.v(0, W, -2 * W);
+  REQUIRE(f.polygons() == 2);
+  CHECK(!f.polygon(1).flat);
+  // A polygon is flat only if every corner is: one corner sent through a
+  // projection without perspective is not enough.
+  f.send(GeometryEngine::kMatrixMode, {0});
+  f.v(-W, -W, -2 * W);
+  f.v(W, -W, -2 * W);
+  f.send(GeometryEngine::kMatrixIdentity);
+  f.v(0, W, 0);
+  REQUIRE(f.polygons() == 3);
+  CHECK(!f.polygon(2).flat);
+  f.v(-W, -W);
+  f.v(W, -W);
+  f.v(0, W);
+  REQUIRE(f.polygons() == 4);
+  CHECK(f.polygon(3).flat);
+}
