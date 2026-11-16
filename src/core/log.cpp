@@ -10,6 +10,7 @@
 
 #if defined(_WIN32)
 #include <io.h>
+#include <share.h>
 #endif
 
 namespace bd::log {
@@ -52,8 +53,9 @@ std::string wall_clock_now() {
 
 std::FILE* open_for_writing(const std::filesystem::path& path) {
 #if defined(_WIN32)
-  std::FILE* file = nullptr;
-  return _wfopen_s(&file, path.c_str(), L"wb") == 0 ? file : nullptr;
+  // Others may read it while it is written (a player opening the log of a
+  // run in progress), but not write to it. _wfopen_s would shut them out.
+  return _wfsopen(path.c_str(), L"wb", _SH_DENYWR);
 #else
   return std::fopen(path.c_str(), "wb");
 #endif
