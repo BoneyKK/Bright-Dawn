@@ -5,7 +5,10 @@
 // console's rate. The keyboard and any number of game controllers press the
 // DS's buttons; the left mouse button on the touch screen is the stylus.
 //
-// The game's code is interpreted for now: no translated code is linked in.
+// Built as bright-dawn, every instruction of the game is interpreted. Built
+// as bright-dawn-game (BD_TRANSLATED_GAME), the game's code translated to C++
+// from the user's own ROM is linked in and runs natively wherever it has
+// been translated, with the interpreter behind it.
 //
 // Keys of the window itself: F11 or Alt+Enter, full screen on and off; Tab,
 // the screens one above the other or side by side; F12, whole-number scaling
@@ -28,7 +31,7 @@
 #include "nds/console.h"
 #include "nds/keypad.h"
 #include "nds/program.h"
-#include "platform/frame_pacer.h"
+#include "platform/frame_clock.h"
 #include "rom/game_id.h"
 #include "rom/rom.h"
 #include "translated_table.h"
@@ -36,6 +39,14 @@
 namespace {
 
 const TranslatedEntry kNoTranslations[] = {{0, nullptr, -1, nullptr, 0}};
+
+#ifdef BD_TRANSLATED_GAME
+constexpr bool kHasTranslation = true;
+const TranslatedEntry* const kTranslation = translated_table;
+#else
+constexpr bool kHasTranslation = false;
+const TranslatedEntry* const kTranslation = kNoTranslations;
+#endif
 
 // The input module's button order is the keypad's.
 constexpr bool same_button_order() {
@@ -64,12 +75,14 @@ constexpr const char* kUsage =
     "  --fit                 fill the window instead of scaling by whole numbers\n"
     "  --fullscreen          start full screen\n"
     "  --unthrottled         run as fast as possible instead of at the console's rate\n"
+    "  --no-vsync            do not wait for the screen's refresh to show a picture\n"
     "  --frames N            stop after N frames\n"
     "  --hold BUTTON@F[-L]   hold a DS button from frame F to frame L (counting from 1),\n"
     "                        as if pressed; may be given more than once\n"
     "  --touch X,Y@F[-L]     touch the touch screen at pixel X,Y from frame F to frame L;\n"
     "                        may be given more than once\n"
     "  --capture FILE        with --frames, write the window's last frame to FILE (BMP)\n"
+    "  --interpret-only      do not use the translated code (bright-dawn-game only)\n"
     "  --video-drivers       list the window systems this build can use, and stop\n"
     "  --version             print the version, and stop\n"
     "\n"
@@ -84,6 +97,8 @@ struct Options {
   bd::gfx::LayoutOptions layout;
   bool fullscreen = false;
   bool unthrottled = false;
+  bool no_vsync = false;
+  bool interpret_only = false;
   std::uint64_t frames = 0;
   std::string capture;
   std::vector<bd::input::ScriptedPress> script;
@@ -127,7 +142,8 @@ class Window {
     const bd::gfx::Point size = bd::gfx::window_size(options_.scale, layout_);
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
     if (options_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
-    title_ = std::string("Bright Dawn ") + BD_VERSION;
+    title_ = std::string("Bright Dawn ") + BD_VERSION +
+             (kHasTranslation && !options_.interpret_only ? " (translated)" : " (interpreted)");
     if (!SDL_CreateWindowAndRenderer(title_.c_str(), size.x, size.y, flags, &window_, &renderer_)) {
       error = std::string("Cannot open a window: ") + SDL_GetError();
       return false;
@@ -152,24 +168,50 @@ class Window {
       if (button != SDL_GAMEPAD_BUTTON_INVALID) pad_buttons_.push_back({button, bd::input::bit(b.button)});
       else std::fprintf(stderr, "warning: no controller button is called \"%s\"\n", b.control.c_str());
     }
+    // Vsync: adaptive where the system has it (a late picture is shown at
+    // once rather than a whole refresh later), else plain. Without it the
+    // window waits for the next step itself.
+    if (!options_.no_vsync) {
+      vsync_ = SDL_SetRenderVSync(renderer_, SDL_RENDERER_VSYNC_ADAPTIVE) || SDL_SetRenderVSync(renderer_, 1);
+    }
     second_started_ = SDL_GetTicksNS();
+    clock_.tick(second_started_);
     return true;
   }
 
   // At each frame: the screens shown, the input read, time kept. False when
   // the window was closed.
+  //
+  // The game's step and the pictures are kept apart (platform/frame_clock.h):
+  // the input is read once a console frame, for the next one; the frame is
+  // shown unless the game is behind real time; and pictures are shown until
+  // the next step is due, one per refresh of the screen with vsync, or once
+  // and then a wait without it.
   bool frame() {
+    ++frames_run_;
     if (!handle_events()) return false;
     read_input();
-    draw();
-    ++frames_shown_;
-    if (options_.frames != 0 && frames_shown_ == options_.frames && !options_.capture.empty()) capture();
-    SDL_RenderPresent(renderer_);
-    count_frames_per_second();
-    if (!options_.unthrottled) {
-      const std::uint64_t next = pacer_.frame_shown(SDL_GetTicksNS());
-      const std::uint64_t now = SDL_GetTicksNS();
-      if (next > now) SDL_DelayPrecise(next - now);
+    const bool capture_now =
+        options_.frames != 0 && frames_run_ == options_.frames && !options_.capture.empty();
+    const bool show = options_.unthrottled || clock_.frame_done(SDL_GetTicksNS());
+    if (!show && !capture_now) {
+      count_rates(false);
+      return true;
+    }
+    for (bool first = true;; first = false) {
+      draw();
+      if (first && capture_now) capture();
+      SDL_RenderPresent(renderer_);
+      count_rates(first);
+      if (options_.unthrottled) break;
+      if (!vsync_) {
+        const std::uint64_t wait = clock_.until_due();
+        if (wait != 0) SDL_DelayPrecise(wait);
+      }
+      clock_.tick(SDL_GetTicksNS());
+      if (clock_.step_due()) break;
+      // Waiting for the next step: the window stays responsive.
+      if (!handle_events()) return false;
     }
     return true;
   }
@@ -237,9 +279,9 @@ class Window {
   }
 
   void read_input() {
-    // The script's buttons for the frame that is ending: the first call is
-    // frame 1.
-    std::uint32_t held = bd::input::scripted_buttons(options_.script, frames_shown_ + 1);
+    // The script's buttons for the frame that is ending: the first is frame
+    // 1.
+    std::uint32_t held = bd::input::scripted_buttons(options_.script, frames_run_);
     // Keys only count while the window has the keyboard: SDL clears its key
     // state when the focus goes.
     int key_count = 0;
@@ -262,7 +304,7 @@ class Window {
     // the mouse. Off the screen is not touching it.
     bool touching = false;
     bd::gfx::Point at;
-    if (const bd::input::ScriptedTouch* scripted = bd::input::scripted_touch(options_.touches, frames_shown_ + 1)) {
+    if (const bd::input::ScriptedTouch* scripted = bd::input::scripted_touch(options_.touches, frames_run_)) {
       touching = true;
       at = {scripted->x, scripted->y};
     }
@@ -321,18 +363,24 @@ class Window {
     SDL_DestroySurface(surface);
   }
 
-  // The window's title shows how many frames a second are shown, so that a
-  // machine too slow for the console's rate shows it.
-  void count_frames_per_second() {
-    ++frames_this_second_;
+  // The window's title shows how many of the game's frames are run a second
+  // (59.83 on a console; fewer on a computer too slow for it) and how many
+  // pictures are shown. Called once for every picture and once for every
+  // frame run unshown; `new_frame` says whether this is the first call for a
+  // frame.
+  void count_rates(bool new_frame) {
+    if (new_frame) ++frames_this_second_;
+    ++pictures_this_second_;
     const std::uint64_t now = SDL_GetTicksNS();
     if (now - second_started_ < 1'000'000'000ull) return;
-    const double rate = static_cast<double>(frames_this_second_) * 1e9 / static_cast<double>(now - second_started_);
-    char text[32];
-    std::snprintf(text, sizeof text, " - %.1f frames/s", rate);
+    const double seconds = static_cast<double>(now - second_started_) / 1e9;
+    char text[64];
+    std::snprintf(text, sizeof text, " - game %.1f frames/s, %.1f pictures/s",
+                  static_cast<double>(frames_this_second_) / seconds,
+                  static_cast<double>(pictures_this_second_) / seconds);
     SDL_SetWindowTitle(window_, (title_ + text).c_str());
     second_started_ = now;
-    frames_this_second_ = 0;
+    frames_this_second_ = pictures_this_second_ = 0;
   }
 
   const Options& options_;
@@ -349,9 +397,10 @@ class Window {
   std::array<std::uint8_t, bd::gfx::kScreenWidth * bd::gfx::kScreenHeight * 4> pixels_{};
   bool touching_ = false;
   bd::gfx::Point touch_at_;
-  bd::platform::FramePacer pacer_;
+  bd::platform::FrameClock clock_;
+  bool vsync_ = false;
   std::string title_;
-  std::uint64_t frames_shown_ = 0, frames_this_second_ = 0, second_started_ = 0;
+  std::uint64_t frames_run_ = 0, frames_this_second_ = 0, pictures_this_second_ = 0, second_started_ = 0;
   bool captured_ = false;
 };
 
@@ -379,7 +428,12 @@ int run(const Options& options) {
     return 1;
   }
 
-  nds::Console console(loaded.value(), kNoTranslations);
+  const TranslatedEntry* translation = options.interpret_only ? kNoTranslations : kTranslation;
+  std::size_t translated_functions = 0;
+  while (translation[translated_functions].function != nullptr) ++translated_functions;
+  std::printf("%zu translated functions in use\n", translated_functions);
+  std::fflush(stdout);
+  nds::Console console(loaded.value(), translation);
   if (rom) console.insert_cartridge(rom.value().bytes());
   if (auto status = console.direct_boot(); !status) {
     complain(nullptr, status.error().message);
@@ -472,6 +526,10 @@ int main(int argc, char** argv) {
       options.layout.scaling = bd::gfx::Scaling::Fit;
     } else if (arg == "--fullscreen") {
       options.fullscreen = true;
+    } else if (arg == "--interpret-only") {
+      options.interpret_only = true;
+    } else if (arg == "--no-vsync") {
+      options.no_vsync = true;
     } else if (arg == "--unthrottled") {
       options.unthrottled = true;
     } else if (!arg.empty() && arg[0] != '-' && !have_source) {

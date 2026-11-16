@@ -144,6 +144,30 @@ window. The title bar shows the frames shown per second; the console's rate is
 together they reproduce a run without a person at the keyboard. Nothing is
 saved between runs yet.
 
+## Building the game from your ROM
+
+`bright-dawn` interprets every instruction of the game. The game builder makes
+`bright-dawn-game` instead: the game's code translated to C++ and compiled for
+your computer, with the interpreter behind it for whatever was not translated.
+The translation is made from your ROM, on your computer; it is the game's own
+code, so it is never in this repository or in a package.
+
+```bash
+python3 tools/gamebuilder/build_game.py path/to/your-rom.nds
+```
+
+It needs what building the repository needs (Python 3.10+, CMake 3.20+, a C++20
+compiler), builds `bdtool`, checks the ROM, extracts its program code,
+translates it (about 3.5 million lines of C++) and compiles the game: a few
+minutes on four cores. Everything goes to `game-build` in the per-user data
+directory (`--work` chooses another place, but not inside the source tree). A
+second run recompiles only what changed. `bright-dawn-game --interpret-only`
+runs without the translation, for comparison.
+
+**The translated game does not get far yet** (see [docs/BOOT.md](docs/BOOT.md)):
+interrupts are not yet taken in translated code, and time does not pass while
+it runs.
+
 ## Using bdtool
 
 ```bash
@@ -181,6 +205,7 @@ src/nds        The console around the processor: memory, registers, interrupts, 
 src/gfx        Where the screens go in a window; their pixels for the window system
 src/input      Bindings of keys and controller buttons, scripted input
 src/app        bright-dawn: the window (SDL 3)
+tools/gamebuilder  Builds bright-dawn-game from the user's ROM
 tools/translator   Machine code to C++
 third_party    SkyEmu's ARM core (the interpreter), MIT licence
 tools/bdtool   Command-line inspection tool

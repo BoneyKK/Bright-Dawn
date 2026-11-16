@@ -488,10 +488,28 @@ picture of frame 600 matches the trace tool's, every pixel of it.
 What it runs on is still thin. 20 hardware registers it uses have no
 model; no sequence is played, so there is no music.
 
-Next: playing on from the name entry, by hand and with scripted input,
-to find what the game needs next; the save memory kept in a file; for
-sound, the sequence player. Interrupts in translated code before
-translated game code is run.
+## The first run of translated game code
+
+The game builder (`tools/gamebuilder/build_game.py`) builds
+`bright-dawn-game` from the ROM: 17,076 translated functions, 395 files,
+built in a few minutes on four cores. The first time it ran, the
+translated code ran natively from the entry point, calling into the
+interpreter where nothing was translated and back, until the first
+vertical blank. There the game waits for the interrupt by putting the
+processor to sleep (the system coprocessor's "wait for interrupt") in a
+loop, from translated code. The interrupt is requested, so each sleep ends
+at once; but translated code does not take interrupts, so the request is
+never cleared, and no console time passes while translated code runs. The
+game slept millions of times at cycle 408,960 (line 192 of the first
+frame) and the window froze. A program that sleeps 100,000 times in a row
+without time passing is now stopped, with that explanation, after one
+frame.
+
+Next: interrupts taken in translated code, at the points where it can be
+left (its calls and its sleeps), and time passing while it runs, so that
+the translated game can get as far as the interpreted one. Then playing on
+from the name entry, by hand and with scripted input; the save memory kept
+in a file; for sound, the sequence player.
 
 Speed, for orientation only: on the development machine a release build
 ran these 600 frames in about 35 seconds, with or without the window. A
