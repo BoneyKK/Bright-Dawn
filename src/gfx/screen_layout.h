@@ -49,6 +49,28 @@ ScreenLayout lay_out(int width, int height, const LayoutOptions& options);
 // border.
 Point window_size(int scale, const LayoutOptions& options);
 
+// How a screen's pixels are scaled to the window.
+enum class ScreenFilter {
+  // Each DS pixel a sharp block, with the boundary between two blocks mixed
+  // over one window pixel where it falls inside one: no block wider than
+  // another, and no blur. The screen is enlarged without smoothing to a
+  // whole multiple of its size (prescale_factor), then smoothed (bilinear)
+  // to the window: the look of melonDS's OpenGL display, which enlarges the
+  // screens to a whole-number internal resolution and then scales them to
+  // the window with linear filtering. At whole-number sizes it is the same
+  // as Sharp.
+  SharpSmoothEdges,
+  Smooth,  // Bilinear from the screen's own pixels: soft throughout.
+  Sharp,   // Nearest: each DS pixel a block, some a pixel wider at sizes that are not whole numbers.
+};
+
+// The whole multiple of the screen's size to enlarge it to before
+// smoothing it to `scale` window pixels per DS pixel: the smallest that is
+// at least the scale, so that the smoothing only ever shrinks, by less than
+// half; 1 when the scale is below 1. No larger than a texture of
+// `largest_texture` pixels across allows (and never below 1).
+int prescale_factor(double scale, int largest_texture);
+
 // The touch screen pixel (0-255 across, 0-191 down) under a point of the
 // window, or nothing when the point is not on the touch screen.
 std::optional<Point> touch_point(const ScreenLayout& layout, double x, double y);

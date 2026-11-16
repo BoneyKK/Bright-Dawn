@@ -90,8 +90,10 @@ constexpr const char* kUsage =
     "  --fit                 fill the window instead of scaling by whole numbers\n"
     "  --fullscreen          start full screen\n"
     "  --no-vsync            do not wait for the screen's refresh to show a picture\n"
+    "  --screen-filter MODE  scaling the screens: smooth (bilinear, the default) or\n"
+    "                        sharp (nearest)\n"
     "  --textures MODE       3D scenes' textures: sharp (nearest, as on the DS) or\n"
-    "                        smooth (bilinear); the HUD and 2D always stay sharp\n"
+    "                        smooth (bilinear)\n"
     "  --log-level LEVEL     error, warning, info or debug\n"
     "\n"
     "Other options:\n"
@@ -405,6 +407,8 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kScale, argv[++i]);
     } else if (arg == "--gap" && has_value && parse_number(argv[i + 1], 0, 96, number)) {
       cl.overrides.emplace_back(ui::key::kGap, argv[++i]);
+    } else if (arg == "--screen-filter" && has_value) {
+      cl.overrides.emplace_back(ui::key::kScreenFilter, argv[++i]);
     } else if (arg == "--textures" && has_value) {
       cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
     } else if (arg == "--log-level" && has_value) {

@@ -55,15 +55,25 @@ std::vector<SettingDef> game_setting_definitions() {
   defs.push_back(choice(key::kScaling, "Display", "Scaling",
                         "Whole numbers keep every DS pixel the same size, with a border where the window is "
                         "larger. Filling the window uses all of it; some pixels are then a little larger than "
-                        "others. Either way pixels stay sharp.",
+                        "others.",
                         {{"whole", "Whole numbers"}, {"fill", "Fill the window"}}, "whole"));
+  defs.push_back(choice(key::kScreenFilter, "Display", "Screen filtering",
+                        "Sharp pixels with smooth edges keeps each DS pixel a crisp block, every one the same "
+                        "size, with the edges between them softened over one pixel of the window: the look of "
+                        "melonDS's display. Smooth mixes neighbouring pixels (bilinear), softening the whole "
+                        "picture. Sharp shows each DS pixel as a block; at sizes that are not whole numbers "
+                        "some are then a pixel wider than others.",
+                        {{"sharp_smooth_edges", "Sharp pixels, smooth edges"},
+                         {"smooth", "Smooth (bilinear)"},
+                         {"sharp", "Sharp (nearest)"}},
+                        "sharp_smooth_edges"));
   defs.push_back(toggle(key::kFullscreen, "Display", "Full screen", "Start full screen (F11 changes it).", false));
   defs.push_back(toggle(key::kVsync, "Display", "Wait for the screen's refresh",
                         "Show each picture when the screen refreshes (vsync): no tearing.", true));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
                         "Sharp shows each texel as a block of pixels, as the DS does. Smooth mixes neighbouring "
-                        "texels, for softer surfaces. Only the 3D scenes change: the HUD, menus, text and "
-                        "everything 2D always stay sharp.",
+                        "texels, for softer surfaces, before the screen is put together. Only the 3D scenes "
+                        "change: polygons drawn flat, as a HUD in 3D is, keep their texels.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));
   defs.push_back(toggle(key::kPlayBuilt, "Game", "Play the built game",
                         "When the game has been built from your ROM, play that: its code runs natively, much "
@@ -97,6 +107,13 @@ gfx::LayoutOptions layout_options(const platform::Settings& settings) {
   options.gap = static_cast<int>(settings.number(key::kGap));
   options.bottom_first = settings.toggle(key::kTouchScreenFirst);
   return options;
+}
+
+gfx::ScreenFilter screen_filter(const platform::Settings& settings) {
+  const std::string& v = settings.choice(key::kScreenFilter);
+  if (v == "smooth") return gfx::ScreenFilter::Smooth;
+  if (v == "sharp") return gfx::ScreenFilter::Sharp;
+  return gfx::ScreenFilter::SharpSmoothEdges;
 }
 
 bool smooth_textures(const platform::Settings& settings) { return settings.choice(key::kTextures) == "smooth"; }

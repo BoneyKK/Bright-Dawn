@@ -19,6 +19,7 @@ inline constexpr std::string_view kArrangement = "display.arrangement";
 inline constexpr std::string_view kTouchScreenFirst = "display.touch_screen_first";
 inline constexpr std::string_view kGap = "display.gap";
 inline constexpr std::string_view kScaling = "display.scaling";
+inline constexpr std::string_view kScreenFilter = "display.filter";
 inline constexpr std::string_view kFullscreen = "display.fullscreen";
 inline constexpr std::string_view kVsync = "display.vsync";
 inline constexpr std::string_view kTextures = "graphics.textures";
@@ -33,6 +34,8 @@ std::vector<platform::SettingDef> game_setting_definitions();
 
 // The screens' arrangement the settings ask for.
 gfx::LayoutOptions layout_options(const platform::Settings& settings);
+// How the screens are scaled to the window.
+gfx::ScreenFilter screen_filter(const platform::Settings& settings);
 // Whether the 3D scenes' textures are to be smoothed (bilinear) rather than
 // sharp (nearest, as on the DS).
 bool smooth_textures(const platform::Settings& settings);

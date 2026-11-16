@@ -65,9 +65,9 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | Cartridge slot (reading data) | Done, tested, and used by the real program to read its file tables and overlays |
 | 3D engine | Begun, tested: the command queue, status and interrupt, the matrices and their stacks, the tests a program can ask for, vertices made into polygons (facing, cutting to the view, placing on the screen, the limits of a frame), lighting, and the drawing of a frame's polygons with textures, blending, shadows, fog, edge marking and anti-aliasing at the hardware's resolution. The real program's 3D commands run through it; `bdtool boot --picture` writes the drawn 3D layer of the last frame (the title screen) and `--wireframe` its outlines. Not compared with a console pixel by pixel; no sorting of translucent polygons; nothing puts the frame on a screen yet |
 | Display | Begun, tested: both 2D engines (backgrounds of every kind, sprites, windows, effects, master brightness), the 3D picture among them, the display capture, both screens, a line at a time. On the real ROM the title screen comes out on both screens (`bdtool boot --screens`); looked at, not compared with a console pixel by pixel. Not shown in a window yet |
-| Window (`bright-dawn`) | Begun, tested where it can be without a screen: both screens, stacked or side by side, scaled by whole numbers or to fill the window, always pixel for pixel (nearest neighbour), full screen; the keyboard, any number of controllers and the mouse as the stylus; the console's frame rate kept. On the real ROM its picture matches the trace tool's pixel for pixel, and a touch passes the title screen |
+| Window (`bright-dawn`) | Begun, tested where it can be without a screen: both screens, stacked or side by side, scaled by whole numbers or to fill the window, with sharp pixels and smooth edges (or plain bilinear, or nearest), full screen; the keyboard, any number of controllers and the mouse as the stylus; the console's frame rate kept. On the real ROM its picture matches the trace tool's pixel for pixel, and a touch passes the title screen |
 | Launcher, settings book, pause menu | Begun: without a ROM on the command line the program opens its launcher (choose the ROM, play, build the game, settings, log); the settings are described once and the book and the settings file are made from the descriptions; Escape pauses the game with a menu. Tried on the real ROM under a virtual display; the settings store is unit tested |
-| Textures of 3D scenes, sharp or smooth | Done, tested: nearest (as on the DS) by default; bilinear as a setting, for polygons drawn with perspective only, so that a HUD drawn in 3D stays sharp |
+| Textures of 3D scenes, sharp or smooth | Done, tested: nearest (as on the DS) by default; bilinear as a setting, for polygons drawn with perspective only, so that a HUD drawn in 3D keeps its texels |
 | Log | Done, tested: every run writes one, with the system, the settings, what the player did and how the run ended; a crash is noted in it |
 | Interrupts in translated code | Not started |
 | High-resolution renderer, audio output, rebinding, mods | Not started |
@@ -151,11 +151,16 @@ full screen, Tab puts the screens side by side or one above the other, F12
 switches between whole-number scaling and filling the window. The title bar
 shows the frames shown per second; the console's rate is 59.83.
 
-The screens are always scaled pixel for pixel (nearest neighbour), so the HUD,
-menus and text stay sharp. The textures of 3D scenes are sharp too, as on the
-DS, unless *Textures in 3D scenes* (Settings, Graphics) is set to smooth
-(bilinear); polygons drawn without perspective, as a game draws its HUD in 3D,
-stay sharp either way.
+*Screen filtering* (Settings, Display) says how the screens are scaled to the
+window. By default each DS pixel stays a crisp block, every one the same size,
+with the edges between them softened over one window pixel: the look of
+melonDS's display. The screen is enlarged without smoothing to the next whole
+multiple of its size, then smoothed (bilinear) down to the window, both by the
+graphics hardware. *Smooth* is plain bilinear, *Sharp* plain nearest. The
+textures of 3D scenes are separate: sharp, as on the DS, unless *Textures in 3D
+scenes* (Settings, Graphics) is set to smooth (bilinear); polygons drawn
+without perspective, as a game draws its HUD in 3D, keep their texels either
+way.
 
 The settings are kept in `settings.txt` in the per-user data directory
 (`%LOCALAPPDATA%\BrightDawn` on Windows, `~/.local/share/bright-dawn` on
