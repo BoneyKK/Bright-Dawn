@@ -647,3 +647,32 @@ TEST(console_shows_its_screens_a_line_at_a_time) {
   CHECK(bottom[0] == red && bottom[98 * 256 + 255] == red);
   CHECK(bottom[changed_at * 256] == blue && bottom[191 * 256 + 255] == blue);
 }
+
+TEST(console_calls_on_frame_at_each_vertical_blank_and_ends_when_asked) {
+  //   02000000  b    .
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  console.io().write(0x04000000, 4, 1u << 16);
+  console.bus().write16(0x05000000, 0x001F);
+  int calls = 0;
+  bool screens_complete = true;
+  console.on_frame = [&] {
+    ++calls;
+    // The frame is shown before the callback, its last line drawn.
+    screens_complete = screens_complete && console.display().statistics().frames == static_cast<std::uint64_t>(calls) &&
+                       console.display().bottom_screen()[191 * 256 + 255] == 62u;
+    console.keypad().set_held(1u << static_cast<unsigned>(bd::nds::Button::Start));
+    return calls < 3;
+  };
+  // Asked to end on the third frame, though the frame limit is reached there too.
+  const bd::nds::RunResult result = console.run(10000000, 3);
+  CHECK(result.reason == bd::nds::StopReason::Asked);
+  CHECK(calls == 3);
+  CHECK(screens_complete);
+  // What the callback held, the program reads: Start is bit 3, 0 while held.
+  CHECK(console.io().read(0x04000130, 2) == (0x03FFu & ~(1u << 3)));
+  // A run that is not asked to end stops at its own limit.
+  console.on_frame = [&] { return true; };
+  CHECK(console.run(10000000, 5).reason == bd::nds::StopReason::FrameLimit);
+}

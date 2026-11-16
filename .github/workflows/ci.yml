@@ -30,9 +30,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The guest test image is cross-compiled for ARM with Clang and LLD.
-      - name: Install the ARM cross-toolchain
+      # SDL, built into the window program, needs the headers of the window
+      # systems, controllers and sound systems it is to support; it loads
+      # their libraries while it runs, so the package does not need them.
+      - name: Install the ARM cross-toolchain and SDL's build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+        run: >
+          sudo apt-get update && sudo apt-get install -y clang lld llvm
+          libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev
+          libwayland-dev libxkbcommon-dev wayland-protocols libegl-dev libgl-dev libdrm-dev libgbm-dev
+          libudev-dev libdbus-1-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdecor-0-dev
       # Builds from main are published, so they carry their release label;
       # the release job below derives the tag from the same run number.
       - name: Configure
@@ -49,6 +56,15 @@ jobs:
         run: |
           cmake --install build --config Release --prefix package/bright-dawn
           package/bright-dawn/bdtool --version
+          package/bright-dawn/bright-dawn --version
+          # The window must be able to open on the systems the package is for.
+          drivers=$(package/bright-dawn/bright-dawn --video-drivers)
+          echo "$drivers"
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "$drivers" | grep -qx x11 && echo "$drivers" | grep -qx wayland
+          else
+            echo "$drivers" | grep -qx windows
+          fi
           cd package
           cmake -E tar ${{ matrix.tar }} ${{ matrix.asset }} ${{ matrix.format }} -- bright-dawn
       - uses: actions/upload-artifact@v4

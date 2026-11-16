@@ -155,6 +155,9 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
     case nds::StopReason::FrameLimit:
       std::printf("Stopped: frame limit reached\n");
       break;
+    case nds::StopReason::Asked:
+      std::printf("Stopped: asked to\n");
+      break;
     case nds::StopReason::Unhandled:
       std::printf("Stopped: at 0x%08" PRIX32 ": %s\n", result.address, result.detail.c_str());
       break;
