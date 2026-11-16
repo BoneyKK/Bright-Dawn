@@ -89,6 +89,14 @@ class Console : private runtime::System {
   // something that will not come.
   static constexpr Timeline::Time kLongestSleep = 10 * Timeline::kCyclesPerSecond;
 
+  // How many sleeps in a row may end without console time passing before
+  // the run is ended. A sleep ends at once while an enabled interrupt is
+  // requested. Interpreted code then takes the interrupt, or time passes
+  // with its instructions; translated code does neither yet, so a program
+  // that waits for an interrupt in translated code would wait at the same
+  // moment for ever.
+  static constexpr std::uint64_t kMostSleepsWithoutTime = 100000;
+
   // Runs from the entry point. `instruction_limit` bounds the instructions
   // interpreted and `frame_limit` the frames displayed (0 = no bound);
   // translated code is not counted.
@@ -210,6 +218,8 @@ class Console : private runtime::System {
   std::uint64_t frame_limit_ = 0;
   bool frame_limit_reached_ = false;
   bool asked_to_end_ = false;
+  Timeline::Time last_wake_ = 0;
+  std::uint64_t sleeps_without_time_ = 0;
   std::uint64_t sleeps_ = 0;
   bool stopped_ = false;
   std::uint32_t stop_address_ = 0;

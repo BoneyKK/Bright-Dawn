@@ -228,6 +228,16 @@ void Console::wait_for_interrupt() {
     }
     timeline_.advance_to(next);
   }
+  const Timeline::Time woke = timeline_.now();
+  if (woke != last_wake_) {
+    last_wake_ = woke;
+    sleeps_without_time_ = 0;
+  } else if (++sleeps_without_time_ >= kMostSleepsWithoutTime) {
+    stop(0, "the program keeps waiting for an interrupt that is requested but never taken, and no time "
+            "passes: interrupts are not yet taken in translated code");
+    machine_.stop();
+    return;
+  }
   set_alarm();
 }
 
