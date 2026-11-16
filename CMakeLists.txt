@@ -96,7 +96,7 @@ target_link_libraries(bd_rom PUBLIC bd_core)
 
 # Decodes the game's own formats, from the player's ROM, into what the
 # program can show.
-add_library(bd_assets STATIC src/assets/screen_picture.cpp)
+add_library(bd_assets STATIC src/assets/font.cpp src/assets/screen_picture.cpp)
 target_link_libraries(bd_assets PUBLIC bd_rom)
 
 # The fallback interpreter. This target wraps third-party code that is
@@ -219,20 +219,39 @@ if(BD_BUILD_APP)
     src/app/app.cpp
     src/app/build_tools.cpp
     src/app/child_process.cpp
-    src/app/backdrop.cpp
+    src/app/game_font.cpp
+    src/app/hang_watch.cpp
     src/app/fetch.cpp
     src/app/game_screen.cpp
     src/app/gui.cpp
     src/app/launcher.cpp
+    src/app/menu_skin.cpp
+    src/app/menu_widgets.cpp
     src/app/settings_book.cpp)
   target_include_directories(bd_app PUBLIC src)
   target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui bd_game_library_host bd_assets
                         ${BD_SDL_TARGET})
 
+  # The game runs on the main thread, and translated code nests native calls
+  # as the game nests its own (up to runtime::Machine::kDeepestNesting deep,
+  # a few hundred bytes each). Windows gives a program's main thread 1 MB of
+  # stack unless the program asks for more; 16 MB leaves a wide margin.
+  # Elsewhere the system decides (8 MB on Linux).
+  function(bd_main_stack target)
+    if(WIN32)
+      if(MSVC)
+        target_link_options(${target} PRIVATE /STACK:16777216)
+      else()
+        target_link_options(${target} PRIVATE -Wl,--stack,16777216)
+      endif()
+    endif()
+  endfunction()
+
   # WIN32: on Windows a window program, which opens no console.
   add_executable(bright-dawn WIN32 src/app/main.cpp)
   target_link_libraries(bright-dawn PRIVATE bd_app)
   set_target_properties(bright-dawn PROPERTIES BD_SYSTEM_LIBC ON)
+  bd_main_stack(bright-dawn)
 
   # The game with its code translated to C++, from the user's own ROM by
   # tools/gamebuilder/build_game.py. The translation is derived from the
@@ -261,6 +280,7 @@ if(BD_BUILD_APP)
     target_compile_definitions(bright-dawn-game PRIVATE BD_TRANSLATED_GAME=1)
     target_link_libraries(bright-dawn-game PRIVATE bd_app bd_translated_game)
     set_target_properties(bright-dawn-game PROPERTIES BD_SYSTEM_LIBC ON)
+    bd_main_stack(bright-dawn-game)
   endif()
 endif()
 

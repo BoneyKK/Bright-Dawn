@@ -7,7 +7,6 @@
 #include <cstdio>
 #include <cstring>
 
-#include "assets/screen_picture.h"
 #include "core/log.h"
 #include "core/version.h"
 #include "game_library_host.h"
@@ -22,32 +21,14 @@ namespace {
 
 constexpr std::size_t kMostOutputLines = 5000;
 
-// In the player's ROM: the upper screen of the main menu's save files, an
-// open book.
-constexpr std::string_view kMenuBook = "data/upscreen/backupStory.bin";
-
+// Good and bad news: on the program's dark pages, and on parchment.
 const ImVec4 kGood(0.55f, 0.82f, 0.45f, 1.0f);
 const ImVec4 kBad(0.93f, 0.45f, 0.38f, 1.0f);
+const ImVec4 kGoodOnPaper(0.12f, 0.40f, 0.08f, 1.0f);
+const ImVec4 kBadOnPaper(0.66f, 0.12f, 0.06f, 1.0f);
 
-void heading(const char* text) {
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
-  ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.4f);
-  ImGui::TextUnformatted(text);
-  ImGui::PopFont();
-  ImGui::PopStyleColor();
-}
-
-void note(const std::string& text) {
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-  ImGui::TextWrapped("%s", text.c_str());
-  ImGui::PopStyleColor();
-}
-
-void coloured(const ImVec4& colour, const std::string& text) {
-  ImGui::PushStyleColor(ImGuiCol_Text, colour);
-  ImGui::TextWrapped("%s", text.c_str());
-  ImGui::PopStyleColor();
-}
+constexpr ImGuiWindowFlags kWholeWindow = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
 void open_folder(const std::filesystem::path& folder) {
   std::error_code ec;
@@ -63,6 +44,7 @@ void open_folder(const std::filesystem::path& folder) {
 }  // namespace
 
 Launcher::Launcher(App& app) : app_(app) {
+  look_ = menu::Look{&skin_, app_.renderer, &app_.gui};
   if (!app_.user_data.empty()) library_ = game_library_path(app_.user_data);
   if (Result<std::filesystem::path> self = platform::executable_path(); self) program_ = self.value();
   const std::string remembered = app_.settings.value(ui::key::kRom);
@@ -115,15 +97,8 @@ void Launcher::choose_rom(const std::filesystem::path& path) {
 }
 
 void Launcher::read_menu_art(const rom::Rom& rom) {
-  Result<assets::Picture> book = assets::read_screen_picture(rom, kMenuBook);
-  if (!book) {
-    log::warning("launcher", "the main menu's book is not in the ROM as expected (" + book.error().message +
-                                 "): the launcher is shown without it");
-    backdrop_.clear();
-    return;
-  }
-  log::info("launcher", "the main menu's book, from the ROM, is behind the launcher");
-  backdrop_.set(std::move(book).value());
+  skin_.read(rom);
+  skin_changed_ = true;
 }
 
 void Launcher::check_tools() {
@@ -313,24 +288,42 @@ LauncherChoice Launcher::run() {
     }
     if (chosen) choose_rom(from_utf8(*chosen));
     if (!dialog_error.empty()) log::warning("launcher", "the file dialog: " + dialog_error);
+    if (rom_asked_) {
+      choose_rom(*rom_asked_);
+      rom_asked_.reset();
+    }
     poll_build();
     if (done) break;
+    // The game's menus, read from a ROM just chosen: their font from now on.
+    if (skin_changed_) {
+      skin_changed_ = false;
+      app_.gui.set_game_font(skin_.ready() ? skin_.font() : nullptr);
+    }
+    app_.gui.set_game_look(look() != nullptr);
+    book_.set_look(look());
     SDL_SetRenderDrawColor(app_.renderer, 0, 0, 0, 255);
     SDL_RenderClear(app_.renderer);
-    backdrop_.draw(app_.renderer);
-    app_.gui.set_see_through(backdrop_.shown());
+    if (look() != nullptr) skin_.draw_background(app_.renderer);
     app_.gui.begin_frame();
     draw(choice, done);
     app_.gui.end_frame();
     SDL_RenderPresent(app_.renderer);
     if (!vsync) SDL_Delay(15);
   }
-  app_.gui.set_see_through(false);
-  backdrop_.release();
+  // The game's screens are in the program's own look.
+  book_.set_look(nullptr);
+  app_.gui.set_game_look(false);
+  app_.gui.set_game_font(nullptr);
+  skin_.release();
   return choice;
 }
 
 void Launcher::draw(LauncherChoice& choice, bool& done) {
+  hint_.clear();
+  if (look() != nullptr) {
+    draw_dressed(choice, done);
+    return;
+  }
   if (setup_) {
     draw_setup(choice, done);
     return;
@@ -338,10 +331,8 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
   const ImGuiViewport* view = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(view->Pos);
   ImGui::SetNextWindowSize(view->Size);
-  ImGui::Begin("Bright Dawn", nullptr,
-               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                   ImGuiWindowFlags_NoBringToFrontOnFocus);
-  // The title on a panel of its own, to be read over the backdrop too.
+  ImGui::Begin("Bright Dawn", nullptr, kWholeWindow);
+  // The title on a panel of its own.
   ImGui::BeginChild("title", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
   ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.8f);
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
@@ -386,9 +377,7 @@ void Launcher::draw_setup(LauncherChoice& choice, bool& done) {
   const float width = std::min(view->Size.x - 2 * margin, em * 50);
   ImGui::SetNextWindowPos(ImVec2(view->Pos.x + (view->Size.x - width) / 2, view->Pos.y + margin));
   ImGui::SetNextWindowSize(ImVec2(width, view->Size.y - 2 * margin));
-  ImGui::Begin("Setup", nullptr,
-               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                   ImGuiWindowFlags_NoBringToFrontOnFocus);
+  ImGui::Begin("Setup", nullptr, kWholeWindow);
   ImGui::BeginChild("setup page", ImVec2(0, 0), ImGuiChildFlags_Borders);
   ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.8f);
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
@@ -405,9 +394,14 @@ void Launcher::draw_setup(LauncherChoice& choice, bool& done) {
     done = true;
   }
   ImGui::Separator();
+  draw_setup_page();
+  ImGui::EndChild();
+  ImGui::End();
+}
 
+void Launcher::draw_setup_page() {
   if (built_state_ == BuiltState::Ready) {
-    coloured(kGood, "The game is built: go on to the launcher, below the build's result.");
+    coloured(true, "The game is built: go on to the launcher, below the build's result.");
   } else if (built_state_ == BuiltState::None) {
     note("Before the launcher opens, the game is built once from your ROM: its code translated to C++ and "
          "compiled for this computer, so that it runs natively. Choose your ROM, then build. What the build "
@@ -421,8 +415,173 @@ void Launcher::draw_setup(LauncherChoice& choice, bool& done) {
   ImGui::Spacing();
   ImGui::Separator();
   draw_build();
+}
+
+void Launcher::draw_dressed(LauncherChoice& choice, bool& done) {
+  SDL_Renderer* renderer = app_.renderer;
+  const ImGuiViewport* view = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(view->Pos);
+  ImGui::SetNextWindowSize(view->Size);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::Begin("Bright Dawn", nullptr,
+               kWholeWindow | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+                   ImGuiWindowFlags_NoScrollWithMouse);
+  ImGui::PopStyleVar();
+  ImDrawList* list = ImGui::GetWindowDrawList();
+  const float em = ImGui::GetFontSize();
+  const float scale = skin_.picture_scale(renderer);
+
+  // The title on its ribbon, in the sky between the upper gears.
+  const char* title = "Bright Dawn";
+  const float ribbon_height = 20.0f * scale;
+  ImFont* outlined = app_.gui.outlined_font();
+  const float title_size = app_.gui.sharp_size(std::max(em, ribbon_height * 0.5f));
+  const ImVec2 title_extent = outlined->CalcTextSizeA(title_size, FLT_MAX, 0.0f, title);
+  const ImRect band = skin_.draw_ribbon(list, renderer, skin_.at(renderer, 128.0f, skin::kTitleY), ribbon_height,
+                                        title_extent.x);
+  list->AddText(outlined, title_size,
+                ImVec2(std::floor(band.GetCenter().x - title_extent.x / 2),
+                       std::floor(band.GetCenter().y - title_extent.y / 2)),
+                ImGui::GetColorU32(skin::kText), title);
+
+  // The pages, on the board.
+  const ImRect board = skin_.board(renderer);
+  const float inset = std::max(em * 0.5f, 5.0f * scale);
+  ImGui::SetCursorScreenPos(ImVec2(board.Min.x + inset, board.Min.y + inset));
+  ImGui::BeginChild("board", ImVec2(std::max(1.0f, board.GetWidth() - 2 * inset), std::max(1.0f, board.GetHeight() - 2 * inset)),
+                    ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+  if (setup_) draw_setup_dressed(choice, done);
+  else draw_pages_dressed(choice, done);
   ImGui::EndChild();
+
+  // What is under the pointer, or what to do, in the message bar.
+  menu::message_bar(look(), list,
+                    skin_.area(renderer, skin::kMessageLeft, skin::kMessageTop, skin::kMessageRight,
+                               skin::kMessageBottom),
+                    hint_.empty() ? standing_hint() : hint_);
   ImGui::End();
+}
+
+void Launcher::draw_pages_dressed(LauncherChoice& choice, bool& done) {
+  const float em = ImGui::GetFontSize();
+  ImGui::BeginChild("pages", ImVec2(em * 8, 0));
+  const struct {
+    Page page;
+    const char* name;
+    const char* hint;
+  } pages[] = {{Page::Play, "Play", "Choose your ROM, and play."},
+               {Page::Build, "Build", "Build the game from your ROM, so that its code runs natively."},
+               {Page::Settings, "Settings", "How the game is shown and played, and how it is built."},
+               {Page::Log, "Log", "Where this run's log is, for when something goes wrong."}};
+  for (const auto& p : pages) {
+    if (p.page == Page::Build && app_.translated_build) continue;
+    if (menu::choice_button(look(), p.name, page_ == p.page, ImVec2(-1.0f, em * 1.7f))) {
+      page_ = p.page;
+      if (page_ == Page::Build && !tools_checked_) check_tools();
+    }
+    explain(p.hint);
+  }
+  ImGui::EndChild();
+  ImGui::SameLine(0.0f, em * 0.6f);
+  if (page_ == Page::Settings) {
+    // The settings book lays its strips of parchment on the wood itself.
+    ImGui::BeginChild("page", ImVec2(0, 0));
+    app_.settings_changed(book_.draw(app_.settings));
+    ImGui::EndChild();
+    if (!book_.hovered_help().empty()) hint_ = book_.hovered_help();
+    return;
+  }
+  begin_paper("page");
+  switch (page_) {
+    case Page::Play: draw_play(choice, done); break;
+    case Page::Build: draw_build(); break;
+    case Page::Settings: break;
+    case Page::Log: draw_log(); break;
+  }
+  end_paper();
+}
+
+void Launcher::draw_setup_dressed(LauncherChoice& choice, bool& done) {
+  begin_paper("setup page");
+  const float em = ImGui::GetFontSize();
+  heading("Setting up");
+  const float quit_width = em * 4.5f;
+  ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionMax().x - quit_width));
+  if (button("Quit", ImVec2(quit_width, 0))) {
+    log::info("launcher", "quit from the setup");
+    choice.kind = LauncherChoice::Quit;
+    done = true;
+  }
+  explain("Close Bright Dawn. The setup goes on where it was the next time.");
+  ImGui::Separator();
+  draw_setup_page();
+  end_paper();
+}
+
+void Launcher::begin_paper(const char* id) {
+  const float em = ImGui::GetFontSize();
+  const ImVec2 min = ImGui::GetCursorScreenPos();
+  const ImVec2 size = ImGui::GetContentRegionAvail();
+  const ImVec2 max(min.x + size.x, min.y + size.y);
+  ImDrawList* list = ImGui::GetWindowDrawList();
+  skin_.draw_paper(list, app_.renderer, min, max);
+  list->AddRect(min, max, ImGui::GetColorU32(skin::kMessageEdge), 0.0f, 0, std::max(2.0f, em / 10));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em, em * 0.8f));
+  ImGui::BeginChild(id, size, ImGuiChildFlags_AlwaysUseWindowPadding);
+  ImGui::PopStyleVar();
+}
+
+void Launcher::end_paper() { ImGui::EndChild(); }
+
+void Launcher::heading(const char* text) const {
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
+  ImGui::PushFont(nullptr, app_.gui.sharp_size(ImGui::GetStyle().FontSizeBase * 1.4f));
+  ImGui::TextUnformatted(text);
+  ImGui::PopFont();
+  ImGui::PopStyleColor();
+}
+
+void Launcher::note(const std::string& text) const {
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::TextWrapped("%s", text.c_str());
+  ImGui::PopStyleColor();
+}
+
+ImVec4 Launcher::colour(bool good) const {
+  if (look() != nullptr) return good ? kGoodOnPaper : kBadOnPaper;
+  return good ? kGood : kBad;
+}
+
+void Launcher::coloured(bool good, const std::string& text) const {
+  ImGui::PushStyleColor(ImGuiCol_Text, colour(good));
+  ImGui::TextWrapped("%s", text.c_str());
+  ImGui::PopStyleColor();
+}
+
+bool Launcher::button(const char* label, ImVec2 size) const { return menu::action_button(look(), label, size); }
+
+bool Launcher::small_button(const char* label) const {
+  return look() != nullptr ? menu::action_button(look(), label) : ImGui::SmallButton(label);
+}
+
+void Launcher::explain(const char* text) {
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) hint_ = text;
+}
+
+std::string Launcher::standing_hint() const {
+  const std::string name = std::string("Bright Dawn ") + BD_VERSION;
+  if (building()) return "The game is being built from your ROM. This takes some minutes.";
+  if (setup_) {
+    if (built_state_ == BuiltState::Ready) return "The game is built. Go on to the launcher.";
+    return name + ": the game is built once from your ROM, then the launcher opens.";
+  }
+  switch (page_) {
+    case Page::Play: return rom_check_.ok ? name + ": ready to play." : name + ": choose your ROM.";
+    case Page::Build: return "The game is built from your ROM, and its code then runs natively.";
+    case Page::Settings: return "Point at a setting to see what it does.";
+    case Page::Log: return "Attach the log when you report a problem.";
+  }
+  return name;
 }
 
 void Launcher::draw_rom_chooser() {
@@ -437,7 +596,9 @@ void Launcher::draw_rom_chooser() {
     dialog_open = dialog_->open;
   }
   ImGui::BeginDisabled(dialog_open);
-  if (ImGui::Button("Choose your ROM...")) {
+  const bool choose = button("Choose your ROM...");
+  explain("Choose your own copy of Golden Sun: Dark Dawn: a .nds file.");
+  if (choose) {
     static const SDL_DialogFileFilter filters[] = {{"Nintendo DS ROM", "nds"}, {"All files", "*"}};
     std::string folder = rom_.empty() ? std::string() : utf8(rom_.parent_path());
     // The dialog may answer on another thread, after this launcher is gone:
@@ -468,14 +629,14 @@ void Launcher::draw_rom_chooser() {
   if (ImGui::InputTextWithHint("##path", "or type or paste its path here", buffer, sizeof buffer,
                                ImGuiInputTextFlags_EnterReturnsTrue)) {
     rom_typed_ = buffer;
-    choose_rom(from_utf8(rom_typed_));
+    rom_asked_ = from_utf8(rom_typed_);
   } else {
     rom_typed_ = buffer;
   }
   ImGui::SameLine();
-  if (ImGui::Button("Use this")) choose_rom(from_utf8(rom_typed_));
-  if (!rom_.empty()) coloured(rom_check_.ok ? kGood : kBad, rom_check_.text);
-
+  if (button("Use this")) rom_asked_ = from_utf8(rom_typed_);
+  explain("Use the ROM at the path typed beside this.");
+  if (!rom_.empty()) coloured(rom_check_.ok, rom_check_.text);
 }
 
 void Launcher::draw_play(LauncherChoice& choice, bool& done) {
@@ -497,11 +658,12 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
       note("The game built before cannot be used: " + built_detail_ + ". Build it again.");
   }
   ImGui::BeginDisabled(!rom_check_.ok);
-  if (ImGui::Button("Play", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f))) {
+  if (button("Play", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f))) {
     play(choice);
     done = true;
   }
   ImGui::EndDisabled();
+  explain(rom_check_.ok ? "Play Golden Sun: Dark Dawn from your ROM." : "Choose your ROM first.");
   ImGui::Spacing();
   note("Keyboard: arrows, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Right Shift = Select. "
        "Controllers: by position, as on the DS. The left mouse button on the touch screen is the stylus. "
@@ -516,9 +678,9 @@ void Launcher::draw_build() {
        "fast computer, longer on a slower one.");
   ImGui::Spacing();
   ImGui::TextUnformatted("What it needs:");
-  const auto requirement = [](bool ok, const std::string& what, const std::string& detail) {
+  const auto requirement = [this](bool ok, const std::string& what, const std::string& detail) {
     ImGui::Bullet();
-    ImGui::PushStyleColor(ImGuiCol_Text, ok ? kGood : kBad);
+    ImGui::PushStyleColor(ImGuiCol_Text, colour(ok));
     ImGui::TextUnformatted(what.c_str());
     ImGui::PopStyleColor();
     if (!detail.empty()) {
@@ -550,31 +712,38 @@ void Launcher::draw_build() {
                        "space while it runs.", compiler.c_str());
   const bool running = building();
   ImGui::BeginDisabled(running);
-  if (ImGui::Button("Check again")) check_tools();
+  if (button("Check again")) check_tools();
   ImGui::EndDisabled();
+  explain("Look again for what the build needs.");
 
   ImGui::Spacing();
   ImGui::TextUnformatted("The built game:");
   ImGui::SameLine();
   ImGui::TextWrapped("%s", library_.empty() ? "(no user data folder)" : utf8(library_).c_str());
-  if (!library_.empty() && ImGui::SmallButton("Open the folder")) open_folder(library_.parent_path());
-  if (built_state_ == BuiltState::Ready) coloured(kGood, "Built, and ready: " + built_detail_);
-  else if (built_state_ != BuiltState::None) coloured(kBad, "Built, but it cannot be used: " + built_detail_);
+  if (!library_.empty()) {
+    if (small_button("Open the folder")) open_folder(library_.parent_path());
+    explain("Open the folder the built game is in.");
+  }
+  if (built_state_ == BuiltState::Ready) coloured(true, "Built, and ready: " + built_detail_);
+  else if (built_state_ != BuiltState::None) coloured(false, "Built, but it cannot be used: " + built_detail_);
 
   ImGui::Spacing();
   const bool can_build =
       rom_check_.ok && builder_ && (python_.found || python) && !library_.empty() && !program_.empty();
   if (!running) {
     ImGui::BeginDisabled(!can_build);
-    if (ImGui::Button(built_state_ != BuiltState::None ? "Build it again" : "Build the game",
-                      ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f)))
+    if (button(built_state_ != BuiltState::None ? "Build it again" : "Build the game",
+               ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f)))
       start_build();
     ImGui::EndDisabled();
+    explain(can_build ? "Translate the game's code to C++ and compile it for this computer: some minutes."
+                      : "What the build needs is not all here yet: see above.");
   } else {
     ImGui::BeginDisabled(stopping_);
-    if (ImGui::Button(stopping_ ? "Stopping..." : "Stop", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f)))
+    if (button(stopping_ ? "Stopping..." : "Stop", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f)))
       stop_build();
     ImGui::EndDisabled();
+    explain("Stop the build. It starts from the beginning the next time.");
     char label[160];
     if (fetch_ != nullptr && build_ == nullptr)
       std::snprintf(label, sizeof label, "Getting Python for the build");
@@ -588,12 +757,14 @@ void Launcher::draw_build() {
     ImGui::TextDisabled("%" PRIu64 " min %02" PRIu64 " s", seconds / 60, seconds % 60);
   }
   if (!build_result_.empty()) {
-    coloured(build_failed_ ? kBad : kGood, build_result_);
+    coloured(!build_failed_, build_result_);
     if (!library_.empty())
       note("Everything the build printed is in " + utf8(library_.parent_path() / "build.log") + ".");
   }
   if (setup_ && !running && built_state_ == BuiltState::Ready) {
-    if (ImGui::Button("Go on to the launcher", ImVec2(ImGui::GetFontSize() * 14, ImGui::GetFontSize() * 2.2f))) {
+    const bool go_on = button("Go on to the launcher", ImVec2(ImGui::GetFontSize() * 14, ImGui::GetFontSize() * 2.2f));
+    explain("The setup is done: open the launcher.");
+    if (go_on) {
       log::info("launcher", "the setup is done");
       setup_ = false;
       page_ = Page::Play;
@@ -625,11 +796,12 @@ void Launcher::draw_log() {
        "why. Attach it when you report a problem. How much it records is in the settings (Log).");
   const std::filesystem::path file = log::file_path();
   if (file.empty()) {
-    coloured(kBad, "This run has no log file.");
+    coloured(false, "This run has no log file.");
     return;
   }
   ImGui::TextWrapped("This run's log: %s", utf8(file).c_str());
-  if (ImGui::Button("Open the log folder")) open_folder(file.parent_path());
+  if (button("Open the log folder")) open_folder(file.parent_path());
+  explain("Open the folder the logs are in. The newest log is this run's.");
 }
 
 }  // namespace bd::app

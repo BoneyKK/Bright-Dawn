@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "app/menu_widgets.h"
 #include "platform/settings.h"
 
 namespace bd::app {
@@ -16,9 +17,23 @@ class SettingsBook {
   // Draws the book in the space left in the current ImGui window. Returns
   // the keys the player changed this frame; they are already set.
   std::vector<std::string> draw(platform::Settings& settings);
+  // Drawn in the look of the game's settings menu from now on (each setting
+  // on a strip of parchment, its help in the message bar), or ImGui's own
+  // with null. `look` must outlive its use here.
+  void set_look(const menu::Look* look) { look_ = look; }
+  // In the game's look: the help of the setting under the pointer, for the
+  // message bar; empty when there is none.
+  const std::string& hovered_help() const { return hovered_help_; }
 
  private:
   void draw_setting(platform::Settings& settings, const platform::SettingDef& def, std::vector<std::string>& changed);
+  void draw_setting_in_look(platform::Settings& settings, const platform::SettingDef& def,
+                            std::vector<std::string>& changed);
+  void draw_in_look(platform::Settings& settings, const std::vector<std::string>& chapters,
+                    std::vector<std::string>& changed);
+
+  const menu::Look* look_ = nullptr;
+  std::string hovered_help_;
 
   std::size_t chapter_ = 0;
   // The chapter was chosen in the index: the tabs, when shown, follow.

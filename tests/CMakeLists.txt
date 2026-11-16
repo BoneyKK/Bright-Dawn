@@ -32,6 +32,7 @@ add_executable(bd_tests
   test_timing.cpp
   test_user_settings.cpp
   test_video_memory.cpp
+  test_font.cpp
   test_formats.cpp
   test_frontend.cpp
   test_keypad.cpp

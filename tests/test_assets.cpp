@@ -89,3 +89,25 @@ TEST(screen_picture_is_read_from_the_rom) {
   CHECK(!missing.ok());
   if (!missing) CHECK(missing.error().code == bd::ErrorCode::NotFound);
 }
+
+TEST(menu_piece_of_another_size_is_decoded_with_colour_zero_clear) {
+  // A palette of two, then 4 by 2 pixels: colour 0 and colour 1 in turn.
+  const Bytes raw = {0x00, 0x00, 0x1F, 0x00, 0, 1, 0, 1, 1, 0, 1, 0};
+  for (const Bytes& file : {raw, bd_test::lz40_compress(raw)}) {
+    auto clear = bd::assets::decode_indexed_picture(file, 4, 2, true);
+    CHECK(clear.ok());
+    if (!clear) continue;
+    const auto& p = clear.value();
+    CHECK(p.width == 4 && p.height == 2 && p.rgba.size() == 4 * 2 * 4);
+    CHECK(p.rgba[3] == 0);              // Colour 0: clear.
+    CHECK(pixel_is(p, 1, 255, 0, 0));  // Colour 1: red, solid.
+    CHECK(p.rgba[4 * 4 + 3] == 255 && pixel_is(p, 4, 255, 0, 0));
+  }
+  auto solid = bd::assets::decode_indexed_picture(raw, 4, 2, false);
+  CHECK(solid.ok());
+  if (solid) CHECK(pixel_is(solid.value(), 0, 0, 0, 0));
+  // Too few bytes for the size and a palette, or a size that cannot be.
+  CHECK(!bd::assets::decode_indexed_picture(raw, 5, 2, true).ok());
+  CHECK(!bd::assets::decode_indexed_picture(raw, 0, 2, true).ok());
+  CHECK(!bd::assets::decode_indexed_picture(raw, 4, 4096, true).ok());
+}

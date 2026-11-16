@@ -70,6 +70,12 @@ std::vector<SettingDef> game_setting_definitions() {
   defs.push_back(toggle(key::kFullscreen, "Display", "Full screen", "Start full screen (F11 changes it).", false));
   defs.push_back(toggle(key::kVsync, "Display", "Wait for the screen's refresh",
                         "Show each picture when the screen refreshes (vsync): no tearing.", true));
+  defs.push_back(choice(key::kRenderer, "Display", "Drawing",
+                        "Vulkan draws the window through the graphics card's Vulkan driver. Where Vulkan cannot be "
+                        "used, the system's own way is used instead, and the log says why. The system's own way "
+                        "is Direct3D on Windows and OpenGL on most others. Takes effect when Bright Dawn next "
+                        "starts.",
+                        {{"vulkan", "Vulkan"}, {"system", "The system's own"}}, "vulkan"));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
                         "Sharp shows each texel as a block of pixels, as the DS does. Smooth mixes neighbouring "
                         "texels, for softer surfaces, before the screen is put together. Only the 3D scenes "

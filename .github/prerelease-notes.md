@@ -13,7 +13,9 @@ Unpack and start `bright-dawn`. The first time (and after each update) it
 opens the setup: choose your ROM (it is remembered) and build the game from
 it, its code translated to C++ and compiled on your computer, which the
 program then runs natively. Then the launcher opens: play, the settings, and
-the log, over the book of the game's main menu, read from your ROM. Nothing needs installing for that: the compiler
+the log, in the look of the game's own settings menu and font, read from your
+ROM. It draws through Vulkan, or the system's own renderer where Vulkan is
+not there. Nothing needs installing for that: the compiler
 (and on Windows, Python, if it is not installed) is downloaded for the build,
 checked, and deleted with everything else the build made; about 2 GB of free
 space is needed while it runs. The built game gets as far as the
