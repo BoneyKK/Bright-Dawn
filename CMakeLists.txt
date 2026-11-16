@@ -62,12 +62,14 @@ endif()
 
 add_library(bd_core STATIC
   src/core/checksum.cpp
+  src/core/log.cpp
   src/core/result.cpp
 )
 target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(bd_core PUBLIC bd_build_flags)
 
 add_library(bd_platform STATIC
+  src/platform/crash_log.cpp
   src/platform/frame_clock.cpp
   src/platform/paths.cpp
 )
