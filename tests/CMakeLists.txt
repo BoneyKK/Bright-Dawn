@@ -95,6 +95,21 @@ bd_cli_test(cli_extract extract ${BD_TEST_DIR}/dark_dawn_like.nds --code --out $
 set_tests_properties(cli_extract PROPERTIES PASS_REGULAR_EXPRESSION "Wrote [0-9]+ file"
   FIXTURES_SETUP extracted_code)
 
+# Only the program code: what the game builder needs, and none of the files.
+bd_cli_test(cli_extract_code_only extract ${BD_TEST_DIR}/dark_dawn_like.nds --code-only --out ${BD_TEST_DIR}/code_only)
+set_tests_properties(cli_extract_code_only PROPERTIES PASS_REGULAR_EXPRESSION "Wrote [0-9]+ file"
+  FIXTURES_SETUP code_only)
+add_test(NAME cli_extract_code_only_has_code
+  COMMAND ${CMAKE_COMMAND} -E cat ${BD_TEST_DIR}/code_only/code/manifest.txt)
+set_tests_properties(cli_extract_code_only_has_code PROPERTIES FIXTURES_REQUIRED code_only
+  PASS_REGULAR_EXPRESSION "arm9 load=0x")
+add_test(NAME cli_extract_code_only_has_no_files
+  COMMAND ${CMAKE_COMMAND} -DPATH=${BD_TEST_DIR}/code_only/files -P ${CMAKE_CURRENT_SOURCE_DIR}/expect_absent.cmake)
+set_tests_properties(cli_extract_code_only_has_no_files PROPERTIES FIXTURES_REQUIRED code_only)
+bd_cli_test(cli_extract_code_only_takes_no_names extract ${BD_TEST_DIR}/dark_dawn_like.nds --code-only
+  --out ${BD_TEST_DIR}/code_only_named data/model/hero.nsbmd)
+set_tests_properties(cli_extract_code_only_takes_no_names PROPERTIES PASS_REGULAR_EXPRESSION "takes no file names")
+
 # The code manifest written next to the extracted program files.
 add_test(NAME cli_extract_manifest
   COMMAND ${CMAKE_COMMAND} -E cat ${BD_TEST_DIR}/out/code/manifest.txt)
