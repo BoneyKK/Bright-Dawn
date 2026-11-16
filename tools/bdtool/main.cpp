@@ -26,7 +26,8 @@
 
 // In boot.cpp.
 int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit,
-             const std::filesystem::path& wireframe, const std::filesystem::path& picture);
+             const std::filesystem::path& wireframe, const std::filesystem::path& picture,
+             const std::filesystem::path& screens);
 
 namespace {
 
@@ -64,6 +65,8 @@ void print_usage(std::FILE* out) {
       "                                   last 3D frame the game sent, as an SVG picture\n"
       "      --picture FILE               Also draw that frame's polygons and write the\n"
       "                                   3D layer alone, as a BMP picture\n"
+      "      --screens FILE               Also write the two screens as last shown, the\n"
+      "                                   top one above the bottom one, as a BMP picture\n"
       "\n"
       "You must supply your own legally obtained ROM. Nothing is downloaded.\n",
       out);
@@ -556,7 +559,7 @@ int main(int argc, char** argv) {
     return usage_error(("unknown command: " + command).c_str());
   }
 
-  std::filesystem::path out_dir, wireframe, picture;
+  std::filesystem::path out_dir, wireframe, picture, screens;
   bool with_code = false;
   std::size_t top = 20;
   // Ten seconds of console time, which a busy program fills with a few
@@ -587,6 +590,9 @@ int main(int argc, char** argv) {
     } else if (arg == "--wireframe" && command == "boot") {
       if (++i == args.size() || args[i].empty()) return usage_error("--wireframe needs a file name");
       wireframe = args[i];
+    } else if (arg == "--screens" && command == "boot") {
+      if (++i == args.size() || args[i].empty()) return usage_error("--screens needs a file name");
+      screens = args[i];
     } else if (arg == "--picture" && command == "boot") {
       if (++i == args.size() || args[i].empty()) return usage_error("--picture needs a file name");
       picture = args[i];
@@ -611,7 +617,7 @@ int main(int argc, char** argv) {
   // Output from these commands gets pasted into reports; say which build made it.
   if (command == "validate" || command == "info" || command == "survey")
     std::printf("bdtool %s\n", BD_VERSION);
-  if (command == "boot") return cmd_boot(rom_path, instructions, frames, wireframe, picture);
+  if (command == "boot") return cmd_boot(rom_path, instructions, frames, wireframe, picture, screens);
   if (command == "validate") return cmd_validate(rom_path);
   if (command == "info") return cmd_info(rom_path);
   if (command == "list") return cmd_list(rom_path);

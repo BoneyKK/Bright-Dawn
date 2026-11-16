@@ -28,7 +28,8 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       bios_(watched_bus_),
       dma_(watched_bus_, interrupts_),
       cartridge_(interrupts_),
-      geometry_(interrupts_) {
+      geometry_(interrupts_),
+      display_(bus_.video_memory(), bus_.palette_memory(), bus_.sprite_memory(), geometry_, polygon_renderer_) {
   interrupts_.attach(io_);
   ipc_.attach(io_);
   dma_.attach(io_);
@@ -42,6 +43,9 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   geometry_.on_full = [this] { wait_for_geometry_room(); };
   geometry_.on_no_room = [this] { polygon_renderer_.ram_overflowed(); };
   polygon_renderer_.attach(io_);
+  display_.attach(io_);
+  video_timing_.on_line_begins = [this](unsigned line) { display_.line_begins(line); };
+  video_timing_.on_line_done = [this](unsigned line) { display_.line_done(line); };
   // A DMA channel can be set to feed the 3D engine's queue whenever it is
   // less than half full.
   geometry_.on_less_than_half_full = [this] { dma_.trigger(Dma::kStartGeometry); };
@@ -62,6 +66,7 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   timeline_.on_refresh = [this] { catch_up(); };
   timeline_.on_rescheduled = [this] { set_alarm(); };
   video_timing_.on_vertical_blank = [this] {
+    display_.vertical_blank();
     dma_.trigger(Dma::kStartVBlank);
     geometry_.vertical_blank();
     if (frame_limit_ != 0 && video_timing_.frames() >= frame_limit_ && !frame_limit_reached_) {

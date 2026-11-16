@@ -9,9 +9,10 @@ and music packs.
 now executes, in the interpreter, on a real ROM: it sets up the machine, takes
 interrupts, reads from the cartridge and from its save memory, and reaches its
 frame loop, where it reads the buttons and the touch screen once a frame and
-keeps running. The 3D frames it sends can be drawn: the trace tool writes
-the title screen's 3D layer to a picture. There is no screen yet: the 2D
-display hardware is not modelled, and the program is not playable. Its sound
+keeps running. Its screens are made, 3D and 2D: the trace tool writes the
+title screen, both halves, to a picture. There is no window yet to show
+them in and no input reaches the game from a player, so it is not
+playable. Its sound
 commands reach a model of the sound hardware, but the music player behind
 them is not there, so no sound comes out
 ([docs/BOOT.md](docs/BOOT.md)). See
@@ -62,6 +63,7 @@ Recognised releases, by cartridge game code: `BO5E` (USA), `BO5P` (Europe),
 | DMA | Transfers that start at once, transfers fed by the cartridge and transfers timed by the display's blanks: done, tested. Transfers started by other hardware events: not yet |
 | Cartridge slot (reading data) | Done, tested, and used by the real program to read its file tables and overlays |
 | 3D engine | Begun, tested: the command queue, status and interrupt, the matrices and their stacks, the tests a program can ask for, vertices made into polygons (facing, cutting to the view, placing on the screen, the limits of a frame), lighting, and the drawing of a frame's polygons with textures, blending, shadows, fog, edge marking and anti-aliasing at the hardware's resolution. The real program's 3D commands run through it; `bdtool boot --picture` writes the drawn 3D layer of the last frame (the title screen) and `--wireframe` its outlines. Not compared with a console pixel by pixel; no sorting of translucent polygons; nothing puts the frame on a screen yet |
+| Display | Begun, tested: both 2D engines (backgrounds of every kind, sprites, windows, effects, master brightness), the 3D picture among them, the display capture, both screens, a line at a time. On the real ROM the title screen comes out on both screens (`bdtool boot --screens`); looked at, not compared with a console pixel by pixel. Not shown in a window yet |
 | 2D engines, display output, interrupts in translated code | Not started; unimplemented registers are recorded |
 | Renderer, audio, input, mods, settings menu | Not started |
 

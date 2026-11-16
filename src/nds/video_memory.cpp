@@ -164,11 +164,15 @@ std::uint32_t VideoMemory::peek(std::uint32_t address, unsigned size) const {
 }
 
 void VideoMemory::write(std::uint32_t address, unsigned size, std::uint32_t value) {
-  Page& page = page_at(address);
-  if (page.count == 0) {
+  if (page_at(address).count == 0) {
     ++statistics_.writes_with_no_bank;
     return;
   }
+  poke(address, size, value);
+}
+
+void VideoMemory::poke(std::uint32_t address, unsigned size, std::uint32_t value) {
+  Page& page = page_at(address);
   const std::uint32_t at = address & (kPageSize - 1);
   for (unsigned m = 0; m < page.count; ++m) {
     for (unsigned i = 0; i < size; ++i) page.memory[m][at + i] = static_cast<std::uint8_t>(value >> (8 * i));

@@ -617,3 +617,33 @@ TEST(console_program_reads_the_cartridge) {
   CHECK(empty.machine().cpu().r[4] == 0xFFFFFFFFu);
   CHECK(empty.cartridge().statistics().reads_without_cartridge == 1);
 }
+
+TEST(console_shows_its_screens_a_line_at_a_time) {
+  //   02000000  b    .
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  // Both engines show their picture, which is only a backdrop: red for the
+  // main engine, green for the second.
+  console.io().write(0x04000000, 4, 1u << 16);
+  console.io().write(0x04001000, 4, 1u << 16);
+  console.bus().write16(0x05000000, 0x001F);
+  console.bus().write16(0x05000400, 0x03E0);
+  // A hundred lines in, the main engine's backdrop is made blue: lines
+  // already drawn stay as they were. Then on to the vertical blank.
+  CHECK(console.run(100 * 2130).reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(console.video_timing().line() >= 99 && console.video_timing().line() < 101);
+  const unsigned changed_at = console.video_timing().line() + 1;
+  console.bus().write16(0x05000000, 0x7C00);
+  console.run(1000000, 1);
+  CHECK(console.display().statistics().frames == 1);
+  // The main engine is on the bottom screen.
+  const std::vector<std::uint32_t>& top = console.display().top_screen();
+  const std::vector<std::uint32_t>& bottom = console.display().bottom_screen();
+  const std::uint32_t red = 62, green = 62u << 6, blue = 62u << 12;
+  CHECK(top[0] == green && top[191 * 256 + 255] == green);
+  // The line under way when the change came was already drawn if its dots
+  // were done; either way the next line is blue.
+  CHECK(bottom[0] == red && bottom[98 * 256 + 255] == red);
+  CHECK(bottom[changed_at * 256] == blue && bottom[191 * 256 + 255] == blue);
+}

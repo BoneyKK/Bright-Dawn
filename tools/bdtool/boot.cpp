@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <initializer_list>
 #include <string>
+#include <vector>
 
 #include "core/version.h"
 #include "nds/console.h"
@@ -62,11 +63,13 @@ bool write_wireframe(const std::filesystem::path& path, const bd::nds::GeometryE
   return std::fclose(file) == 0;
 }
 
-// A drawn 3D layer as a BMP file, 24 bits a pixel. Pixels nothing was drawn
-// on are black; alpha is otherwise left out.
-bool write_picture(const std::filesystem::path& path, const bd::nds::PolygonRenderer::Image& image) {
-  constexpr int width = bd::nds::PolygonRenderer::kWidth, height = bd::nds::PolygonRenderer::kHeight;
-  if (image.size() != static_cast<std::size_t>(width) * height) return false;
+// Pixels of six bits a part as a BMP file, 24 bits a pixel, 256 across. With
+// `with_alpha`, pixels whose alpha (from bit 18) is zero are black: nothing
+// was drawn on them.
+bool write_picture(const std::filesystem::path& path, const std::vector<std::uint32_t>& image, bool with_alpha = true) {
+  constexpr int width = bd::nds::PolygonRenderer::kWidth;
+  const int height = static_cast<int>(image.size() / width);
+  if (height == 0 || image.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height)) return false;
   std::FILE* file = std::fopen(path.string().c_str(), "wb");
   if (file == nullptr) return false;
   const std::uint32_t data_size = static_cast<std::uint32_t>(width * height * 3);
@@ -87,7 +90,7 @@ bool write_picture(const std::filesystem::path& path, const bd::nds::PolygonRend
   for (int y = height - 1; y >= 0; --y) {
     for (int x = 0; x < width; ++x) {
       const std::uint32_t pixel = image[static_cast<std::size_t>(y * width + x)];
-      const bool drawn = ((pixel >> 18) & 0x3F) != 0;
+      const bool drawn = !with_alpha || ((pixel >> 18) & 0x3F) != 0;
       for (unsigned shift : {12u, 6u, 0u}) {
         const std::uint32_t six = drawn ? (pixel >> shift) & 0x3F : 0;
         std::fputc(static_cast<int>(six << 2 | six >> 4), file);
@@ -100,7 +103,8 @@ bool write_picture(const std::filesystem::path& path, const bd::nds::PolygonRend
 }  // namespace
 
 int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limit, std::uint64_t frame_limit,
-             const std::filesystem::path& wireframe, const std::filesystem::path& picture) {
+             const std::filesystem::path& wireframe, const std::filesystem::path& picture,
+             const std::filesystem::path& screens) {
   using namespace bd;
   std::printf("bdtool %s\n", BD_VERSION);
 
@@ -265,6 +269,27 @@ int cmd_boot(const std::filesystem::path& source, std::uint64_t instruction_limi
   }
   for (const auto& [what, count] : console.polygon_renderer().notes())
     std::printf("  not carried out when drawing: %s (%" PRIu64 " frames)\n", what.c_str(), count);
+
+  // The display.
+  nds::Display& display = console.display();
+  std::printf("\nDisplay: %" PRIu64 " frames shown, %" PRIu64 " 3D pictures drawn, %" PRIu64 " display captures made\n",
+              display.statistics().frames, display.statistics().pictures_3d, display.statistics().captures);
+  std::printf("  main engine control 0x%08" PRIX32 ", second engine control 0x%08" PRIX32 "\n", display.main_engine().control(),
+              display.second_engine().control());
+  std::printf("  capture control 0x%08" PRIX32 ", power control 0x%04" PRIX32 " (the main engine is on the %s screen)\n",
+              display.capture_control(), display.power_control(),
+              (display.power_control() & nds::Display::kMainOnTop) != 0 ? "top" : "bottom");
+  for (const auto* notes : {&display.main_engine().notes(), &display.second_engine().notes(), &display.notes()})
+    for (const auto& [what, count] : *notes)
+      std::printf("  not carried out: %s (%" PRIu64 " lines)\n", what.c_str(), count);
+  if (!screens.empty()) {
+    std::vector<std::uint32_t> both = display.top_screen();
+    both.insert(both.end(), display.bottom_screen().begin(), display.bottom_screen().end());
+    if (write_picture(screens, both, false))
+      std::printf("  both screens written to %s\n", screens.string().c_str());
+    else
+      std::fprintf(stderr, "error: cannot write %s\n", screens.string().c_str());
+  }
   if (!wireframe.empty()) {
     if (write_wireframe(wireframe, console.geometry().finished()))
       std::printf("  outlines of that frame's polygons written to %s\n", wireframe.string().c_str());

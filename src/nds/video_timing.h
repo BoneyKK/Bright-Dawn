@@ -39,6 +39,12 @@ class VideoTiming : public Timeline::Source {
   // Called at the start of the horizontal blank of each visible line, while
   // someone is watching for it.
   std::function<void()> on_horizontal_blank;
+  // Called when a line begins, with its number (0 to 262), and when the
+  // dots of a visible line are done (as its horizontal blank begins), before
+  // on_horizontal_blank. Each visible line's horizontal blank is an event
+  // while on_line_done is set.
+  std::function<void(unsigned line)> on_line_begins;
+  std::function<void(unsigned line)> on_line_done;
   // Whether the horizontal blank of visible lines is to be reported through
   // on_horizontal_blank. Each one is then an event of its own, which costs
   // time, so it is off unless something waits for it.
