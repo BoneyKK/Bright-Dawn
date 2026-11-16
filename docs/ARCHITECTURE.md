@@ -37,8 +37,8 @@ in them, not before.
 
 | Module | Responsibility | May depend on |
 | --- | --- | --- |
-| `core` | Errors, byte access, checksums, logging | nothing |
-| `platform` | Files, paths, windowing, devices, configuration storage | `core` |
+| `core` | Errors, byte access, checksums, the log | nothing |
+| `platform` | Files, paths, windowing, devices, the settings file, crashes noted in the log | `core` |
 | `rom` | The only code that reads the user's ROM: validation, file system, decompression | `core` |
 | `assets` | Decodes original formats into neutral descriptions (textures, meshes, skeletons, sequences); asset identifiers; cache in the user data directory | `core`, `rom` |
 | `mods` | Manifests, load order, override resolution on top of `assets` | `core`, `assets` |
@@ -48,7 +48,8 @@ in them, not before.
 | `gfx` | Capture of DS-level graphics state, presentation rules, renderer backends | `core`, `assets`, `platform` |
 | `audio` | Sequence playback, mixing, replacement tracks | `core`, `assets`, `platform` |
 | `input` | Devices, mapping, touch replacements | `core`, `platform` |
-| `ui` | The settings book and setup screens | `gfx`, `input`, `assets` |
+| `ui` | What the settings book and setup screens show and keep, without drawing it: Bright Dawn's settings, each described once; following the game builder (built) | `platform`, `gfx`, `input`, `assets` |
+| `app` | The window program: the launcher, the settings book and the pause menu drawn with Dear ImGui, the game's screens, the game builder run and followed (built) | everything above, SDL 3 |
 
 Rules that keep game logic independent of presentation:
 
@@ -135,4 +136,9 @@ metadata.
 | Every read of ROM data is bounds-checked | A malformed or malicious file must produce an error message, not a crash. Enforced by the damage tests under AddressSanitizer. |
 | In-house test harness | A few dozen lines; avoids a dependency this early. |
 | Extracted data goes to the user data directory | Keeps game data out of the repository and out of the install directory. |
+| Screens scaled pixel for pixel; smoothing only for 3D scenes, and only if asked | The DS screens hold the HUD, menus and text, which any smoothing of the whole screen blurs, so they are always scaled up nearest neighbour. Smoothing textures (bilinear) is a choice for the 3D scenes and is done in the 3D renderer, before the screens are put together, for polygons drawn with perspective only: a polygon whose w does not depend on where its corners are was drawn with an orthographic projection, which is how a game draws a HUD in 3D. Textures whose texels are there or not keep hard outlines (a pixel is drawn where at least half of what it mixes is there). |
+| The settings are described once | Each setting (key, chapter, label, help, kind, values, default) is described in `ui/game_settings.cpp`. The settings book, the settings file (a commented text file a person can edit) and the checks on values are all made from the descriptions, so a new setting needs no screen work. The command line changes settings for one run only, without saving them. |
+| Dear ImGui for the program's own screens | MIT licence, kept in the repository like SkyEmu's core, with its SDL 3 backends: widgets, keyboard and controller navigation and text input that work everywhere SDL does, drawn with SDL's renderer. The look of the book is a matter of style and drawing on top of it; the settings and the builder are kept apart from it (`ui`), so the screens can be redrawn without touching them. |
+| Every run writes a log | A player's problem has to be traceable afterwards: a log in the user data directory, a line per event with wall-clock time and time since start, written out at once so that it ends with what happened last even when the program crashes, which is noted in it. The last ten runs are kept. The builder writes everything it and its programs print to `build.log`. |
+| The game builder runs on the player's computer, from the package | The translated code is the game's own, so it is made where the ROM is. The package carries the builder's sources (`builder/`, no game data), and the launcher runs the builder with Python, CMake and the computer's C++ compiler, which it checks for first, following its steps and output. Closing its standard input stops it and every program it started. |
 | The game's logic steps at the original rate; what is shown follows real time | The game's code, translated or interpreted, advances one fixed step per console frame (about 59.83 a second) and counts frames for its timers, physics and animations: feeding it variable time would mean rewriting each of its systems and would change how it plays. Presentation is decoupled instead (`platform/frame_clock.h`): real elapsed time (the delta) goes into an account, a console frame is run for each whole step in it, and pictures are shown at the screen's own refresh, with the fraction of the next step that has passed. That fraction is what a renderer needs to interpolate between a scene's last two states: the way to show the 3D of both screens, which the DS draws for one screen a frame (30 a second each), 60 or more times a second. |

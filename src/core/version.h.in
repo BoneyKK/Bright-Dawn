@@ -4,3 +4,9 @@
 // Identifies exactly which build produced a piece of output. Release builds
 // carry the same label as their release tag, for example "0.1.0-pre.12".
 #define BD_VERSION "@BD_VERSION_STRING@"
+// Its parts: the label of the build ("dev", "pre.12") and the short hash of
+// the source revision (may be empty). The game builder gives them to the game
+// it builds, so that the game names the same version as the program that
+// built it.
+#define BD_BUILD_ID "@BD_BUILD_ID@"
+#define BD_COMMIT "@BD_COMMIT@"

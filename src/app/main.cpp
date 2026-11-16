@@ -1,42 +1,53 @@
 // Bright Dawn: the game in a window.
 //
-// Loads the game from the user's ROM (or from code extracted from it), starts
-// the console model and shows its two screens, a frame at a time, at the
-// console's rate. The keyboard and any number of game controllers press the
-// DS's buttons; the left mouse button on the touch screen is the stylus.
+// Started without a ROM, it shows the launcher (app/launcher.h): the ROM is
+// chosen, the game built and the settings changed there, without the
+// command line. Started with one (or with a folder extracted from it), it
+// plays it at once. Either way the settings are those kept in the user data
+// directory, which the command line can change for one run, and every run
+// writes a log there (core/log.h).
 //
 // Built as bright-dawn, every instruction of the game is interpreted. Built
 // as bright-dawn-game (BD_TRANSLATED_GAME), the game's code translated to C++
 // from the user's own ROM is linked in and runs natively wherever it has
 // been translated, with the interpreter behind it.
-//
-// Keys of the window itself: F11 or Alt+Enter, full screen on and off; Tab,
-// the screens one above the other or side by side; F12, whole-number scaling
-// or filling the window.
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "app/app.h"
+#include "app/build_tools.h"
+#include "app/game_screen.h"
+#include "app/launcher.h"
+#include "core/log.h"
 #include "core/version.h"
-#include "gfx/screen_image.h"
 #include "gfx/screen_layout.h"
 #include "input/bindings.h"
 #include "nds/console.h"
 #include "nds/keypad.h"
 #include "nds/program.h"
-#include "platform/frame_clock.h"
+#include "platform/crash_log.h"
+#include "platform/paths.h"
 #include "rom/game_id.h"
 #include "rom/rom.h"
 #include "translated_table.h"
+#include "ui/game_settings.h"
 
 namespace {
+
+using namespace bd;
+using app::App;
+using app::complain;
 
 const TranslatedEntry kNoTranslations[] = {{0, nullptr, -1, nullptr, 0}};
 
@@ -65,17 +76,28 @@ constexpr bool same_button_order() {
 static_assert(same_button_order());
 
 constexpr const char* kUsage =
-    "Usage: bright-dawn [options] <ROM file, or a directory extracted from it>\n"
+    "Usage: bright-dawn [options] [ROM file, or a directory extracted from it]\n"
     "\n"
-    "Options:\n"
-    "  --scale N             start with the screens N times their size (default 2)\n"
+    "Without a ROM, the launcher is shown: choose the ROM, build the game, change the\n"
+    "settings. With one, it is played at once.\n"
+    "\n"
+    "These change a setting for this run only (the settings themselves are kept in\n"
+    "the user data directory, and changed in the launcher or the game's menu):\n"
+    "  --scale N             start with the screens N times their size (1 to 8)\n"
     "  --side-by-side        the screens side by side instead of one above the other\n"
-    "  --gap N               N DS pixels between the screens (default 0)\n"
+    "  --gap N               N DS pixels between the screens (0 to 96)\n"
     "  --touch-screen-first  the touch screen above (or left of) the other\n"
     "  --fit                 fill the window instead of scaling by whole numbers\n"
     "  --fullscreen          start full screen\n"
-    "  --unthrottled         run as fast as possible instead of at the console's rate\n"
     "  --no-vsync            do not wait for the screen's refresh to show a picture\n"
+    "  --textures MODE       3D scenes' textures: sharp (nearest, as on the DS) or\n"
+    "                        smooth (bilinear); the HUD and 2D always stay sharp\n"
+    "  --log-level LEVEL     error, warning, info or debug\n"
+    "\n"
+    "Other options:\n"
+    "  --no-settings         use the default settings, and do not keep any changes\n"
+    "  --log-to-stderr       also write the log to the standard error stream\n"
+    "  --unthrottled         run as fast as possible instead of at the console's rate\n"
     "  --frames N            stop after N frames\n"
     "  --hold BUTTON@F[-L]   hold a DS button from frame F to frame L (counting from 1),\n"
     "                        as if pressed; may be given more than once\n"
@@ -88,28 +110,17 @@ constexpr const char* kUsage =
     "\n"
     "Keyboard: arrows, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start,\n"
     "Right Shift = Select. Controllers: by position, as on the DS. The left mouse\n"
-    "button on the touch screen is the stylus. F11 or Alt+Enter: full screen.\n"
-    "Tab: stacked or side by side. F12: whole-number scaling or fill.\n";
+    "button on the touch screen is the stylus. Escape (or a controller's guide\n"
+    "button): the menu. F11 or Alt+Enter: full screen. Tab: stacked or side by side.\n"
+    "F12: whole-number scaling or fill.\n";
 
-struct Options {
-  std::filesystem::path source;
-  int scale = 2;
-  bd::gfx::LayoutOptions layout;
-  bool fullscreen = false;
-  bool unthrottled = false;
-  bool no_vsync = false;
-  bool interpret_only = false;
-  std::uint64_t frames = 0;
-  std::string capture;
-  std::vector<bd::input::ScriptedPress> script;
-  std::vector<bd::input::ScriptedTouch> touches;
+struct CommandLine {
+  app::Options options;
+  bool have_source = false;
+  std::vector<std::pair<std::string_view, std::string>> overrides;
+  bool no_settings = false;
+  bool log_to_stderr = false;
 };
-
-// Command-line arguments arrive as UTF-8 (SDL_main sees to that on Windows).
-std::filesystem::path path_from_utf8(const char* text) {
-  const std::string s(text);
-  return std::filesystem::path(std::u8string(s.begin(), s.end()));
-}
 
 bool parse_number(const char* text, long long low, long long high, long long& out) {
   char* end = nullptr;
@@ -119,365 +130,264 @@ bool parse_number(const char* text, long long low, long long high, long long& ou
   return true;
 }
 
-// Shown in a message box as well as printed, since on Windows the window
-// program has no console to print to.
-void complain(SDL_Window* window, const std::string& message) {
-  std::fprintf(stderr, "%s\n", message.c_str());
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Bright Dawn", message.c_str(), window);
+std::string version_text(int version) {
+  return std::to_string(SDL_VERSIONNUM_MAJOR(version)) + "." + std::to_string(SDL_VERSIONNUM_MINOR(version)) + "." +
+         std::to_string(SDL_VERSIONNUM_MICRO(version));
 }
 
-class Window {
- public:
-  Window(const Options& options, bd::nds::Console& console) : options_(options), console_(console) {}
-  ~Window() {
-    for (SDL_Gamepad* pad : gamepads_) SDL_CloseGamepad(pad);
-    if (top_ != nullptr) SDL_DestroyTexture(top_);
-    if (bottom_ != nullptr) SDL_DestroyTexture(bottom_);
-    if (renderer_ != nullptr) SDL_DestroyRenderer(renderer_);
-    if (window_ != nullptr) SDL_DestroyWindow(window_);
-  }
-
-  bool open(std::string& error) {
-    layout_ = options_.layout;
-    const bd::gfx::Point size = bd::gfx::window_size(options_.scale, layout_);
-    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-    if (options_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
-    title_ = std::string("Bright Dawn ") + BD_VERSION +
-             (kHasTranslation && !options_.interpret_only ? " (translated)" : " (interpreted)");
-    if (!SDL_CreateWindowAndRenderer(title_.c_str(), size.x, size.y, flags, &window_, &renderer_)) {
-      error = std::string("Cannot open a window: ") + SDL_GetError();
-      return false;
-    }
-    SDL_SetWindowMinimumSize(window_, bd::gfx::kScreenWidth / 2, bd::gfx::kScreenHeight / 2);
-    for (SDL_Texture** texture : {&top_, &bottom_}) {
-      *texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING,
-                                   bd::gfx::kScreenWidth, bd::gfx::kScreenHeight);
-      if (*texture == nullptr) {
-        error = std::string("Cannot make a texture for the screens: ") + SDL_GetError();
-        return false;
-      }
-    }
-    set_scale_mode();
-    for (const bd::input::Binding& b : bd::input::default_keyboard_bindings()) {
-      const SDL_Scancode code = SDL_GetScancodeFromName(b.control.c_str());
-      if (code != SDL_SCANCODE_UNKNOWN) keys_.push_back({code, bd::input::bit(b.button)});
-      else std::fprintf(stderr, "warning: no key is called \"%s\"\n", b.control.c_str());
-    }
-    for (const bd::input::Binding& b : bd::input::default_controller_bindings()) {
-      const SDL_GamepadButton button = SDL_GetGamepadButtonFromString(b.control.c_str());
-      if (button != SDL_GAMEPAD_BUTTON_INVALID) pad_buttons_.push_back({button, bd::input::bit(b.button)});
-      else std::fprintf(stderr, "warning: no controller button is called \"%s\"\n", b.control.c_str());
-    }
-    // Vsync: adaptive where the system has it (a late picture is shown at
-    // once rather than a whole refresh later), else plain. Without it the
-    // window waits for the next step itself.
-    if (!options_.no_vsync) {
-      vsync_ = SDL_SetRenderVSync(renderer_, SDL_RENDERER_VSYNC_ADAPTIVE) || SDL_SetRenderVSync(renderer_, 1);
-    }
-    second_started_ = SDL_GetTicksNS();
-    clock_.tick(second_started_);
-    return true;
-  }
-
-  // At each frame: the screens shown, the input read, time kept. False when
-  // the window was closed.
-  //
-  // The game's step and the pictures are kept apart (platform/frame_clock.h):
-  // the input is read once a console frame, for the next one; the frame is
-  // shown unless the game is behind real time; and pictures are shown until
-  // the next step is due, one per refresh of the screen with vsync, or once
-  // and then a wait without it.
-  bool frame() {
-    ++frames_run_;
-    if (!handle_events()) return false;
-    read_input();
-    const bool capture_now =
-        options_.frames != 0 && frames_run_ == options_.frames && !options_.capture.empty();
-    const bool show = options_.unthrottled || clock_.frame_done(SDL_GetTicksNS());
-    if (!show && !capture_now) {
-      count_rates(false);
-      return true;
-    }
-    for (bool first = true;; first = false) {
-      draw();
-      if (first && capture_now) capture();
-      SDL_RenderPresent(renderer_);
-      count_rates(first);
-      if (options_.unthrottled) break;
-      if (!vsync_) {
-        const std::uint64_t wait = clock_.until_due();
-        if (wait != 0) SDL_DelayPrecise(wait);
-      }
-      clock_.tick(SDL_GetTicksNS());
-      if (clock_.step_due()) break;
-      // Waiting for the next step: the window stays responsive.
-      if (!handle_events()) return false;
-    }
-    return true;
-  }
-
-  SDL_Window* window() const { return window_; }
-  bool captured() const { return captured_; }
-
- private:
-  struct Key {
-    SDL_Scancode code;
-    std::uint32_t bit;
-  };
-  struct PadButton {
-    SDL_GamepadButton button;
-    std::uint32_t bit;
-  };
-
-  void set_scale_mode() {
-    // Whole-number scaling keeps every DS pixel square and sharp; filling
-    // the window smooths the uneven pixels it would otherwise make.
-    const SDL_ScaleMode mode =
-        layout_.scaling == bd::gfx::Scaling::WholeNumbers ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR;
-    SDL_SetTextureScaleMode(top_, mode);
-    SDL_SetTextureScaleMode(bottom_, mode);
-  }
-
-  bool handle_events() {
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-      switch (event.type) {
-        case SDL_EVENT_QUIT:
-          return false;
-        case SDL_EVENT_KEY_DOWN:
-          if (event.key.repeat) break;
-          if (event.key.scancode == SDL_SCANCODE_F11 ||
-              (event.key.scancode == SDL_SCANCODE_RETURN && (event.key.mod & SDL_KMOD_ALT) != 0)) {
-            const bool full = (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN) != 0;
-            SDL_SetWindowFullscreen(window_, !full);
-          } else if (event.key.scancode == SDL_SCANCODE_TAB) {
-            layout_.arrangement = layout_.arrangement == bd::gfx::Arrangement::Stacked ? bd::gfx::Arrangement::SideBySide
-                                                                                       : bd::gfx::Arrangement::Stacked;
-          } else if (event.key.scancode == SDL_SCANCODE_F12) {
-            layout_.scaling = layout_.scaling == bd::gfx::Scaling::WholeNumbers ? bd::gfx::Scaling::Fit
-                                                                                : bd::gfx::Scaling::WholeNumbers;
-            set_scale_mode();
-          }
-          break;
-        case SDL_EVENT_GAMEPAD_ADDED:
-          if (SDL_Gamepad* pad = SDL_OpenGamepad(event.gdevice.which)) gamepads_.push_back(pad);
-          break;
-        case SDL_EVENT_GAMEPAD_REMOVED:
-          for (auto it = gamepads_.begin(); it != gamepads_.end(); ++it) {
-            if (SDL_GetGamepadID(*it) == event.gdevice.which) {
-              SDL_CloseGamepad(*it);
-              gamepads_.erase(it);
-              break;
-            }
-          }
-          break;
-        default:
-          break;
-      }
-    }
-    return true;
-  }
-
-  void read_input() {
-    // The script's buttons for the frame that is ending: the first is frame
-    // 1.
-    std::uint32_t held = bd::input::scripted_buttons(options_.script, frames_run_);
-    // Keys only count while the window has the keyboard: SDL clears its key
-    // state when the focus goes.
-    int key_count = 0;
-    const bool* keys = SDL_GetKeyboardState(&key_count);
-    for (const Key& key : keys_)
-      if (static_cast<int>(key.code) < key_count && keys[key.code]) held |= key.bit;
-    for (SDL_Gamepad* pad : gamepads_) {
-      for (const PadButton& b : pad_buttons_)
-        if (SDL_GetGamepadButton(pad, b.button)) held |= b.bit;
-      held |= bd::input::directions_from_stick(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX),
-                                               SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY));
-      if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >= bd::input::kTriggerThreshold)
-        held |= bd::input::bit(bd::input::DsButton::L);
-      if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >= bd::input::kTriggerThreshold)
-        held |= bd::input::bit(bd::input::DsButton::R);
-    }
-    if (held != console_.keypad().held()) console_.keypad().set_held(held);
-
-    // The stylus: the left button, on the touch screen, while the window has
-    // the mouse. Off the screen is not touching it.
-    bool touching = false;
-    bd::gfx::Point at;
-    if (const bd::input::ScriptedTouch* scripted = bd::input::scripted_touch(options_.touches, frames_run_)) {
-      touching = true;
-      at = {scripted->x, scripted->y};
-    }
-    float wx = 0, wy = 0;
-    const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&wx, &wy);
-    if (!touching && (buttons & SDL_BUTTON_LMASK) != 0 && SDL_GetMouseFocus() == window_) {
-      float rx = 0, ry = 0;
-      if (SDL_RenderCoordinatesFromWindow(renderer_, wx, wy, &rx, &ry)) {
-        if (const auto point = bd::gfx::touch_point(screens_, rx, ry)) {
-          touching = true;
-          at = *point;
-        }
-      }
-    }
-    if (touching != touching_ || (touching && (at.x != touch_at_.x || at.y != touch_at_.y))) {
-      touching_ = touching;
-      touch_at_ = at;
-      console_.set_touch(touching, static_cast<unsigned>(at.x), static_cast<unsigned>(at.y));
-    }
-  }
-
-  void draw() {
-    int width = 0, height = 0;
-    SDL_GetCurrentRenderOutputSize(renderer_, &width, &height);
-    screens_ = bd::gfx::lay_out(width, height, layout_);
-    const auto upload = [&](SDL_Texture* texture, const std::vector<std::uint32_t>& screen) {
-      if (screen.size() != std::size_t{bd::gfx::kScreenWidth} * bd::gfx::kScreenHeight) return;
-      bd::gfx::to_rgba_bytes(screen.data(), screen.size(), pixels_.data());
-      SDL_UpdateTexture(texture, nullptr, pixels_.data(), bd::gfx::kScreenWidth * 4);
-    };
-    upload(top_, console_.display().top_screen());
-    upload(bottom_, console_.display().bottom_screen());
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
-    SDL_RenderClear(renderer_);
-    const auto place = [&](SDL_Texture* texture, const bd::gfx::Rect& r) {
-      const SDL_FRect to{static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w),
-                         static_cast<float>(r.h)};
-      SDL_RenderTexture(renderer_, texture, nullptr, &to);
-    };
-    place(top_, screens_.top);
-    place(bottom_, screens_.bottom);
-  }
-
-  void capture() {
-    SDL_Surface* surface = SDL_RenderReadPixels(renderer_, nullptr);
-    if (surface == nullptr) {
-      std::fprintf(stderr, "error: cannot read the window back: %s\n", SDL_GetError());
-      return;
-    }
-    if (SDL_SaveBMP(surface, options_.capture.c_str())) {
-      captured_ = true;
-      std::printf("The last frame was written to %s\n", options_.capture.c_str());
+// The log's file in the user data directory, and its first lines: what is
+// running, on what, with which settings.
+void start_log(const App& a, const CommandLine& cl, int argc, char** argv,
+               const std::vector<std::string>& settings_problems, const std::string& data_problem) {
+  const auto level = log::level_named(a.settings.choice(ui::key::kLogLevel));
+  log::set_level(level.value_or(log::Level::Info));
+  log::set_standard_error(cl.log_to_stderr);
+  std::string log_problem;
+  if (!a.user_data.empty()) {
+    const std::filesystem::path folder = a.user_data / "logs";
+    std::error_code ec;
+    std::filesystem::create_directories(folder, ec);
+    const std::filesystem::path file = log::new_file_name(folder, "bright-dawn-");
+    if (Status opened = log::open_file(file); !opened) {
+      log_problem = opened.error().message;
     } else {
-      std::fprintf(stderr, "error: cannot write %s: %s\n", options_.capture.c_str(), SDL_GetError());
+      log::remove_old_files(folder, "bright-dawn-", static_cast<std::size_t>(a.settings.number(ui::key::kLogsKept)));
+      platform::log_crashes();
     }
-    SDL_DestroySurface(surface);
   }
-
-  // The window's title shows how many of the game's frames are run a second
-  // (59.83 on a console; fewer on a computer too slow for it) and how many
-  // pictures are shown. Called once for every picture and once for every
-  // frame run unshown; `new_frame` says whether this is the first call for a
-  // frame.
-  void count_rates(bool new_frame) {
-    if (new_frame) ++frames_this_second_;
-    ++pictures_this_second_;
-    const std::uint64_t now = SDL_GetTicksNS();
-    if (now - second_started_ < 1'000'000'000ull) return;
-    const double seconds = static_cast<double>(now - second_started_) / 1e9;
-    char text[64];
-    std::snprintf(text, sizeof text, " - game %.1f frames/s, %.1f pictures/s",
-                  static_cast<double>(frames_this_second_) / seconds,
-                  static_cast<double>(pictures_this_second_) / seconds);
-    SDL_SetWindowTitle(window_, (title_ + text).c_str());
-    second_started_ = now;
-    frames_this_second_ = pictures_this_second_ = 0;
+  log::info("start", std::string("Bright Dawn ") + BD_VERSION + (kHasTranslation ? ", the built game" : ""));
+  std::string line;
+  for (int i = 0; i < argc; ++i) line += (i == 0 ? "" : " ") + std::string(argv[i]);
+  log::info("start", "command line: " + line);
+  if (!data_problem.empty()) log::warning("start", "no user data directory: " + data_problem);
+  else log::info("start", "user data: " + app::utf8(a.user_data));
+  if (!log_problem.empty()) log::warning("start", log_problem);
+  if (a.settings_path.empty()) {
+    log::info("settings", "the defaults, not kept");
+  } else {
+    log::info("settings", "from " + app::utf8(a.settings_path));
+    for (const std::string& p : settings_problems) log::warning("settings", p);
   }
+  for (const platform::SettingDef& def : a.settings.definitions())
+    if (!a.settings.is_default(def.key))
+      log::info("settings", def.key + " = " + a.settings.value(def.key) +
+                                (a.settings.overridden(def.key) ? " (for this run)" : ""));
+}
 
-  const Options& options_;
-  bd::nds::Console& console_;
-  bd::gfx::LayoutOptions layout_;
-  bd::gfx::ScreenLayout screens_;
-  SDL_Window* window_ = nullptr;
-  SDL_Renderer* renderer_ = nullptr;
-  SDL_Texture* top_ = nullptr;
-  SDL_Texture* bottom_ = nullptr;
-  std::vector<SDL_Gamepad*> gamepads_;
-  std::vector<Key> keys_;
-  std::vector<PadButton> pad_buttons_;
-  std::array<std::uint8_t, bd::gfx::kScreenWidth * bd::gfx::kScreenHeight * 4> pixels_{};
-  bool touching_ = false;
-  bd::gfx::Point touch_at_;
-  bd::platform::FrameClock clock_;
-  bool vsync_ = false;
-  std::string title_;
-  std::uint64_t frames_run_ = 0, frames_this_second_ = 0, pictures_this_second_ = 0, second_started_ = 0;
-  bool captured_ = false;
+void log_system(SDL_Renderer* renderer) {
+  log::info("system", std::string(SDL_GetPlatform()) + ", " + std::to_string(SDL_GetNumLogicalCPUCores()) +
+                          " processors, " + std::to_string(SDL_GetSystemRAM()) + " MB of memory");
+  log::info("system", "SDL " + version_text(SDL_GetVersion()) + ", video: " +
+                          (SDL_GetCurrentVideoDriver() != nullptr ? SDL_GetCurrentVideoDriver() : "none") +
+                          ", renderer: " + (renderer != nullptr ? SDL_GetRendererName(renderer) : "none"));
+  int count = 0;
+  if (SDL_DisplayID* displays = SDL_GetDisplays(&count)) {
+    for (int i = 0; i < count; ++i) {
+      const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displays[i]);
+      if (mode == nullptr) continue;
+      log::writef(log::Level::Info, "system", "display %d: %d by %d at %.2f Hz, scale %.2f", i + 1, mode->w, mode->h,
+                  static_cast<double>(mode->refresh_rate), static_cast<double>(SDL_GetDisplayContentScale(displays[i])));
+    }
+    SDL_free(displays);
+  }
+}
+
+// The launcher's size: generous, within the display.
+void size_for_launcher(SDL_Window* window) {
+  if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0) SDL_SetWindowFullscreen(window, false);
+  int w = 1100, h = 720;
+  SDL_Rect usable;
+  if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable)) {
+    w = std::min(w, usable.w * 9 / 10);
+    h = std::min(h, usable.h * 9 / 10);
+  }
+  SDL_SetWindowSize(window, w, h);
+  SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+}
+
+struct Played {
+  app::GameEnd end = app::GameEnd::Quit;
+  int status = 0;
 };
 
-int run(const Options& options) {
-  using namespace bd;
+// Plays the game from `source` until the run ends.
+Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
+  Played played;
   std::error_code ec;
   Result<nds::Program> loaded = Error{ErrorCode::Io, "not loaded"};
   Result<rom::Rom> rom = Error{ErrorCode::Io, "no ROM"};
-  if (std::filesystem::is_directory(options.source, ec)) {
-    loaded = nds::program_from_directory(options.source);
+  log::info("game", "loading " + app::utf8(source));
+  if (std::filesystem::is_directory(source, ec)) {
+    loaded = nds::program_from_directory(source);
   } else {
-    rom = rom::Rom::open(options.source);
+    rom = rom::Rom::open(source);
     if (!rom) {
-      complain(nullptr, rom.error().message);
-      return 1;
+      complain(a.window, rom.error().message);
+      played.status = 1;
+      return played;
     }
     if (auto status = rom::require_dark_dawn(rom.value().header()); !status) {
-      complain(nullptr, status.error().message);
-      return 1;
+      complain(a.window, status.error().message);
+      played.status = 1;
+      return played;
     }
+    const rom::KnownTitle* title = rom::identify_title(rom.value().header());
+    log::writef(log::Level::Info, "game", "Golden Sun: Dark Dawn, %s, %.*s, %zu bytes", rom::to_string(title->region),
+                static_cast<int>(title->game_code.size()), title->game_code.data(), rom.value().bytes().size());
     loaded = nds::program_from_rom(rom.value());
   }
   if (!loaded) {
-    complain(nullptr, loaded.error().message);
-    return 1;
+    complain(a.window, loaded.error().message);
+    played.status = 1;
+    return played;
   }
 
-  const TranslatedEntry* translation = options.interpret_only ? kNoTranslations : kTranslation;
+  const TranslatedEntry* translation = a.options.interpret_only ? kNoTranslations : a.translation;
   std::size_t translated_functions = 0;
   while (translation[translated_functions].function != nullptr) ++translated_functions;
   std::printf("%zu translated functions in use\n", translated_functions);
   std::fflush(stdout);
+  log::writef(log::Level::Info, "game", "%zu translated functions in use%s", translated_functions,
+              translated_functions == 0 ? ": every instruction is interpreted" : "");
   nds::Console console(loaded.value(), translation);
   if (rom) console.insert_cartridge(rom.value().bytes());
   if (auto status = console.direct_boot(); !status) {
-    complain(nullptr, status.error().message);
-    return 1;
+    complain(a.window, status.error().message);
+    played.status = 1;
+    return played;
   }
 
+  app::GameScreen screen(a, console, can_go_back);
+  std::string error;
+  if (!screen.open(error)) {
+    complain(a.window, error);
+    played.status = 1;
+    return played;
+  }
+  log::info("game", "started");
+  console.on_frame = [&screen] { return screen.frame(); };
+  const nds::RunResult result = console.run(0, a.options.frames);
+  console.on_frame = nullptr;
+  const std::uint64_t frames = console.display().statistics().frames;
+  std::printf("%" PRIu64 " frames shown\n", frames);
+  const runtime::Statistics& stats = console.machine().statistics();
+  log::writef(log::Level::Info, "game",
+              "ended after %" PRIu64 " frames: %" PRIu64 " instructions interpreted, %zu places interpreted, %" PRIu64
+              " interrupts taken, %" PRIu64 " sleeps",
+              frames, stats.interpreted_instructions, stats.interpreter_entries.size(), stats.interrupts_taken,
+              console.sleeps());
+  for (const auto& [what, count] : console.polygon_renderer().notes())
+    log::writef(log::Level::Info, "game", "asked of the 3D hardware and not done: %s (%" PRIu64 " frames)", what.c_str(),
+                count);
+  for (const auto& [number, count] : console.software_interrupts())
+    log::writef(log::Level::Debug, "game", "BIOS call 0x%02" PRIX32 ": %" PRIu64 " times", number, count);
+  played.end = screen.end() == app::GameEnd::Running ? app::GameEnd::Quit : screen.end();
+  switch (result.reason) {
+    case nds::StopReason::Unhandled: {
+      char where[16];
+      std::snprintf(where, sizeof where, "0x%08" PRIX32, result.address);
+      complain(a.window, std::string("The game stopped at ") + where + ": it needed something Bright Dawn "
+                             "does not do yet.\n\n" + result.detail);
+      played.status = 2;
+      if (can_go_back) played.end = app::GameEnd::ToLauncher;
+      break;
+    }
+    case nds::StopReason::Returned:
+      complain(a.window, "The game's program ended.");
+      played.status = 2;
+      if (can_go_back) played.end = app::GameEnd::ToLauncher;
+      break;
+    case nds::StopReason::FrameLimit: log::info("game", "the frames asked for were run"); break;
+    case nds::StopReason::Asked: break;
+    case nds::StopReason::InstructionLimit: log::info("game", "the instructions asked for were run"); break;
+  }
+  if (!a.options.capture.empty() && !screen.captured()) played.status = 1;
+  return played;
+}
+
+int run(CommandLine& cl, int argc, char** argv) {
+  App a{platform::Settings(ui::game_setting_definitions())};
+  a.options = cl.options;
+  a.translation = kTranslation;
+  a.translated_build = kHasTranslation;
+
+  std::string data_problem;
+  if (Result<std::filesystem::path> data = platform::user_data_dir(); data) a.user_data = data.value();
+  else data_problem = data.error().message;
+  std::vector<std::string> settings_problems;
+  if (!cl.no_settings && !a.user_data.empty()) {
+    a.settings_path = ui::settings_file(a.user_data);
+    Result<std::vector<std::string>> loaded = a.settings.load(a.settings_path);
+    if (loaded) settings_problems = loaded.value();
+    else settings_problems.push_back(loaded.error().message);
+  }
+  for (const auto& [key, value] : cl.overrides) {
+    if (Status s = a.settings.set_for_run(key, value); !s) {
+      complain(nullptr, s.error().message + "\n\n" + kUsage);
+      return 1;
+    }
+  }
+  start_log(a, cl, argc, argv, settings_problems, data_problem);
+
+  SDL_SetAppMetadata("Bright Dawn", BD_VERSION, nullptr);
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     complain(nullptr, std::string("Cannot start SDL: ") + SDL_GetError());
     return 1;
   }
   int status = 0;
   {
-    Window window(options, console);
+    const gfx::Point size = cl.have_source ? gfx::window_size(static_cast<int>(a.settings.number(ui::key::kScale)),
+                                                             ui::layout_options(a.settings))
+                                           : gfx::Point{1100, 720};
+    if (!SDL_CreateWindowAndRenderer("Bright Dawn", size.x, size.y, SDL_WINDOW_RESIZABLE, &a.window, &a.renderer)) {
+      complain(nullptr, std::string("Cannot open a window: ") + SDL_GetError());
+      SDL_Quit();
+      return 1;
+    }
+    SDL_SetWindowMinimumSize(a.window, gfx::kScreenWidth / 2, gfx::kScreenHeight / 2);
+    log_system(a.renderer);
     std::string error;
-    if (!window.open(error)) {
-      complain(nullptr, error);
+    if (!a.gui.init(a.window, a.renderer, error)) {
+      complain(a.window, error);
       status = 1;
     } else {
-      console.on_frame = [&window] { return window.frame(); };
-      const nds::RunResult result = console.run(0, options.frames);
-      console.on_frame = nullptr;
-      std::printf("%" PRIu64 " frames shown\n", console.display().statistics().frames);
-      if (result.reason == nds::StopReason::Unhandled) {
-        char where[16];
-        std::snprintf(where, sizeof where, "0x%08" PRIX32, result.address);
-        complain(window.window(), std::string("The game stopped at ") + where + ": it needed something Bright Dawn "
-                                      "does not do yet.\n\n" + result.detail);
-        status = 2;
-      } else if (result.reason == nds::StopReason::Returned) {
-        complain(window.window(), "The game's program ended.");
-        status = 2;
+      std::filesystem::path source = cl.have_source ? cl.options.source : std::filesystem::path();
+      const bool from_launcher = !cl.have_source;
+      if (from_launcher) size_for_launcher(a.window);
+      for (;;) {
+        if (source.empty()) {
+          app::LauncherChoice choice;
+          {
+            app::Launcher launcher(a);
+            choice = launcher.run();
+          }
+          if (choice.kind == app::LauncherChoice::Quit) break;
+          source = choice.rom;
+        }
+        const Played played = play(a, source, from_launcher);
+        status = played.status;
+        if (played.end != app::GameEnd::ToLauncher) break;
+        source.clear();
+        status = 0;
+        size_for_launcher(a.window);
       }
-      if (!options.capture.empty() && !window.captured()) status = 1;
     }
   }
+  // The program's screens go before the renderer they draw with.
+  a.gui.shutdown();
+  SDL_DestroyRenderer(a.renderer);
+  SDL_DestroyWindow(a.window);
   SDL_Quit();
+  log::writef(log::Level::Info, "start", "the end, with status %d", status);
+  log::close_file();
   return status;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-  Options options;
-  bool have_source = false;
+  CommandLine cl;
+  app::Options& options = cl.options;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     long long number = 0;
@@ -491,17 +401,19 @@ int main(int argc, char** argv) {
     } else if (arg == "--video-drivers") {
       for (int d = 0; d < SDL_GetNumVideoDrivers(); ++d) std::printf("%s\n", SDL_GetVideoDriver(d));
       return 0;
-    } else if (arg == "--scale" && has_value && parse_number(argv[i + 1], 1, 16, number)) {
-      options.scale = static_cast<int>(number);
-      ++i;
-    } else if (arg == "--gap" && has_value && parse_number(argv[i + 1], 0, 256, number)) {
-      options.layout.gap = static_cast<int>(number);
-      ++i;
+    } else if (arg == "--scale" && has_value && parse_number(argv[i + 1], 1, 8, number)) {
+      cl.overrides.emplace_back(ui::key::kScale, argv[++i]);
+    } else if (arg == "--gap" && has_value && parse_number(argv[i + 1], 0, 96, number)) {
+      cl.overrides.emplace_back(ui::key::kGap, argv[++i]);
+    } else if (arg == "--textures" && has_value) {
+      cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
+    } else if (arg == "--log-level" && has_value) {
+      cl.overrides.emplace_back(ui::key::kLogLevel, argv[++i]);
     } else if (arg == "--frames" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {
       options.frames = static_cast<std::uint64_t>(number);
       ++i;
     } else if (arg == "--hold" && has_value) {
-      const auto press = bd::input::parse_scripted_press(argv[i + 1]);
+      const auto press = input::parse_scripted_press(argv[i + 1]);
       if (!press) {
         complain(nullptr, std::string("Not a button and frames: ") + argv[i + 1] + "\n\n" + kUsage);
         return 1;
@@ -509,7 +421,7 @@ int main(int argc, char** argv) {
       options.script.push_back(*press);
       ++i;
     } else if (arg == "--touch" && has_value) {
-      const auto touch = bd::input::parse_scripted_touch(argv[i + 1]);
+      const auto touch = input::parse_scripted_touch(argv[i + 1]);
       if (!touch) {
         complain(nullptr, std::string("Not a point and frames: ") + argv[i + 1] + "\n\n" + kUsage);
         return 1;
@@ -519,34 +431,40 @@ int main(int argc, char** argv) {
     } else if (arg == "--capture" && has_value) {
       options.capture = argv[++i];
     } else if (arg == "--side-by-side") {
-      options.layout.arrangement = bd::gfx::Arrangement::SideBySide;
+      cl.overrides.emplace_back(ui::key::kArrangement, "side_by_side");
     } else if (arg == "--touch-screen-first") {
-      options.layout.bottom_first = true;
+      cl.overrides.emplace_back(ui::key::kTouchScreenFirst, "on");
     } else if (arg == "--fit") {
-      options.layout.scaling = bd::gfx::Scaling::Fit;
+      cl.overrides.emplace_back(ui::key::kScaling, "fill");
     } else if (arg == "--fullscreen") {
-      options.fullscreen = true;
+      cl.overrides.emplace_back(ui::key::kFullscreen, "on");
+    } else if (arg == "--no-vsync") {
+      cl.overrides.emplace_back(ui::key::kVsync, "off");
+    } else if (arg == "--no-settings") {
+      cl.no_settings = true;
+    } else if (arg == "--log-to-stderr") {
+      cl.log_to_stderr = true;
     } else if (arg == "--interpret-only") {
       options.interpret_only = true;
-    } else if (arg == "--no-vsync") {
-      options.no_vsync = true;
     } else if (arg == "--unthrottled") {
       options.unthrottled = true;
-    } else if (!arg.empty() && arg[0] != '-' && !have_source) {
-      options.source = path_from_utf8(argv[i]);
-      have_source = true;
+    } else if (!arg.empty() && arg[0] != '-' && !cl.have_source) {
+      // Command-line arguments arrive as UTF-8 (SDL_main sees to that on
+      // Windows).
+      options.source = app::from_utf8(argv[i]);
+      cl.have_source = true;
     } else {
       complain(nullptr, "Not understood: " + arg + "\n\n" + kUsage);
       return 1;
     }
   }
-  if (!have_source) {
-    complain(nullptr, std::string("Which ROM? Give the path of your Golden Sun: Dark Dawn ROM.\n\n") + kUsage);
-    return 1;
-  }
   if (!options.capture.empty() && options.frames == 0) {
     complain(nullptr, "--capture needs --frames: it writes the last of them.");
     return 1;
   }
-  return run(options);
+  if (options.frames != 0 && !cl.have_source) {
+    complain(nullptr, "--frames needs a ROM: it is for playing one at once.");
+    return 1;
+  }
+  return run(cl, argc, argv);
 }

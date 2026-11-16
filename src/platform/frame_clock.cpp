@@ -22,6 +22,13 @@ void FrameClock::tick(std::uint64_t now) {
   }
 }
 
+void FrameClock::restart(std::uint64_t now) {
+  started_ = true;
+  last_ = now;
+  account_ = 0;
+  unshown_ = 0;
+}
+
 void FrameClock::step_taken() { account_ = account_ >= kStep ? account_ - kStep : 0; }
 
 bool FrameClock::frame_done(std::uint64_t now) {

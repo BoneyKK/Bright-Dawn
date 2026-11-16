@@ -25,6 +25,7 @@ add_executable(bd_tests
   test_sound_driver.cpp
   test_sound_hardware.cpp
   test_second_processor.cpp
+  test_settings.cpp
   test_system_control.cpp
   test_timing.cpp
   test_user_settings.cpp
@@ -37,7 +38,7 @@ add_executable(bd_tests
   test_narc.cpp
   test_rom.cpp
 )
-target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_nds bd_gfx bd_input)
+target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_nds bd_gfx bd_input bd_ui)
 add_test(NAME unit COMMAND bd_tests)
 
 # End-to-end checks of the command-line tool against a generated ROM.
