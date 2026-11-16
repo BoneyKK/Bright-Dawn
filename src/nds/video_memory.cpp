@@ -38,6 +38,7 @@ void VideoMemory::place_banks() {
   plain_.fill(Page{});
   textures_.fill(Page{});
   texture_palettes_.fill(Page{});
+  for (auto& screen : extended_palettes_) screen.fill(Page{});
 
   for (unsigned bank = 0; bank < kBanks; ++bank) {
     if ((control_[bank] & kEnable) == 0) continue;
@@ -75,7 +76,11 @@ void VideoMemory::place_banks() {
         if (use == 1) place(main_backgrounds_, 0);
         if (use == 2) place(main_sprites_, 0);
         if (use == 3) place(texture_palettes_, 0);
-        break;  // 4: extra background palettes.
+        if (use == 4) {
+          // The first half of the bank: the four background slots.
+          for (unsigned slot = 0; slot < 4; ++slot) extended_palettes_[0][slot].add(memory + slot * kExtendedPaletteSize);
+        }
+        break;
       case kF:
       case kG: {
         // One page, at 0, 1, 4 or 5 by the offset, and again two pages on.
@@ -89,7 +94,13 @@ void VideoMemory::place_banks() {
           main_sprites_[first + 2].add(memory);
         }
         if (use == 3) texture_palettes_[first].add(memory);
-        break;  // 4, 5: extra palettes.
+        if (use == 4) {
+          // Two background slots: 0 and 1, or 2 and 3.
+          for (unsigned slot = 0; slot < 2; ++slot)
+            extended_palettes_[0][(offset & 1) * 2 + slot].add(memory + slot * kExtendedPaletteSize);
+        }
+        if (use == 5) extended_palettes_[0][4].add(memory);
+        break;
       }
       case kH:
         if (use == 1) {
@@ -97,7 +108,10 @@ void VideoMemory::place_banks() {
           place(sub_backgrounds_, 0);
           place(sub_backgrounds_, 4);
         }
-        break;  // 2: extra background palettes.
+        if (use == 2) {
+          for (unsigned slot = 0; slot < 4; ++slot) extended_palettes_[1][slot].add(memory + slot * kExtendedPaletteSize);
+        }
+        break;
       case kI:
         if (use == 1) {
           // One page, at pages 2, 3, 6 and 7.
@@ -107,7 +121,8 @@ void VideoMemory::place_banks() {
           // One page, repeated throughout.
           for (Page& page : sub_sprites_) page.add(memory);
         }
-        break;  // 3: extra sprite palettes.
+        if (use == 3) extended_palettes_[1][4].add(memory);
+        break;
       default:
         break;
     }
@@ -130,6 +145,16 @@ std::uint32_t VideoMemory::read(std::uint32_t address, unsigned size) {
     ++statistics_.reads_with_no_bank;
     return 0;
   }
+  const std::uint32_t at = address & (kPageSize - 1);
+  std::uint32_t value = 0;
+  for (unsigned m = 0; m < page.count; ++m) {
+    for (unsigned i = 0; i < size; ++i) value |= static_cast<std::uint32_t>(page.memory[m][at + i]) << (8 * i);
+  }
+  return value;
+}
+
+std::uint32_t VideoMemory::peek(std::uint32_t address, unsigned size) const {
+  const Page& page = page_at(address);
   const std::uint32_t at = address & (kPageSize - 1);
   std::uint32_t value = 0;
   for (unsigned m = 0; m < page.count; ++m) {

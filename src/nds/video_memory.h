@@ -36,8 +36,10 @@
 // the main processor. Banks at the same slot read ORed together, as
 // elsewhere here; that case is an assumption (NooDS takes the last bank).
 //
-// The extra palettes the 2D display hardware reads from the banks are not
-// here yet.
+// The 2D display hardware reads backgrounds and sprites through the same
+// addresses as the main processor (peek() does that without counting), and
+// its extended palettes from banks handed over for that: for each screen
+// four slots of 8 KiB for backgrounds and one for sprites.
 #pragma once
 
 #include <array>
@@ -93,6 +95,21 @@ class VideoMemory {
     return address < kTexturePaletteSize ? seen(texture_palettes_[address / kPageSize], address) : -1;
   }
 
+  // What the 2D display hardware reads. peek() is read() without the
+  // counting: zero where no bank is.
+  std::uint32_t peek(std::uint32_t address, unsigned size) const;
+  // A byte of an extended palette, or -1 where no bank is: `slot` 0 to 3 are
+  // the backgrounds' and 4 is the sprites', each 8 KiB.
+  static constexpr unsigned kExtendedPaletteSlots = 5;
+  static constexpr std::uint32_t kExtendedPaletteSize = 0x2000;
+  int extended_palette(bool second_screen, unsigned slot, std::uint32_t offset) const {
+    const Page& page = extended_palettes_[second_screen ? 1 : 0][slot % kExtendedPaletteSlots];
+    if (page.count == 0) return -1;
+    int value = 0;
+    for (unsigned m = 0; m < page.count; ++m) value |= page.memory[m][offset & (kExtendedPaletteSize - 1)];
+    return value;
+  }
+
   // A bank's own contents, wherever it is placed.
   const std::vector<std::uint8_t>& contents(Bank bank) const { return banks_[bank]; }
 
@@ -117,6 +134,7 @@ class VideoMemory {
 
   void place_banks();
   Page& page_at(std::uint32_t address);
+  const Page& page_at(std::uint32_t address) const { return const_cast<VideoMemory*>(this)->page_at(address); }
 
   std::array<std::vector<std::uint8_t>, kBanks> banks_;
   std::array<std::uint8_t, kBanks> control_{};
@@ -127,6 +145,8 @@ class VideoMemory {
   std::array<Page, kPlainPages> plain_{};
   std::array<Page, kTexturePages> textures_{};
   std::array<Page, kTexturePalettePages> texture_palettes_{};
+  // By screen and slot; each entry points at 8 KiB.
+  std::array<std::array<Page, kExtendedPaletteSlots>, 2> extended_palettes_{};
   Statistics statistics_;
 };
 
