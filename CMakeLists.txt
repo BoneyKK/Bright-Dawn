@@ -176,12 +176,21 @@ if(BD_BUILD_APP)
   add_executable(bright-dawn WIN32 src/app/main.cpp)
   target_link_libraries(bright-dawn PRIVATE bd_nds bd_gfx bd_input bd_platform ${BD_SDL_TARGET})
   set_target_properties(bright-dawn PROPERTIES BD_SYSTEM_LIBC ON)
-  install(TARGETS bright-dawn RUNTIME DESTINATION .)
 endif()
 
-# A relocatable layout: the programs and their documents side by side.
-install(TARGETS bdtool RUNTIME DESTINATION .)
-install(FILES LICENSE README.md DESTINATION .)
+# What a player gets (cmake --install): the game's window and the licences
+# that come with it, nothing else. The developer tools and documents stay in
+# the build and the repository. The GPL is this project's; SkyEmu's MIT
+# licence must accompany copies of its code, which the program contains; SDL's
+# zlib licence does not ask for it, but it is shipped too.
+if(TARGET bright-dawn)
+  install(TARGETS bright-dawn RUNTIME DESTINATION .)
+  if(NOT BD_SYSTEM_SDL)
+    install(FILES ${sdl3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL3.txt)
+  endif()
+endif()
+install(FILES LICENSE DESTINATION . RENAME LICENSE.txt)
+install(FILES third_party/skyemu/LICENSE DESTINATION licenses RENAME SkyEmu.txt)
 
 if(BD_BUILD_TESTS)
   enable_testing()

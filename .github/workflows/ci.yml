@@ -55,7 +55,13 @@ jobs:
       - name: Package
         run: |
           cmake --install build --config Release --prefix package/bright-dawn
-          package/bright-dawn/bdtool --version
+          # Only what a player needs: the program and its licences.
+          exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
+          expected=$(printf '%s\n' LICENSE.txt "bright-dawn$exe" licenses/SDL3.txt licenses/SkyEmu.txt)
+          actual=$(cd package/bright-dawn && find . -type f | sed 's|^[.]/||' | LC_ALL=C sort)
+          if [ "$actual" != "$expected" ]; then
+            echo "The package holds:"; echo "$actual"; echo "It should hold:"; echo "$expected"; exit 1
+          fi
           package/bright-dawn/bright-dawn --version
           # The window must be able to open on the systems the package is for.
           drivers=$(package/bright-dawn/bright-dawn --video-drivers)
