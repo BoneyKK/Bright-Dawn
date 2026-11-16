@@ -56,7 +56,7 @@ jobs:
         run: |
           cmake --install build --config Release --prefix package/bright-dawn
           # Only what a player needs: the program, its licences, and the
-          # builder's sources, which the launcher builds the game from.
+          # builder, with which the launcher builds the game library.
           exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
           expected=$(printf '%s\n' LICENSE.txt "bright-dawn$exe" licenses/DearImGui.txt licenses/SDL3.txt \
             licenses/SkyEmu.txt | LC_ALL=C sort)
@@ -64,17 +64,18 @@ jobs:
           if [ "$actual" != "$expected" ]; then
             echo "The package holds:"; echo "$actual"; echo "It should hold:"; echo "$expected"; exit 1
           fi
-          for f in CMakeLists.txt LICENSE tools/gamebuilder/build_game.py tools/translator/translate_game.py \
-                   src/app/main.cpp third_party/imgui/LICENSE.txt third_party/skyemu/LICENSE; do
-            test -f "package/bright-dawn/builder/$f" || { echo "builder/$f is missing"; exit 1; }
-          done
-          extra=$(cd package/bright-dawn/builder && find . \( -name tests -o -name docs -o -name __pycache__ \
-            -o -name '*.pyc' -o -name '*.nds' -o -name README.md -path './README.md' \) -print)
-          if [ -n "$extra" ]; then echo "The builder holds what it should not:"; echo "$extra"; exit 1; fi
-          # The builder's sources build by themselves.
-          cmake -S package/bright-dawn/builder -B kit-check -DCMAKE_BUILD_TYPE=Release -DBD_BUILD_TESTS=OFF \
-            -DBD_BUILD_APP=OFF
-          cmake --build kit-check --config Release --target bdtool
+          # The builder: the translator and what the translated code is
+          # compiled with, and nothing else (the program reads the code out of
+          # the ROM itself; the compiler, and Python on Windows, are fetched).
+          builder_expected=$( (printf '%s\n' LICENSE src/runtime/ds_cpu.h src/runtime/translated_table.h \
+            src/runtime/game_library.h src/runtime/game_library_glue.cpp; git ls-files tools/gamebuilder tools/translator) \
+            | LC_ALL=C sort)
+          builder_actual=$(cd package/bright-dawn/builder && find . -type f | sed 's|^[.]/||' | LC_ALL=C sort)
+          if [ "$builder_actual" != "$builder_expected" ]; then
+            echo "The builder holds:"; echo "$builder_actual"; echo "It should hold:"; echo "$builder_expected"; exit 1
+          fi
+          py=python3; if [ "$RUNNER_OS" = Windows ]; then py=python; fi
+          "$py" package/bright-dawn/builder/tools/gamebuilder/build_game.py --help > /dev/null
           package/bright-dawn/bright-dawn --version
           # The window must be able to open on the systems the package is for.
           drivers=$(package/bright-dawn/bright-dawn --video-drivers)

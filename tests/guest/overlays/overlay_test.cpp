@@ -7,6 +7,13 @@
 // whose code is in memory, and interpret when memory matches no translation.
 //
 // usage: guest_overlay_test <code directory>
+//
+// Built with GUEST_FROM_LIBRARY, as guest_built_library_test, the translated
+// code is loaded from a game library that the game builder made from the
+// program (tools/gamebuilder/build_game.py --code), as the program loads the
+// game's:
+//
+// usage: guest_built_library_test <library> <code directory>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -19,6 +26,9 @@
 #include "guest_runner.h"
 #include "machine.h"
 #include "translated_table.h"
+#ifdef GUEST_FROM_LIBRARY
+#include "game_library_host.h"
+#endif
 
 extern "C" {
 #include "inputs.h"
@@ -60,10 +70,27 @@ void check(bool condition, const char* phase, const char* what) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef GUEST_FROM_LIBRARY
+  if (argc != 3) {
+    std::fprintf(stderr, "usage: guest_built_library_test <library> <code directory>\n");
+    return 2;
+  }
+  bd::runtime::GameLibrary library;
+  if (!library.open(argv[1], "")) {
+    std::printf("the game library %s cannot be used: %s\n", argv[1], library.error().c_str());
+    return 1;
+  }
+  std::printf("game library loaded, built for \"%s\"\n", library.built_for());
+  const TranslatedEntry* const table = library.table();
+  ++argv;
+  --argc;
+#else
   if (argc != 2) {
     std::fprintf(stderr, "usage: guest_overlay_test <code directory>\n");
     return 2;
   }
+  const TranslatedEntry* const table = translated_table;
+#endif
   const std::string dir = argv[1];
   Bytes main_image, overlay_a, overlay_b, overlay_c;
   if (!read_file(dir + "/arm9.bin", main_image) || !read_file(dir + "/overlay9_0000.bin", overlay_a) ||
@@ -79,7 +106,7 @@ int main(int argc, char** argv) {
   guest::Memory memory;
   guest::Bus bus(memory);
   guest::System system;
-  bd::runtime::Machine machine(bus, system, translated_table);
+  bd::runtime::Machine machine(bus, system, table);
   machine.set_instruction_limit(100000);
   machine.add_overlay(0, kSlot, overlay_a.data(), overlay_a.size());
   machine.add_overlay(1, kSlot, overlay_b.data(), overlay_b.size());
@@ -191,7 +218,7 @@ int main(int argc, char** argv) {
   // 5. An overlay whose image the runtime was never given: its translations
   // must not be used. A second machine knows only overlays A and C.
   {
-    bd::runtime::Machine partial(bus, system, translated_table);
+    bd::runtime::Machine partial(bus, system, table);
     partial.set_instruction_limit(100000);
     partial.add_overlay(0, kSlot, overlay_a.data(), overlay_a.size());
     partial.add_overlay(2, kFixed, overlay_c.data(), overlay_c.size());

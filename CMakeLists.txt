@@ -64,6 +64,7 @@ add_library(bd_core STATIC
   src/core/checksum.cpp
   src/core/log.cpp
   src/core/result.cpp
+  src/core/sha256.cpp
 )
 target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(bd_core PUBLIC bd_build_flags)
@@ -86,6 +87,7 @@ add_library(bd_rom STATIC
   src/rom/nds_header.cpp
   src/rom/nitrofs.cpp
   src/rom/overlay.cpp
+  src/rom/program_code.cpp
   src/rom/rom.cpp
 )
 target_link_libraries(bd_rom PUBLIC bd_core)
@@ -110,6 +112,12 @@ endif()
 add_library(bd_runtime STATIC src/runtime/machine.cpp)
 target_include_directories(bd_runtime PUBLIC src/runtime)
 target_link_libraries(bd_runtime PUBLIC bd_build_flags PRIVATE bd_arm_core)
+
+# Loads the game library (src/runtime/game_library.h) built from the player's
+# ROM. Kept apart from bd_runtime: loading a library needs the system's C
+# library, which the fully static tools do not have.
+add_library(bd_game_library_host STATIC src/runtime/game_library_host.cpp)
+target_link_libraries(bd_game_library_host PUBLIC bd_runtime ${CMAKE_DL_LIBS})
 
 # The console around the processor: memory map and hardware.
 add_library(bd_nds STATIC
@@ -204,12 +212,14 @@ if(BD_BUILD_APP)
     src/app/app.cpp
     src/app/build_tools.cpp
     src/app/child_process.cpp
+    src/app/fetch.cpp
     src/app/game_screen.cpp
     src/app/gui.cpp
     src/app/launcher.cpp
     src/app/settings_book.cpp)
   target_include_directories(bd_app PUBLIC src)
-  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui ${BD_SDL_TARGET})
+  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui bd_game_library_host
+                        ${BD_SDL_TARGET})
 
   # WIN32: on Windows a window program, which opens no console.
   add_executable(bright-dawn WIN32 src/app/main.cpp)
@@ -258,13 +268,16 @@ if(TARGET bright-dawn)
   if(NOT BD_SYSTEM_SDL)
     install(FILES ${sdl3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL3.txt)
   endif()
-  # The builder: the program's launcher builds the game on the player's
-  # computer from these sources (tools/gamebuilder/build_game.py), the
-  # game's own code translated from their ROM there. Nothing of the game
-  # is in it.
-  install(FILES CMakeLists.txt LICENSE DESTINATION builder)
-  install(DIRECTORY src third_party DESTINATION builder)
-  install(DIRECTORY tools/bdtool tools/gamebuilder tools/translator DESTINATION builder/tools
+  # The builder: the program's launcher builds the game library on the
+  # player's computer with these (tools/gamebuilder/build_game.py): the
+  # translator, which turns the game's code from their ROM into C++ there,
+  # and the headers and glue the translated code is compiled with. The
+  # program itself reads the code out of the ROM. Nothing of the game is in
+  # it.
+  install(FILES LICENSE DESTINATION builder)
+  install(FILES src/runtime/ds_cpu.h src/runtime/translated_table.h src/runtime/game_library.h
+                src/runtime/game_library_glue.cpp DESTINATION builder/src/runtime)
+  install(DIRECTORY tools/gamebuilder tools/translator DESTINATION builder/tools
           PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
 endif()
 install(FILES LICENSE DESTINATION . RENAME LICENSE.txt)

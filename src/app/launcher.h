@@ -1,8 +1,10 @@
 // The launcher: what the window program shows when it is started without a
 // ROM, so that a player never needs the command line. Its pages:
 //   Play      choose the ROM (remembered), and play it;
-//   Build     build the game from the ROM, its code translated to C++ and
-//             compiled for this computer, following the builder as it goes;
+//   Build     build the game library from the ROM, its code translated to
+//             C++ and compiled for this computer, following the builder as
+//             it goes; what it needs and the computer lacks is fetched for
+//             the build and removed after it;
 //   Settings  the settings book;
 //   Log       where this run's log is.
 #pragma once
@@ -17,6 +19,7 @@
 #include "app/app.h"
 #include "app/build_tools.h"
 #include "app/child_process.h"
+#include "app/fetch.h"
 #include "app/settings_book.h"
 #include "ui/build_progress.h"
 
@@ -45,8 +48,13 @@ class Launcher {
   void choose_rom(const std::filesystem::path& path);
   void check_tools();
   void check_built_game();
+  bool building() const { return fetch_ != nullptr || build_ != nullptr; }
+  void begin_build_output();
+  void add_output(std::string_view text);
   void start_build();
+  void start_builder(const std::vector<std::string>& python);
   void stop_build();
+  void finish_build(bool ok, const std::string& result);
   void poll_build();
   void play(LauncherChoice& choice);
 
@@ -70,14 +78,15 @@ class Launcher {
   };
   std::shared_ptr<DialogAnswer> dialog_ = std::make_shared<DialogAnswer>();
 
-  std::filesystem::path work_;
+  std::filesystem::path library_;  // Where the game library is kept.
+  std::filesystem::path program_;  // This program, which the library is built for.
   std::optional<std::filesystem::path> builder_;
-  FoundTool python_, cmake_;
+  FoundTool python_;
   bool tools_checked_ = false;
-  std::optional<std::filesystem::path> built_;
   BuiltState built_state_ = BuiltState::None;
-  std::string built_version_;
+  std::string built_detail_;
 
+  std::unique_ptr<Fetch> fetch_;
   std::unique_ptr<ChildProcess> build_;
   ui::BuildProgress progress_;
   std::deque<std::string> output_;

@@ -129,6 +129,30 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
     COMMAND guest_mixed_test ${BD_GUEST_IMAGE}
             indirect sw handback v4call inltab nonlocal skipdata svc coro hidmodes excret)
 
+  # The same again, with the translated code compiled into a game library of
+  # its own (src/runtime/game_library.h) and loaded, as the program loads the
+  # game's: the glue, the loader and its checks. The library is built with the
+  # same compiler here; the game builder's uses another.
+  add_library(bd_guest_game_library SHARED ${gen}/code.cpp ${gen}/table.cpp ${BD_RUNTIME_DIR}/game_library_glue.cpp)
+  target_include_directories(bd_guest_game_library PRIVATE ${gen} ${BD_RUNTIME_DIR})
+  target_compile_features(bd_guest_game_library PRIVATE cxx_std_20)
+  target_compile_definitions(bd_guest_game_library PRIVATE "BD_GAME_BUILT_FOR=\"guest test\"")
+  set_target_properties(bd_guest_game_library PROPERTIES CXX_VISIBILITY_PRESET hidden PREFIX "")
+  if(MSVC)
+    target_compile_options(bd_guest_game_library PRIVATE /w)
+  else()
+    target_compile_options(bd_guest_game_library PRIVATE -w)
+  endif()
+  add_executable(guest_library_test mixed_test.cpp)
+  target_compile_definitions(guest_library_test PRIVATE GUEST_FROM_LIBRARY)
+  target_link_libraries(guest_library_test PRIVATE bd_guest_runner bd_runtime bd_game_library_host)
+  # Loading a library needs the system's C library, also in static builds.
+  set_target_properties(guest_library_test PROPERTIES BD_SYSTEM_LIBC ON)
+  add_dependencies(guest_library_test bd_guest_game_library)
+  add_test(NAME guest_library
+    COMMAND guest_library_test $<TARGET_FILE:bd_guest_game_library> ${BD_GUEST_IMAGE}
+            indirect sw handback v4call inltab nonlocal skipdata svc coro hidmodes excret)
+
   # --- Overlays: a program in several modules, two of them at one address ---
   # Built, given a manifest and translated exactly as a real game would be,
   # with the whole-game driver.
@@ -178,11 +202,37 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   add_executable(guest_overlay_test overlays/overlay_test.cpp)
   target_link_libraries(guest_overlay_test PRIVATE bd_guest_runner bd_guest_overlays_translated bd_runtime)
   add_test(NAME guest_overlays COMMAND guest_overlay_test ${ov_code})
+
+  # The game builder, from the program code to a game library, as it builds
+  # the game's: translated, compiled and linked by build_game.py itself (with
+  # this build's compiler, where it takes GCC's options), then loaded and run
+  # as above. Needs the window program, which names the version.
+  if(TARGET bright-dawn AND NOT MSVC)
+    set(built ${CMAKE_CURRENT_BINARY_DIR}/built_library)
+    add_test(NAME guest_builder_makes_a_library
+      COMMAND Python3::Interpreter -B ${PROJECT_SOURCE_DIR}/tools/gamebuilder/build_game.py
+              --code ${ov_code} --program $<TARGET_FILE:bright-dawn> --compiler ${CMAKE_CXX_COMPILER}
+              --out ${built}/library --temp ${built}/temp --jobs 2)
+    set_tests_properties(guest_builder_makes_a_library PROPERTIES FIXTURES_SETUP built_library
+      PASS_REGULAR_EXPRESSION "The game: ")
+    add_executable(guest_built_library_test overlays/overlay_test.cpp)
+    target_compile_definitions(guest_built_library_test PRIVATE GUEST_FROM_LIBRARY)
+    target_link_libraries(guest_built_library_test PRIVATE bd_guest_runner bd_runtime bd_game_library_host)
+    set_target_properties(guest_built_library_test PROPERTIES BD_SYSTEM_LIBC ON)
+    add_dependencies(guest_built_library_test guest_image)
+    add_test(NAME guest_built_library COMMAND guest_built_library_test ${built}/library ${ov_code})
+    set_tests_properties(guest_built_library PROPERTIES FIXTURES_REQUIRED built_library)
+    # The temporary folder goes, however the build ends.
+    add_test(NAME guest_builder_leaves_nothing_behind
+      COMMAND ${CMAKE_COMMAND} -DDIR=${built}/temp -P ${PROJECT_SOURCE_DIR}/tests/expect_empty_dir.cmake)
+    set_tests_properties(guest_builder_leaves_nothing_behind PROPERTIES FIXTURES_REQUIRED built_library)
+  endif()
 else()
   add_test(NAME guest_translated COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
   add_test(NAME guest_mixed COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
+  add_test(NAME guest_library COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
   add_test(NAME guest_overlays COMMAND ${CMAKE_COMMAND} -E echo "needs the ARM image and Python")
-  set_tests_properties(guest_translated guest_mixed guest_overlays PROPERTIES DISABLED TRUE)
+  set_tests_properties(guest_translated guest_mixed guest_library guest_overlays PROPERTIES DISABLED TRUE)
 endif()
 
 # The interpreter on its own needs only the ARM image.

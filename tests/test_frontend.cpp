@@ -1,11 +1,13 @@
 // The parts of the window that do not need a window: where the screens go,
 // how their colours are passed on, the default bindings and frame pacing.
+#include <filesystem>
 #include <set>
 
 #include "gfx/screen_image.h"
 #include "gfx/screen_layout.h"
 #include "input/bindings.h"
 #include "platform/frame_clock.h"
+#include "platform/paths.h"
 #include "test.h"
 
 namespace {
@@ -334,4 +336,11 @@ TEST(screens_are_enlarged_to_the_whole_multiple_at_or_above_the_scale) {
   // No larger than a texture may be: 2048 / 256 = 8.
   CHECK(prescale_factor(11.2, 2048) == 8);
   CHECK(prescale_factor(3.5, 100) == 1);
+}
+
+TEST(the_program_knows_its_own_file) {
+  const auto path = bd::platform::executable_path();
+  REQUIRE(path.ok());
+  CHECK(std::filesystem::is_regular_file(path.value()));
+  CHECK(path.value().stem().string() == "bd_tests");
 }

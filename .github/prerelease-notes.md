@@ -10,12 +10,13 @@ untried beyond the first screens. No ROM and no game data are included.
 - `SHA256SUMS.txt`: checksums of the packages
 
 Unpack and start `bright-dawn`. Its launcher asks for your ROM (and remembers
-it), plays it, holds the settings, and can build the game from your ROM, its
-code translated to C++ and compiled on your computer, from the `builder`
-folder in the package. Building needs Python 3.10+, CMake 3.20+ and a C++
-compiler (on Windows, Visual Studio or its Build Tools with "Desktop
-development with C++"). The built game does not get far yet: interrupts are
-not yet taken in translated code.
+it), plays it, holds the settings, and can build the game library from your
+ROM: its code translated to C++ and compiled on your computer, which the
+program then runs natively. Nothing needs installing for that: the compiler
+(and on Windows, Python, if it is not installed) is downloaded for the build,
+checked, and deleted with everything else the build made; about 2 GB of free
+space is needed while it runs. The built game does not get far yet:
+interrupts are not yet taken in translated code.
 
 Keyboard: arrow keys, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter =
 Start, Right Shift = Select. The left mouse button on the touch screen is the

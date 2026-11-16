@@ -1,53 +1,101 @@
 #!/usr/bin/env python3
-"""Build the game from your own ROM: Golden Sun: Dark Dawn with its code
-translated to C++ and compiled for this computer.
+"""Build the game library from your own ROM: Golden Sun: Dark Dawn's code
+translated to C++ and compiled for this computer, for Bright Dawn to load.
 
-usage: build_game.py <rom> [--work DIR] [--jobs N] [--config NAME]
-                     [--generator NAME] [--sdl-source DIR] [--cmake-arg ARG ...]
+usage: build_game.py <rom> --program PATH [--out FILE] [--jobs N]
+                     [--compiler COMMAND] [--temp DIR] [--keep-temp]
                      [--stop-on-stdin-eof]
+       build_game.py --code DIR --program PATH ...
 
-Steps, each announced as "== N/5. <name>" and reported with the time it
-took:
+--program is the Bright Dawn program the library is for (bright-dawn, or
+bright-dawn.exe): it checks the ROM and writes out its program code, and it
+names the version the library is built for.
 
-  1. Build bdtool from this source tree.
-  2. Check the ROM (bdtool validate).
-  3. Extract its program code (bdtool extract --code-only).
-  4. Translate the code to C++ (tools/translator/translate_game.py). Only
-     files whose text changed are replaced, so a second build recompiles
-     only what changed.
-  5. Build bright-dawn-game, the window with the translated code linked in.
+Steps, each announced as "== N/5. <name>":
 
-Everything is written to the work directory: by default "game-build" in
-Bright Dawn's per-user data directory (the one bdtool uses), with a record
-of the whole build, everything printed by it and by the programs it runs, in
-build.log there. The extracted
-and translated code is the game's own, derived from your ROM: it stays on
-your computer. The work directory may not be inside this source tree, so that
-none of it can be committed by mistake.
+  1. Getting the compiler: Zig, which contains Clang, downloaded from the
+     Python Package Index (pinned below, its SHA-256 checked) into the
+     temporary folder; or --compiler, a GCC- or Clang-style C++ compiler
+     already on this computer (g++, clang++).
+  2. Checking the ROM and extracting its program code (the program's
+     --extract-code); or, with --code, taking the code already extracted
+     (by bdtool extract --code-only, or --extract-code) from DIR.
+  3. Translating it to C++ (tools/translator/translate_game.py).
+  4. Compiling it, a file at a time, --jobs at once.
+  5. Linking the game library: one file, by default bright-dawn-game.dll (or
+     .so) in the "game" folder of Bright Dawn's per-user data directory.
 
-Needs Python 3.10 or later, CMake 3.20 or later and a C++20 compiler, as for
-building the rest of the project, and SDL 3, which the build downloads unless
---sdl-source names an unpacked copy of release 3.2.26.
+Everything else happens in a temporary folder that is removed afterwards,
+however the build ends (--keep-temp keeps it): the compiler, the extracted
+and translated code (the game's own, from your ROM) and the compiled
+objects. A record of the whole build, everything printed by it and by the
+programs it runs, is written to build.log next to the library.
+
+Needs Python 3.10 or later, an internet connection for the compiler (about
+95 MB) unless --compiler is given, and about 2 GB of free space for the
+temporary folder.
 
 --stop-on-stdin-eof is for a program that runs the builder and reads its
-output (Bright Dawn's own builder screen): the build stops, with the
-programs it started, when the standard input is closed, so that it stops
-when that program asks it to or ends.
+output (Bright Dawn's own builder page): the build stops, with the programs
+it started, when the standard input is closed, so that it stops when that
+program asks it to or ends.
 """
 import argparse
-import filecmp
+import concurrent.futures
+import hashlib
 import os
 import platform
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.request
+import zipfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-EXE = ".exe" if os.name == "nt" else ""
+HERE = Path(__file__).resolve().parent
+TOOLS = HERE.parent                      # tools/ in the source tree, or in the package's builder/
+RUNTIME = TOOLS.parent / "src" / "runtime"
+TRANSLATOR = TOOLS / "translator" / "translate_game.py"
+GLUE = RUNTIME / "game_library_glue.cpp"
+
+# The compiler: Zig, as the Zig project publishes it on the Python Package
+# Index (https://pypi.org/project/ziglang/), by system and processor.
+ZIG_VERSION = "0.16.0"
+_PYPI = "https://files.pythonhosted.org/packages/"
+ZIG_WHEELS = {
+    ("Linux", "x86_64"): (
+        _PYPI + "3e/ed/7b79023aa27ceb5d461ecf761181e7c33c57bbc1a6256a39535d1c7083d2/"
+        "ziglang-0.16.0-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl",
+        "9fcda73f62b851dd72a54b710ad40a209896db14cfb13649e62191243556342b"),
+    ("Linux", "aarch64"): (
+        _PYPI + "7e/ed/d6663a5e52c504944d578b9e0bfcb7857f292803bcd09ebe0d10fe2b293d/"
+        "ziglang-0.16.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl",
+        "e27d409812b11e0fb89ed0200cf2e55b6464d43f9461553104e4a4f9a94a1fd5"),
+    ("Windows", "AMD64"): (
+        _PYPI + "a6/3c/baff40b3fc8ab4e83530246a52e8f3a5186c3606562712dfb58483b04f79/"
+        "ziglang-0.16.0-py3-none-win_amd64.whl",
+        "089a16a4eb5a2f45151993342f8fabad24ff1a0723dc146642895c29208a3939"),
+    ("Windows", "ARM64"): (
+        _PYPI + "f0/0b/bff28a4acc437cb7da705bffafd81fafbbd37a23144363cecc72becaef93/"
+        "ziglang-0.16.0-py3-none-win_arm64.whl",
+        "e44a5271f7b72f7980017bb615823ed52e765f96b6482d93a2fd338cd53101bf"),
+    ("Darwin", "x86_64"): (
+        _PYPI + "75/60/f924aa24b95a1ad347e845acc7ab6b5d062ae5b0b540d494654cd40d4e0b/"
+        "ziglang-0.16.0-py3-none-macosx_12_0_x86_64.whl",
+        "18e14f6b25678d7b7c65708c82501ee6090fe39ed5c783477d56267af1fa5629"),
+    ("Darwin", "arm64"): (
+        _PYPI + "cd/59/012f0c2800f7428b87bb16c5c78db7ef806efed274491998155955c02558/"
+        "ziglang-0.16.0-py3-none-macosx_12_0_arm64.whl",
+        "b61e5413c49508d9d62e5dcea543e3af491594154d74a00ff52f84ed508260cc"),
+}
+
+LEAST_FREE_SPACE = 2 * 1024 ** 3
+WINDOWS = os.name == "nt"
+LIBRARY_NAME = "bright-dawn-game.dll" if WINDOWS else "bright-dawn-game.so"
 
 
 class BuildError(RuntimeError):
@@ -60,7 +108,7 @@ def user_data_dir() -> Path:
     if system == "Windows":
         base = os.environ.get("LOCALAPPDATA")
         if not base:
-            raise BuildError("LOCALAPPDATA is not set; give --work")
+            raise BuildError("LOCALAPPDATA is not set; give --out")
         return Path(base) / "BrightDawn"
     if system == "Darwin":
         return Path.home() / "Library" / "Application Support" / "BrightDawn"
@@ -70,45 +118,40 @@ def user_data_dir() -> Path:
     return Path.home() / ".local" / "share" / "bright-dawn"
 
 
-def inside(path: Path, folder: Path) -> bool:
-    try:
-        path.resolve().relative_to(folder.resolve())
-        return True
-    except ValueError:
-        return False
-
-
 class Output:
     """What the build prints: to the standard output and to build.log."""
 
     def __init__(self) -> None:
         self.log = None
+        self.lock = threading.Lock()
 
     def open_log(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         self.log = open(path, "w", encoding="utf-8", errors="replace", newline="\n")
 
     def say(self, text: str = "", error: bool = False) -> None:
-        stream = sys.stderr if error else sys.stdout
-        stream.write(text + "\n")
-        stream.flush()
-        if self.log is not None:
-            self.log.write(text + "\n")
-            self.log.flush()
+        with self.lock:
+            stream = sys.stderr if error else sys.stdout
+            stream.write(text + "\n")
+            stream.flush()
+            if self.log is not None:
+                self.log.write(text + "\n")
+                self.log.flush()
 
 
 OUT = Output()
 
 
 class Stopper:
-    """With --stop-on-stdin-eof: when the standard input ends, the program
-    running now is stopped with every program it started, and so is the
+    """With --stop-on-stdin-eof: when the standard input ends, the programs
+    running now are stopped with every program they started, and so is the
     build."""
 
     def __init__(self) -> None:
         self.enabled = False
         self.stopped = threading.Event()
         self.lock = threading.Lock()
-        self.current = None
+        self.running = set()
 
     def watch(self) -> None:
         self.enabled = True
@@ -124,8 +167,8 @@ class Stopper:
                 pass
             self.stopped.set()
             with self.lock:
-                if self.current is not None:
-                    stop_tree(self.current)
+                for process in list(self.running):
+                    stop_tree(process)
 
         threading.Thread(target=wait_for_end, daemon=True).start()
 
@@ -141,7 +184,7 @@ def stop_tree(process: subprocess.Popen) -> None:
     """Ends a program and every program it started."""
     if process.poll() is not None:
         return
-    if os.name == "nt":
+    if WINDOWS:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
@@ -155,90 +198,179 @@ def stop_tree(process: subprocess.Popen) -> None:
             pass
 
 
-def run(command: list, what: str) -> None:
+def start(command: list, env=None, capture=True) -> subprocess.Popen:
+    """Starts a program, in a group of its own when the build can be
+    stopped, so that it can be stopped with what it starts."""
     STOP.check()
-    OUT.say("  $ " + " ".join(str(c) for c in command))
     options = {}
     if STOP.enabled:
-        # A group of its own, so that it can be stopped with what it starts.
-        if os.name == "nt":
+        if WINDOWS:
             options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             options["start_new_session"] = True
-    process = subprocess.Popen([str(c) for c in command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               stdin=subprocess.DEVNULL, **options)
+    process = subprocess.Popen([str(c) for c in command], stdout=subprocess.PIPE if capture else None,
+                               stderr=subprocess.STDOUT if capture else None, stdin=subprocess.DEVNULL,
+                               env=env, **options)
     with STOP.lock:
-        STOP.current = process
+        STOP.running.add(process)
     if STOP.stopped.is_set():
         stop_tree(process)
+    return process
+
+
+def finish(process: subprocess.Popen) -> int:
+    status = process.wait()
+    with STOP.lock:
+        STOP.running.discard(process)
+    STOP.check()
+    return status
+
+
+def run(command: list, what: str, env=None) -> None:
+    """Runs a program, its output passed on line by line."""
+    OUT.say("  $ " + " ".join(str(c) for c in command))
+    process = start(command, env)
     try:
         for raw in process.stdout:
             OUT.say(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
-        status = process.wait()
     finally:
-        with STOP.lock:
-            STOP.current = None
-    STOP.check()
+        status = finish(process)
     if status != 0:
         raise BuildError(f"{what} failed (exit status {status})")
 
 
-def find_program(build_dir: Path, name: str, config: str) -> Path:
-    """Single-configuration generators put programs in the build directory,
-    multi-configuration ones (Visual Studio) in a folder per configuration."""
-    for candidate in (build_dir / (name + EXE), build_dir / config / (name + EXE)):
-        if candidate.is_file():
-            return candidate
-    raise BuildError(f"{name}{EXE} was not found in {build_dir}")
+def output_of(command: list, what: str) -> str:
+    process = start(command)
+    text = process.stdout.read().decode("utf-8", errors="replace")
+    status = finish(process)
+    if status != 0:
+        raise BuildError(f"{what} failed (exit status {status}): {text.strip()}")
+    return text
 
 
-def configure(build_dir: Path, args, options: list) -> list:
-    command = ["cmake", "-S", REPO, "-B", build_dir, f"-DCMAKE_BUILD_TYPE={args.config}", "-DBD_BUILD_TESTS=OFF"]
-    if args.generator:
-        command += ["-G", args.generator]
-    if args.sdl_source:
-        command.append(f"-DFETCHCONTENT_SOURCE_DIR_SDL3={Path(args.sdl_source).resolve()}")
-    return command + options + list(args.cmake_arg)
+def download(url: str, sha256: str, target: Path) -> None:
+    """Downloads `url` to `target`, reporting how far it is, and checks it."""
+    OUT.say(f"  {url}")
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=60) as response, open(target, "wb") as out:
+        total = int(response.headers.get("Content-Length") or 0)
+        done = 0
+        shown = -1
+        while True:
+            STOP.check()
+            block = response.read(1 << 20)
+            if not block:
+                break
+            out.write(block)
+            digest.update(block)
+            done += len(block)
+            if total:
+                percent = done * 100 // total
+                if percent // 5 != shown // 5:
+                    shown = percent
+                    # As Make reports progress, which Bright Dawn's builder page follows.
+                    OUT.say(f"[{percent:3d}%] {done // (1 << 20)} of {total // (1 << 20)} MB")
+    if digest.hexdigest() != sha256:
+        raise BuildError(f"the download is not what was expected (SHA-256 {digest.hexdigest()}, "
+                         f"expected {sha256}): try again")
 
 
-def sync_tree(new: Path, old: Path) -> tuple:
-    """Makes `old` hold what `new` holds, replacing only files whose bytes
-    differ, so that their modification times say what changed. Returns
-    (written, removed, unchanged)."""
-    written = removed = unchanged = 0
-    wanted = set()
-    for source in sorted(new.rglob("*")):
-        if not source.is_file():
-            continue
-        relative = source.relative_to(new)
-        wanted.add(relative)
-        target = old / relative
-        if target.is_file() and filecmp.cmp(source, target, shallow=False):
-            unchanged += 1
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        written += 1
-    if old.exists():
-        for target in sorted(old.rglob("*"), reverse=True):
-            relative = target.relative_to(old)
-            if target.is_file() and relative not in wanted:
-                target.unlink()
-                removed += 1
-            elif target.is_dir() and not any(target.iterdir()):
-                target.rmdir()
-    return written, removed, unchanged
+def get_zig(temp: Path) -> tuple:
+    """Downloads Zig into `temp`. Returns the command that compiles C++ and
+    the environment to run it in."""
+    key = (platform.system(), platform.machine())
+    if key not in ZIG_WHEELS:
+        raise BuildError(f"no compiler can be downloaded for {key[0]} on {key[1]}: give --compiler")
+    url, sha256 = ZIG_WHEELS[key]
+    wheel = temp / "zig.whl"
+    download(url, sha256, wheel)
+    folder = temp / "zig"
+    with zipfile.ZipFile(wheel) as archive:
+        members = [m for m in archive.namelist() if m.startswith("ziglang/")]
+        archive.extractall(folder, members)
+    wheel.unlink()
+    zig = folder / "ziglang" / ("zig.exe" if WINDOWS else "zig")
+    if not zig.is_file():
+        raise BuildError("the downloaded compiler is not complete")
+    if not WINDOWS:
+        zig.chmod(0o755)
+    env = dict(os.environ)
+    # Zig keeps what it builds for itself (its C++ library, for one) in its
+    # caches: here, so that they go with the temporary folder.
+    env["ZIG_GLOBAL_CACHE_DIR"] = str(temp / "zig-cache")
+    env["ZIG_LOCAL_CACHE_DIR"] = str(temp / "zig-cache")
+    OUT.say(f"  Zig {ZIG_VERSION}: {zig}")
+    return [str(zig), "c++"], env
+
+
+def compile_all(compiler: list, env, sources: list, objects: Path, flags: list, jobs: int) -> list:
+    """Compiles every source, `jobs` at once. Reports each as Ninja does
+    ("[done/total] ..."), which Bright Dawn's builder page follows."""
+    objects.mkdir(parents=True, exist_ok=True)
+    outputs = []
+    work = []
+    for n, source in enumerate(sources):
+        target = objects / f"{n:04d}_{source.parent.name}_{source.stem}.o"
+        outputs.append(target)
+        work.append((source, target))
+    done = 0
+    failure = []
+    lock = threading.Lock()
+
+    def one(item) -> None:
+        nonlocal done
+        source, target = item
+        if failure or STOP.stopped.is_set():
+            return
+        command = compiler + flags + ["-I", str(source.parent), "-c", str(source), "-o", str(target)]
+        process = start(command, env)
+        text = process.stdout.read().decode("utf-8", errors="replace")
+        status = process.wait()
+        with STOP.lock:
+            STOP.running.discard(process)
+        with lock:
+            if status != 0 and not STOP.stopped.is_set():
+                failure.append((source, status, text))
+                return
+            done += 1
+            OUT.say(f"[{done}/{len(work)}] {source.parent.name}/{source.name}")
+            if text.strip():
+                OUT.say(text.rstrip())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        list(pool.map(one, work))
+    STOP.check()
+    if failure:
+        source, status, text = failure[0]
+        OUT.say(text.rstrip())
+        raise BuildError(f"compiling {source.parent.name}/{source.name} failed (exit status {status})")
+    return outputs
+
+
+def remove_folder(folder: Path) -> None:
+    """Removes the temporary folder; on Windows a file can stay in use for a
+    moment after its program has ended, so it is tried again."""
+    for attempt in range(10):
+        shutil.rmtree(folder, ignore_errors=True)
+        if not folder.exists():
+            OUT.say(f"Temporary files removed: {folder}")
+            return
+        time.sleep(1)
+    OUT.say(f"warning: some temporary files could not be removed: {folder}", error=True)
 
 
 def main(argv: list) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("rom", type=Path, help="your Golden Sun: Dark Dawn ROM")
-    parser.add_argument("--work", type=Path, help="work directory (default: game-build in the user data directory)")
-    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1, help="parallel jobs (default: all processors)")
-    parser.add_argument("--config", default="Release", help="build configuration (default: Release)")
-    parser.add_argument("--generator", help="CMake generator, if not the default")
-    parser.add_argument("--sdl-source", help="an unpacked SDL 3.2.26 source tree, instead of downloading it")
-    parser.add_argument("--cmake-arg", action="append", default=[], help="passed to both CMake configurations")
+    parser.add_argument("rom", type=Path, nargs="?", help="your Golden Sun: Dark Dawn ROM")
+    parser.add_argument("--code", type=Path, help="program code already extracted, instead of a ROM")
+    parser.add_argument("--program", type=Path, required=True, help="the Bright Dawn program the library is for")
+    parser.add_argument("--out", type=Path, help=f"the library to write (default: game/{LIBRARY_NAME} in the "
+                                                 "user data directory)")
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1, help="files compiled at once "
+                                                                               "(default: all processors)")
+    parser.add_argument("--compiler", help="a GCC- or Clang-style C++ compiler to use instead of downloading Zig")
+    parser.add_argument("--temp", type=Path, help="where to make the temporary folder (default: the system's)")
+    parser.add_argument("--keep-temp", action="store_true", help="keep the temporary folder")
     parser.add_argument("--stop-on-stdin-eof", action="store_true",
                         help="stop the build when the standard input is closed")
     args = parser.parse_args(argv)
@@ -251,82 +383,112 @@ def main(argv: list) -> int:
     if args.jobs < 1:
         OUT.say("error: --jobs must be 1 or more", error=True)
         return 1
-    if shutil.which("cmake") is None:
-        OUT.say("error: CMake was not found; install CMake 3.20 or later", error=True)
+    if (args.rom is None) == (args.code is None):
+        OUT.say("error: give a ROM, or --code", error=True)
         return 1
-    rom = args.rom.resolve()
-    if not rom.is_file():
+    rom = args.rom.resolve() if args.rom else None
+    given_code = args.code.resolve() if args.code else None
+    program = args.program.resolve()
+    if rom is not None and not rom.is_file():
         OUT.say(f"error: {rom} is not a file", error=True)
         return 1
+    if given_code is not None and not (given_code / "manifest.txt").is_file():
+        OUT.say(f"error: no manifest.txt in {given_code}", error=True)
+        return 1
+    if not program.is_file():
+        OUT.say(f"error: {program} is not a file", error=True)
+        return 1
 
+    temp = None
+    steps = []
+    total = 5
     try:
-        work = (args.work if args.work else user_data_dir() / "game-build").resolve()
-        if inside(work, REPO) or inside(REPO, work):
-            raise BuildError(f"the work directory {work} overlaps the source tree {REPO}: the game's code "
-                             "must not be written where it could be committed")
-        work.mkdir(parents=True, exist_ok=True)
-        OUT.open_log(work / "build.log")
+        out = (args.out if args.out else user_data_dir() / "game" / LIBRARY_NAME).resolve()
+        OUT.open_log(out.parent / "build.log")
         OUT.say(f"Bright Dawn game builder, {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        OUT.say(f"Python {platform.python_version()} on {platform.platform()}")
-        OUT.say(f"Source: {REPO}")
-        OUT.say(f"ROM: {rom}")
-        OUT.say(f"Work directory: {work}")
-        steps = []
-        total = 5
+        OUT.say(f"Python {platform.python_version()} on {platform.platform()} ({platform.machine()})")
+        OUT.say(f"Builder: {HERE}")
+        OUT.say(f"Program: {program}")
+        OUT.say(f"ROM: {rom}" if rom else f"Program code: {given_code}")
+        OUT.say(f"Library: {out}")
 
-        def step(name: str, action) -> None:
+        version_line = output_of([program, "--version"], "asking the program its version").strip().splitlines()
+        if not version_line or not version_line[0].startswith("bright-dawn "):
+            raise BuildError(f"{program} did not name its version")
+        version = version_line[0][len("bright-dawn "):]
+        if '"' in version or "\\" in version:
+            raise BuildError(f"the program's version cannot be used: {version}")
+        OUT.say(f"For Bright Dawn {version}")
+
+        if args.temp:
+            args.temp.mkdir(parents=True, exist_ok=True)
+        temp = Path(tempfile.mkdtemp(prefix="bright-dawn-build-", dir=args.temp))
+        OUT.say(f"Temporary folder: {temp}")
+        free = shutil.disk_usage(temp).free
+        if free < LEAST_FREE_SPACE:
+            raise BuildError(f"the temporary folder's drive has {free // 1024 ** 2} MB free; "
+                             f"about {LEAST_FREE_SPACE // 1024 ** 2} MB are needed")
+
+        def step(name: str, action):
             STOP.check()
             OUT.say(f"\n== {len(steps) + 1}/{total}. {name}")
             began = time.monotonic()
-            action()
+            result = action()
             STOP.check()
             steps.append((name, time.monotonic() - began))
+            return result
 
-        tools = work / "tools"
-        bdtool = []
+        def get_compiler():
+            if args.compiler:
+                text = output_of([args.compiler, "--version"], f"running the compiler {args.compiler}")
+                OUT.say("  " + text.strip().splitlines()[0])
+                return [args.compiler], None
+            return get_zig(temp)
 
-        def build_tools() -> None:
-            run(configure(tools, args, ["-DBD_BUILD_APP=OFF"]), "configuring bdtool")
-            run(["cmake", "--build", tools, "--config", args.config, "--target", "bdtool", "--parallel", args.jobs],
-                "building bdtool")
-            bdtool.append(find_program(tools, "bdtool", args.config))
+        compiler, env = step("Getting the compiler", get_compiler)
+        if given_code is None:
+            code = temp / "code"
+            step("Checking the ROM and extracting its program code",
+                 lambda: run([program, "--extract-code", rom, code], "extracting the program code"))
+        else:
+            code = given_code
+            step("Taking the program code", lambda: OUT.say(f"  {code}"))
+        translated = temp / "translated"
+        step("Translating it to C++",
+             lambda: run([sys.executable, TRANSLATOR, code, translated, "--jobs", args.jobs], "translating"))
+        if given_code is None:
+            # The game's code is no longer needed once translated.
+            shutil.rmtree(code, ignore_errors=True)
 
-        code = work / "code"
+        sources = sorted(translated.glob("*/code_*.cpp")) + [translated / "table.cpp", GLUE]
+        flags = ["-std=c++20", "-O2", "-w", "-fno-exceptions", "-fno-rtti", "-fvisibility=hidden",
+                 "-I", str(RUNTIME), f'-DBD_GAME_BUILT_FOR="{version}"']
+        if not WINDOWS:
+            flags.append("-fPIC")
+        objects = step(f"Compiling it ({len(sources)} files)",
+                       lambda: compile_all(compiler, env, sources, temp / "objects", flags, args.jobs))
 
-        def extract() -> None:
-            if code.exists():
-                shutil.rmtree(code)
-            run([bdtool[0], "extract", rom, "--code-only", "--out", work], "extracting the program code")
-            if not (code / "manifest.txt").is_file():
-                raise BuildError(f"no manifest.txt in {code}")
+        def link() -> None:
+            linked = temp / LIBRARY_NAME
+            # The objects go in a response file: listed on the command line
+            # they would pass Windows' limit of 32767 characters. Its quoting
+            # is the GNU one, where a backslash escapes: forward slashes.
+            listing = temp / "objects.rsp"
+            listing.write_text("\n".join('"' + o.as_posix().replace('"', '\\"') + '"' for o in objects) + "\n",
+                               encoding="utf-8")
+            command = compiler + ["-shared", "-o", str(linked), "@" + str(listing)]
+            if platform.system() == "Linux":
+                # Every symbol defined: the library needs nothing of the
+                # program but what it is handed when it is loaded.
+                command.append("-Wl,--no-undefined")
+            OUT.say(f"  linking {len(objects)} objects")
+            run(command, "linking the game library", env)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            fresh = out.with_name(out.name + ".new")
+            shutil.copyfile(linked, fresh)
+            os.replace(fresh, out)
 
-        translated = work / "translated"
-
-        def translate() -> None:
-            fresh = work / "translated.new"
-            if fresh.exists():
-                shutil.rmtree(fresh)
-            run([sys.executable, REPO / "tools" / "translator" / "translate_game.py", code, fresh,
-                 "--jobs", args.jobs], "translating")
-            written, removed, unchanged = sync_tree(fresh, translated)
-            shutil.rmtree(fresh)
-            OUT.say(f"  {written} file(s) written, {removed} removed, {unchanged} unchanged")
-
-        game = work / "game"
-        result = []
-
-        def build_game() -> None:
-            run(configure(game, args, [f"-DBD_TRANSLATED_DIR={translated}"]), "configuring the game")
-            run(["cmake", "--build", game, "--config", args.config, "--target", "bright-dawn-game",
-                 "--parallel", args.jobs], "building the game")
-            result.append(find_program(game, "bright-dawn-game", args.config))
-
-        step("Building bdtool", build_tools)
-        step("Checking the ROM", lambda: run([bdtool[0], "validate", rom], "checking the ROM"))
-        step("Extracting the program code", extract)
-        step("Translating it to C++", translate)
-        step("Building the game", build_game)
-        assert len(steps) == total
+        step("Linking the game library", link)
     except BuildError as error:
         OUT.say("")
         OUT.say(f"error: {error}", error=True)
@@ -335,12 +497,21 @@ def main(argv: list) -> int:
         OUT.say("")
         OUT.say("error: the build was stopped", error=True)
         return 130
+    except OSError as error:
+        OUT.say("")
+        OUT.say(f"error: {error}", error=True)
+        return 1
+    finally:
+        if temp is not None:
+            if args.keep_temp:
+                OUT.say(f"Temporary folder kept: {temp}")
+            else:
+                remove_folder(temp)
 
     OUT.say("\nDone:")
     for name, seconds in steps:
         OUT.say(f"  {name}: {seconds:.0f} s")
-    OUT.say(f"\nThe game: {result[0]}")
-    OUT.say(f"Run it with your ROM: \"{result[0]}\" \"{rom}\"")
+    OUT.say(f"\nThe game: {out}")
     return 0
 
 

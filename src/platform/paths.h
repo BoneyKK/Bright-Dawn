@@ -15,4 +15,7 @@ namespace bd::platform {
 // The directory is not created by this call.
 Result<std::filesystem::path> user_data_dir();
 
+// The running program's own file.
+Result<std::filesystem::path> executable_path();
+
 }  // namespace bd::platform

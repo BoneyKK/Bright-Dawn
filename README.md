@@ -121,9 +121,10 @@ Every change that reaches `main` with all checks passing is published
 automatically as a pre-release on the repository's Releases page, for Windows
 and Linux (64-bit). A package holds what a player needs and nothing else:
 `bright-dawn`, this project's licence, the licences of the third-party code
-built into it (`licenses/`), and `builder/`, the sources the launcher builds
-the game from (see below). No ROM, no game data, and none of the tests,
-developer documents or tools beyond the builder's.
+built into it (`licenses/`), and `builder/`, with which the launcher builds
+the game library (see below): the translator and the few headers the
+translated code is compiled with. No ROM, no game data, and none of the
+tests, developer documents or tools beyond the builder's.
 
 ## Using bright-dawn
 
@@ -179,29 +180,43 @@ game's save is not kept between runs yet.
 ## Building the game from your ROM
 
 `bright-dawn` interprets every instruction of the game. The game builder makes
-`bright-dawn-game` instead: the game's code translated to C++ and compiled for
-your computer, with the interpreter behind it for whatever was not translated.
-The translation is made from your ROM, on your computer; it is the game's own
-code, so it is never in this repository or in a package.
+the game library instead (`bright-dawn-game.dll` on Windows,
+`bright-dawn-game.so` on Linux): the game's code translated to C++ and
+compiled for your computer, which `bright-dawn` loads when it plays, with the
+interpreter behind it for whatever was not translated. The translation is
+made from your ROM, on your computer; it is the game's own code, so it is
+never in this repository or in a package.
 
-In the launcher, *Build the game* does it: it checks for what is needed
-(Python 3.10+, CMake 3.20+; a C++20 compiler is checked when the build starts),
-runs the builder from the package's `builder/` folder, and shows its steps,
-its progress and its output, with a button to stop it. Once built, Play starts
-the built game (Settings, Game, turns that off). From the source tree, the
-same builder runs from the command line:
+In the launcher, *Build the game* does it, and shows its steps, its progress
+and its output, with a button to stop it. Nothing needs installing first:
+
+- **The compiler** is Zig 0.16.0 (its Clang), downloaded from the Python
+  Package Index for the build, its checksum checked, into a temporary folder
+  that is deleted afterwards with everything else the build made. *Compiler*
+  (Settings, Builder) names one of your own instead, such as `clang++` or
+  `g++`.
+- **Python**, which runs the builder and the translator: on Windows, if none
+  is installed, Python 3.13 is downloaded from NuGet for the build (checked
+  and unpacked with Windows's own `curl` and `tar`) and deleted after it.
+  Elsewhere the system's Python 3.10+ is used.
+
+The build needs about 2 GB of free space while it runs, and a few minutes on
+four cores. Only the library stays, in `game` in the user data folder, with
+`build.log`, everything the build printed, beside it. A library is used only
+by the version of `bright-dawn` it was built for; after an update, build it
+again. Settings, Game, *Play the built game* turns it off; `--interpret-only`
+does the same for one run.
+
+From a source tree or a package, the same builder runs from the command line:
 
 ```bash
-python3 tools/gamebuilder/build_game.py path/to/your-rom.nds
+python3 tools/gamebuilder/build_game.py path/to/your-rom.nds --program build/bright-dawn
 ```
 
-It builds `bdtool`, checks the ROM, extracts its program code, translates it
-(about 3.5 million lines of C++) and compiles the game: a few minutes on four
-cores. Everything goes to `game-build` in the per-user data directory
-(`--work` chooses another place, but not inside the source tree), with
-everything the build printed in `build.log` there. A second run recompiles
-only what changed. `bright-dawn-game --interpret-only` runs without the
-translation, for comparison.
+`--program` is the `bright-dawn` the library is for: it reads the game's code
+out of the ROM (`bright-dawn --extract-code ROM FOLDER`) and names the version.
+`--out` chooses where the library goes, `--compiler` a compiler of your own,
+`--keep-temp` keeps the temporary folder for a look inside.
 
 **The translated game does not get far yet** (see [docs/BOOT.md](docs/BOOT.md)):
 interrupts are not yet taken in translated code, and time does not pass while
