@@ -22,9 +22,11 @@ if(BD_STATIC_RUNTIME)
     # Fully static, except for programs that set BD_SYSTEM_LIBC: the window,
     # which loads the system's display, sound and controller libraries while
     # it runs, and so must use the system's C library. Its C++ runtime is
-    # still linked in.
-    add_link_options("$<IF:$<BOOL:$<TARGET_PROPERTY:BD_SYSTEM_LIBC>>,-static-libstdc++,-static>"
-                     "$<$<BOOL:$<TARGET_PROPERTY:BD_SYSTEM_LIBC>>:-static-libgcc>")
+    # still linked in. Shared libraries are loaded into such a program, so
+    # they are linked the same way.
+    set(bd_system_libc
+        "$<OR:$<BOOL:$<TARGET_PROPERTY:BD_SYSTEM_LIBC>>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>>")
+    add_link_options("$<IF:${bd_system_libc},-static-libstdc++,-static>" "$<${bd_system_libc}:-static-libgcc>")
   endif()
 endif()
 
