@@ -9,10 +9,11 @@ untried beyond the first screens. No ROM and no game data are included.
 - `bright-dawn-linux-x86_64.tar.gz`: Linux, 64-bit (needs X11 or Wayland)
 - `SHA256SUMS.txt`: checksums of the packages
 
-Unpack and start `bright-dawn`. Its launcher asks for your ROM (and remembers
-it), plays it, holds the settings, and can build the game library from your
-ROM: its code translated to C++ and compiled on your computer, which the
-program then runs natively. Nothing needs installing for that: the compiler
+Unpack and start `bright-dawn`. The first time (and after each update) it
+opens the setup: choose your ROM (it is remembered) and build the game from
+it, its code translated to C++ and compiled on your computer, which the
+program then runs natively. Then the launcher opens: play, the settings, and
+the log, over the book of the game's main menu, read from your ROM. Nothing needs installing for that: the compiler
 (and on Windows, Python, if it is not installed) is downloaded for the build,
 checked, and deleted with everything else the build made; about 2 GB of free
 space is needed while it runs. The built game does not get far yet:

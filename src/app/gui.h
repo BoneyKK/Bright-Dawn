@@ -24,6 +24,8 @@ class Gui {
   void end_frame();
   // Ends it: before the renderer goes. Also done when it is destroyed.
   void shutdown();
+  // Pages a little see-through, over a backdrop (app/backdrop.h), or not.
+  void set_see_through(bool see_through);
 
  private:
   void apply_style();
@@ -32,6 +34,7 @@ class Gui {
   SDL_Renderer* renderer_ = nullptr;
   bool started_ = false;
   float scale_ = 0;
+  bool see_through_ = false;
 };
 
 }  // namespace bd::app

@@ -128,10 +128,12 @@ tests, developer documents or tools beyond the builder's.
 
 ## Using bright-dawn
 
-Start `bright-dawn` without anything else and it opens its launcher: choose
-your ROM (it is remembered), then Play. The launcher also builds the game (next
-section), holds the settings, and says where the log is. Started with a ROM, it
-plays it at once:
+Start `bright-dawn` without anything else. The first time, and again after an
+update, it opens the setup: choose your ROM (it is remembered), and build the
+game from it (next section). Then it opens its launcher: Play, the settings,
+building the game again, and where the log is. Behind both is the book of the
+game's main menu, read from your ROM when it is chosen; nothing of the game
+comes with Bright Dawn. Started with a ROM, it plays it at once, built or not:
 
 ```bash
 build/bright-dawn path/to/your-rom.nds

@@ -47,6 +47,12 @@ bool Gui::init(SDL_Window* window, SDL_Renderer* renderer, std::string& error) {
   return true;
 }
 
+void Gui::set_see_through(bool see_through) {
+  if (see_through == see_through_) return;
+  see_through_ = see_through;
+  if (started_) apply_style();
+}
+
 void Gui::apply_style() {
   float scale = SDL_GetWindowDisplayScale(window_);
   if (!(scale > 0.25f && scale < 8.0f)) scale = 1.0f;
@@ -60,6 +66,13 @@ void Gui::apply_style() {
   const ImVec4 gold(0.86f, 0.66f, 0.28f, 1.00f), gold_dim(0.55f, 0.42f, 0.18f, 1.00f);
   c[ImGuiCol_WindowBg] = page;
   c[ImGuiCol_ChildBg] = panel;
+  if (see_through_) {
+    // The backdrop shows at the window's edges and faintly through the
+    // pages, which stay dark enough to read on.
+    c[ImGuiCol_WindowBg].w = 0.0f;
+    c[ImGuiCol_ChildBg].w = 0.86f;
+    style.WindowBorderSize = 0.0f;
+  }
   c[ImGuiCol_PopupBg] = panel;
   c[ImGuiCol_Border] = ImVec4(0.35f, 0.29f, 0.20f, 1.00f);
   c[ImGuiCol_Text] = ImVec4(0.93f, 0.89f, 0.80f, 1.00f);
