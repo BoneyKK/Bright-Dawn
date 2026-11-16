@@ -167,7 +167,7 @@ RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limi
   frame_limit_reached_ = false;
   asked_to_end_ = false;
   machine_.set_instruction_limit(instruction_limit);
-  accounted_instructions_ = machine_.statistics().interpreted_instructions;
+  accounted_instructions_ = machine_.executed();
   set_alarm();
   machine_.call_function(program_.arm9_entry, kResetVector);
   RunResult result;
@@ -189,7 +189,7 @@ RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limi
 }
 
 void Console::catch_up() {
-  const std::uint64_t instructions = machine_.statistics().interpreted_instructions;
+  const std::uint64_t instructions = machine_.executed();
   const std::uint64_t passed = instructions - accounted_instructions_;
   accounted_instructions_ = instructions;
   if (passed != 0) timeline_.advance(passed * kCyclesPerInstruction);
@@ -200,7 +200,7 @@ void Console::set_alarm() {
   const Timeline::Time next = timeline_.next_event();
   if (next == Timeline::kNever) return;
   // Time not yet accounted for counts towards the event too.
-  const std::uint64_t pending = machine_.statistics().interpreted_instructions - accounted_instructions_;
+  const std::uint64_t pending = machine_.executed() - accounted_instructions_;
   const Timeline::Time now = timeline_.now() + pending * kCyclesPerInstruction;
   const Timeline::Time wait = next > now ? next - now : 0;
   machine_.set_alarm(wait / kCyclesPerInstruction + 1);
@@ -234,7 +234,7 @@ void Console::wait_for_interrupt() {
     sleeps_without_time_ = 0;
   } else if (++sleeps_without_time_ >= kMostSleepsWithoutTime) {
     stop(0, "the program keeps waiting for an interrupt that is requested but never taken, and no time "
-            "passes: interrupts are not yet taken in translated code");
+            "passes");
     machine_.stop();
     return;
   }

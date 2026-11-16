@@ -28,7 +28,7 @@ const BdHostFunctions kHost = {
     [](ds::Cpu* c, u32 ret) -> bool { return ds::leave_slow(*c, ret); },
     [](ds::Cpu* c, u32 address) { ds::call(*c, address); },
     [](ds::Cpu* c, u32 address) { ds::jump(*c, address); },
-    [](ds::Cpu* c, u32 number, u32 return_address) { ds::swi(*c, number, return_address); },
+    [](ds::Cpu* c, u32 number, u32 return_address) { return ds::swi(*c, number, return_address); },
     [](ds::Cpu* c, int cp, int opc1, int crn, int crm, int opc2, u32 value) {
       ds::cp_write(*c, cp, opc1, crn, crm, opc2, value);
     },
@@ -36,6 +36,7 @@ const BdHostFunctions kHost = {
       return ds::cp_read(*c, cp, opc1, crn, crm, opc2);
     },
     [](ds::Cpu* c, u32 address, const char* what) { ds::unhandled(*c, address, what); },
+    [](ds::Cpu* c, u32 next) -> bool { return ds::interrupt(*c, next); },
 };
 
 }  // namespace

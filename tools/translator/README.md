@@ -52,6 +52,14 @@ the fallback interpreter (`src/runtime`), and each covered by `tests/guest`:
   bit 0 of the address suggested, which is not what selects it.
 - **`msr` cannot change the Thumb bit, and does nothing to the control bits
   in User mode.**
+- **Interrupts are polled for, and instructions counted.** Before each
+  backward branch, after `mcr` and after `msr` to the control bits, the code
+  asks `ds::poll` whether an interrupt is due, with the address of the
+  instruction about to run, and returns at once when the runtime says so (as
+  after `ds::leave`). At the start of a function and at each branch target
+  it adds the instructions up to the next one to `c.executed`, from which the
+  runtime makes console time. `ds::swi` returns whether to return at once,
+  since a BIOS call can run as code that switches threads.
 
 ## Use
 

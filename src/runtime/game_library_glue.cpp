@@ -46,7 +46,8 @@ void Cpu::wr32(u32 a, u32 v) { g_host->wr32(this, a, v); }
 bool leave_slow(Cpu& c, u32 ret) { return g_host->leave_slow(&c, ret); }
 void call(Cpu& c, u32 address) { g_host->call(&c, address); }
 void jump(Cpu& c, u32 address) { g_host->jump(&c, address); }
-void swi(Cpu& c, u32 number, u32 return_address) { g_host->swi(&c, number, return_address); }
+bool swi(Cpu& c, u32 number, u32 return_address) { return g_host->swi(&c, number, return_address); }
+bool interrupt(Cpu& c, u32 next) { return g_host->interrupt(&c, next); }
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value) {
   g_host->cp_write(&c, cp, opc1, crn, crm, opc2, value);
 }

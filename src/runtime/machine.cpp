@@ -111,6 +111,9 @@ void Machine::reset_cpu() {
   cpu_.platform = this;
   cpu_.depth = 0;
   cpu_.unwind = 0;
+  cpu_.irq = interrupt_line_ ? 1u : 0u;
+  executed_ += cpu_.executed;
+  cpu_.executed = 0;
 }
 
 void Machine::add_overlay(int id, u32 load_address, const std::uint8_t* image, std::size_t size) {
@@ -262,9 +265,16 @@ void Machine::run_from(u32 address) {
   }
 }
 
-void Machine::dispatch_call(u32 address) { run_from(address); }
+void Machine::dispatch_call(u32 address) {
+  count_translated();
+  // The processor is about to run `address`: an interrupt can come first.
+  if (interrupt_due() && interrupt(address)) return;
+  run_from(address);
+}
 
 void Machine::dispatch_jump(u32 address) {
+  count_translated();
+  if (interrupt_due() && interrupt(address)) return;
   // A jump to exactly where a call site is waiting is a return: for example
   // "pop {r3}; bx r3", which the translator does not recognise as one.
   const int site = waiting_call_site(address, cpu_.r[13]);
@@ -276,8 +286,41 @@ void Machine::dispatch_jump(u32 address) {
   run_from(address);
 }
 
+bool Machine::run_until_back(u32 address, u32 back_to, u32 stack_pointer) {
+  if (cpu_.depth < ds::Cpu::kMaxFrames) cpu_.frames[cpu_.depth] = {back_to, stack_pointer};
+  ++cpu_.depth;
+  run_from(address);
+  return ds::leave(cpu_, back_to);
+}
+
+bool Machine::interrupt(u32 next) {
+  count_translated();
+  if (stopped_) return true;  // Every call site gives up (see stop).
+  if (!interrupt_due()) return false;
+  ++statistics_.interrupts_taken;
+  ++statistics_.interrupts_in_translated_code;
+  // The interrupted code waits for the handler's return to `next` like a call
+  // site, with the stack pointer of the mode it was in. The link register
+  // gets `next` plus 4, in either instruction set, as in the interpreter.
+  const u32 stack_pointer = cpu_.r[13];
+  enter_exception(0x12, (next & ~1u) + 4, (next & 1u) != 0);
+  return run_until_back(system_.exception_vectors() + 0x18, next, stack_pointer);
+}
+
+bool Machine::software_interrupt(u32 number, u32 return_address) {
+  count_translated();
+  const u32 stack_pointer = cpu_.r[13];  // Before the call may change modes.
+  const u32 go = system_.software_interrupt(cpu_, number, return_address);
+  if (stopped_) return true;
+  // Code at `go` deals with the call (after Machine::enter_exception); it
+  // returns to `return_address`.
+  if (go != return_address) return run_until_back(go, return_address, stack_pointer);
+  return interrupt_due() && interrupt(return_address);
+}
+
 bool Machine::leave_slow(u32 return_address) {
   (void)return_address;
+  count_translated();
   if (cpu_.unwind != 0) {
     --cpu_.unwind;
     return true;
@@ -434,7 +477,8 @@ bool Machine::interpret(u32 start, u32* continue_at) {
     have_state = false;
     bd_arm_core_get_pc_cpsr(core_, &pc, &cpsr);
     ++statistics_.interpreted_instructions;
-    if (statistics_.interpreted_instructions >= alarm_at_) {
+    ++executed_;
+    if (executed_ + cpu_.executed >= alarm_at_) {
       alarm_at_ = ~std::uint64_t{0};
       system_.alarm();
     }
@@ -503,21 +547,38 @@ namespace {
 bd::runtime::Machine& machine(Cpu& c) { return *static_cast<bd::runtime::Machine*>(c.platform); }
 }  // namespace
 
-u8 Cpu::rd8(u32 a) { return machine(*this).bus().read8(a); }
-u16 Cpu::rd16(u32 a) { return machine(*this).bus().read16(a); }
-u32 Cpu::rd32(u32 a) { return machine(*this).bus().read32(a); }
+// Every request from translated code first lets time pass for the
+// instructions it has counted.
+u8 Cpu::rd8(u32 a) {
+  bd::runtime::Machine& m = machine(*this);
+  m.count_translated();
+  return m.bus().read8(a);
+}
+u16 Cpu::rd16(u32 a) {
+  bd::runtime::Machine& m = machine(*this);
+  m.count_translated();
+  return m.bus().read16(a);
+}
+u32 Cpu::rd32(u32 a) {
+  bd::runtime::Machine& m = machine(*this);
+  m.count_translated();
+  return m.bus().read32(a);
+}
 void Cpu::wr8(u32 a, u8 v) {
   bd::runtime::Machine& m = machine(*this);
+  m.count_translated();
   m.watch_write(a);
   m.bus().write8(a, v);
 }
 void Cpu::wr16(u32 a, u16 v) {
   bd::runtime::Machine& m = machine(*this);
+  m.count_translated();
   m.watch_write(a);
   m.bus().write16(a, v);
 }
 void Cpu::wr32(u32 a, u32 v) {
   bd::runtime::Machine& m = machine(*this);
+  m.count_translated();
   m.watch_write(a);
   m.bus().write32(a, v);
 }
@@ -525,22 +586,14 @@ void Cpu::wr32(u32 a, u32 v) {
 void call(Cpu& c, u32 address) { machine(c).dispatch_call(address); }
 void jump(Cpu& c, u32 address) { machine(c).dispatch_jump(address); }
 bool leave_slow(Cpu& c, u32 ret) { return machine(c).leave_slow(ret); }
-void swi(Cpu& c, u32 number, u32 return_address) {
-  bd::runtime::Machine& m = machine(c);
-  const u32 go = m.system().software_interrupt(c, number, return_address);
-  if (go != return_address && !m.stopped()) {
-    // The call is dealt with by code at `go`, which translated code cannot
-    // yet be left for and come back from.
-    const u32 size = (return_address & 1u) ? 2 : 4;
-    m.system().unhandled(c, (return_address & ~1u) - size,
-                         "a BIOS call that runs as code was made from translated code");
-    m.stop();
-  }
-}
+bool interrupt(Cpu& c, u32 next) { return machine(c).interrupt(next); }
+bool swi(Cpu& c, u32 number, u32 return_address) { return machine(c).software_interrupt(number, return_address); }
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value) {
+  machine(c).count_translated();
   machine(c).system().coprocessor_write(c, cp, opc1, crn, crm, opc2, value);
 }
 u32 cp_read(Cpu& c, int cp, int opc1, int crn, int crm, int opc2) {
+  machine(c).count_translated();
   return machine(c).system().coprocessor_read(c, cp, opc1, crn, crm, opc2);
 }
 void unhandled(Cpu& c, u32 address, const char* what) { machine(c).system().unhandled(c, address, what); }

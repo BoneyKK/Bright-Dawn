@@ -62,12 +62,18 @@ bool leave_slow(Cpu& c, u32 ret) {
   --c.unwind;
   return true;
 }
-void swi(Cpu& c, u32 number, u32) {
+bool swi(Cpu& c, u32 number, u32) {
   if (number == guest::kTestSoftwareInterrupt) {
     c.r[0] = guest::test_software_interrupt(c.r[0], c.r[1]);
   } else {
     note_gap("software interrupt %u", number);
   }
+  return false;
+}
+// No interrupt is ever requested here (Cpu::irq stays 0).
+bool interrupt(Cpu&, u32 next) {
+  note_gap("an interrupt before %08x", next);
+  return false;
 }
 void cp_write(Cpu&, int, int, int, int, int, u32) { note_gap("coprocessor write%.0u", 0); }
 u32 cp_read(Cpu&, int, int, int, int, int) { note_gap("coprocessor read%.0u", 0); return 0; }

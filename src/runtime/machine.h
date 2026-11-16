@@ -58,8 +58,8 @@ class System {
   // `return_address` is the instruction after the software interrupt (bit 0
   // set = Thumb). Returns where execution continues: `return_address` when
   // the call has been dealt with here, or the address of code that deals with
-  // it, after Machine::enter_exception. (The second is only possible from
-  // interpreted code so far; from translated code it ends the run.)
+  // it, after Machine::enter_exception; that code returns to
+  // `return_address` (from translated code too: it is run until it does).
   virtual std::uint32_t software_interrupt(ds::Cpu& cpu, std::uint32_t number,
                                            std::uint32_t return_address) = 0;
   virtual std::uint32_t coprocessor_read(ds::Cpu& cpu, int cp, int opc1, int crn, int crm, int opc2) = 0;
@@ -80,6 +80,8 @@ struct Statistics {
   // 0 set = Thumb). Each address is a gap in the translation.
   std::map<std::uint32_t, std::uint64_t> interpreter_entries;
   std::uint64_t interpreted_instructions = 0;
+  // Instructions run by translated code, as it counts them (ds::Cpu::executed).
+  std::uint64_t translated_instructions = 0;
   // Hand-backs from interpreted code to translated functions.
   std::uint64_t native_calls_from_interpreter = 0;
   std::uint64_t native_jumps_from_interpreter = 0;
@@ -90,8 +92,10 @@ struct Statistics {
   std::uint64_t returns_elsewhere = 0;
   // Call sites told to give up because control went to an outer one.
   std::uint64_t call_sites_abandoned = 0;
-  // Interrupts the processor took.
+  // Interrupts the processor took, and of those, the ones taken in translated
+  // code (where it polls for them).
   std::uint64_t interrupts_taken = 0;
+  std::uint64_t interrupts_in_translated_code = 0;
   // Overlay translations compared with memory, and how many of those
   // comparisons found that memory held something else.
   std::uint64_t translations_checked = 0;
@@ -131,10 +135,16 @@ class Machine {
   void call_function(std::uint32_t address, std::uint32_t return_address);
 
   // The interrupt request line. While it is set and the processor's
-  // interrupt mask is clear, the processor takes the interrupt exception
-  // before its next instruction: IRQ mode, and on to the vector. Only
-  // interpreted code is interrupted so far; translated code runs on.
-  void set_interrupt_line(bool on) { interrupt_line_ = on; }
+  // interrupt mask is clear, the processor takes the interrupt exception:
+  // IRQ mode, and on to the vector. Interpreted code takes it before its
+  // next instruction; translated code where it polls for it (ds::poll):
+  // before going round a loop, after a write to the system coprocessor or to
+  // the status register, before a call or jump through the runtime, and
+  // after a BIOS call.
+  void set_interrupt_line(bool on) {
+    interrupt_line_ = on;
+    cpu_.irq = on ? 1u : 0u;
+  }
   bool interrupt_line() const { return interrupt_line_; }
 
   // Puts the processor model into exception mode `mode` the way the processor
@@ -144,11 +154,15 @@ class Machine {
   // execution continues at the vector.
   void enter_exception(std::uint32_t mode, std::uint32_t link, bool thumb);
 
-  // Calls System::alarm once the interpreter has executed `instructions` more
-  // instructions. There is one alarm; setting it again replaces it.
-  void set_alarm(std::uint64_t instructions) {
-    alarm_at_ = statistics_.interpreted_instructions + instructions;
-  }
+  // Instructions executed so far, interpreted or translated (translated code
+  // counts its own; see ds::Cpu::executed). What console time is made of.
+  std::uint64_t executed() const { return executed_ + cpu_.executed; }
+
+  // Calls System::alarm once `instructions` more have been executed. There is
+  // one alarm; setting it again replaces it. In translated code, the alarm
+  // goes off at the next memory access, call or other request to the
+  // runtime: a loop that touches no memory runs on without it.
+  void set_alarm(std::uint64_t instructions) { alarm_at_ = executed() + instructions; }
 
   // Ends the run: the outermost call_function returns as soon as it can. The
   // interpreter stops before its next instruction. Translated functions that
@@ -162,13 +176,7 @@ class Machine {
   bool is_translated(std::uint32_t address) { return lookup(address) != nullptr; }
 
   const Statistics& statistics() const { return statistics_; }
-  void clear_statistics() {
-    // The alarm counts from the instruction counter; keep it where it was.
-    const std::uint64_t until_alarm =
-        alarm_at_ == ~std::uint64_t{0} ? alarm_at_ : alarm_at_ - statistics_.interpreted_instructions;
-    statistics_ = Statistics();
-    alarm_at_ = until_alarm;
-  }
+  void clear_statistics() { statistics_ = Statistics(); }
 
   // Stops interpretation, as unhandled, after this many instructions within
   // one call_function. 0 means no limit. For tests and traces: translated
@@ -178,10 +186,25 @@ class Machine {
   bool instruction_limit_reached() const { return limit_reached_; }
 
   // Entry points for the functions the translated code calls (ds::call,
-  // ds::jump, ds::leave_slow). Not for other use.
+  // ds::jump, ds::leave_slow, ds::interrupt, ds::swi). Not for other use.
   void dispatch_call(std::uint32_t address);
   void dispatch_jump(std::uint32_t address);
   bool leave_slow(std::uint32_t return_address);
+  bool interrupt(std::uint32_t next);
+  bool software_interrupt(std::uint32_t number, std::uint32_t return_address);
+  // Adds what translated code has counted since (ds::Cpu::executed) to the
+  // instructions executed, and sounds the alarm when it is due. Before every
+  // request translated code makes of the runtime.
+  void count_translated() {
+    if (cpu_.executed == 0) return;
+    executed_ += cpu_.executed;
+    statistics_.translated_instructions += cpu_.executed;
+    cpu_.executed = 0;
+    if (executed_ >= alarm_at_) {
+      alarm_at_ = ~std::uint64_t{0};
+      system_.alarm();
+    }
+  }
   Bus& bus() { return bus_; }
   System& system() { return system_; }
   // Guest writes made by translated and interpreted code come through here.
@@ -209,6 +232,11 @@ class Machine {
   int waiting_call_site(std::uint32_t address, std::uint32_t stack_pointer) const;
   void arrive(int call_site);
   void run_from(std::uint32_t address);
+  bool interrupt_due() const { return interrupt_line_ && (cpu_.cpsr_ctrl & 0x80u) == 0; }
+  // Runs from `address` (an exception vector) until control comes back to
+  // `back_to` with stack pointer `stack_pointer`, as if a call site waited
+  // there. Returns true when control went to an outer call site instead.
+  bool run_until_back(std::uint32_t address, std::uint32_t back_to, std::uint32_t stack_pointer);
   bool interpret(std::uint32_t start, std::uint32_t* continue_at);
   void load_interpreter(std::uint32_t address, bd_arm_state* state);
   void store_from_interpreter(const bd_arm_state& state);
@@ -234,6 +262,7 @@ class Machine {
   bool stopped_ = false;
   bool interrupt_line_ = false;
   std::uint64_t alarm_at_ = ~std::uint64_t{0};
+  std::uint64_t executed_ = 0;  // Not counting cpu_.executed, which is added in.
 };
 
 }  // namespace bd::runtime

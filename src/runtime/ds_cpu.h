@@ -30,6 +30,8 @@ struct Cpu {
     Frame frames[kMaxFrames];
     u32 depth = 0;                   // may exceed kMaxFrames; the excess is not recorded
     u32 unwind = 0;                  // call sites that must still give up (see leave)
+    u32 irq = 0;                     // set by the platform layer while an interrupt is requested
+    u32 executed = 0;                // instructions run since the platform layer last counted them
 
     u8  rd8(u32 a);
     u16 rd16(u32 a);
@@ -167,10 +169,23 @@ inline bool leave(Cpu& c, u32 ret) {
     return leave_slow(c, ret);
 }
 
+// Interrupts are taken where the translated code polls for them: before each
+// backward branch (every loop), after writes to the system coprocessor (which
+// can wait for an interrupt) and after changes of the status register (which
+// can unmask one). `next` is the instruction about to run, bit 0 set = Thumb.
+// The platform layer runs the handler, which returns to `next`. poll returns
+// true when the calling function must return at once, as leave does.
+bool interrupt(Cpu& c, u32 next);                            // provided by the platform layer
+inline bool poll(Cpu& c, u32 next) {
+    return c.irq != 0 && (c.cpsr_ctrl & 0x80u) == 0 && interrupt(c, next);
+}
+
 // provided by the platform layer
 void call(Cpu& c, u32 address);                              // a call; bit 0 set = Thumb code
 void jump(Cpu& c, u32 address);                              // a jump whose target is not known in advance
-void swi(Cpu& c, u32 number, u32 return_address);          // return_address: the next instruction, bit 0 set = Thumb
+// return_address: the next instruction, bit 0 set = Thumb. Returns true when the
+// calling function must return at once, as leave does.
+bool swi(Cpu& c, u32 number, u32 return_address);
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value);
 u32 cp_read(Cpu& c, int cp, int opc1, int crn, int crm, int opc2);
 void unhandled(Cpu& c, u32 address, const char* what);
