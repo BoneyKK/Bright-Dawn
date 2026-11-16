@@ -89,6 +89,15 @@ std::vector<SettingDef> game_setting_definitions() {
                         "How many files the builder compiles at once; 0 for as many as there are processors. "
                         "Fewer needs less memory.",
                         0, 256, 0));
+  SettingDef compiler;
+  compiler.key = std::string(key::kBuildCompiler);
+  compiler.chapter = "Builder";
+  compiler.label = "Compiler";
+  compiler.help =
+      "Empty: the builder fetches Zig (about 95 MB) for each build and removes it after. Or the command of a "
+      "C++ compiler already on this computer that takes GCC's options, such as g++ or clang++, to use instead.";
+  compiler.kind = SettingKind::Text;
+  defs.push_back(compiler);
   defs.push_back(choice(key::kLogLevel, "Log", "Detail",
                         "How much the log records. Each run writes a log; when reporting a problem, attach it.",
                         {{"error", "Errors"}, {"warning", "Warnings"}, {"info", "What happens (normal)"},

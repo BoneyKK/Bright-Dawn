@@ -87,28 +87,6 @@ void ChildProcess::kill() {
   if (process_ != nullptr && !ended_) SDL_KillProcess(process_, true);
 }
 
-bool start_detached(const std::vector<std::string>& args, std::string& error) {
-  if (args.empty()) {
-    error = "nothing to run";
-    return false;
-  }
-  std::vector<const char*> argv;
-  for (const std::string& a : args) argv.push_back(a.c_str());
-  argv.push_back(nullptr);
-  const SDL_PropertiesID props = SDL_CreateProperties();
-  SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argv.data());
-  SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true);
-  SDL_Process* process = SDL_CreateProcessWithProperties(props);
-  SDL_DestroyProperties(props);
-  if (process == nullptr) {
-    error = SDL_GetError();
-    return false;
-  }
-  // Only the handle goes; the program goes on.
-  SDL_DestroyProcess(process);
-  return true;
-}
-
 ProgramOutput run_program(const std::vector<std::string>& args, std::uint32_t timeout_ms) {
   ProgramOutput result;
   ChildProcess child;

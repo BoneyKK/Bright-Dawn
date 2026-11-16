@@ -31,6 +31,7 @@
 #include "app/launcher.h"
 #include "core/log.h"
 #include "core/version.h"
+#include "game_library_host.h"
 #include "gfx/screen_layout.h"
 #include "input/bindings.h"
 #include "nds/console.h"
@@ -39,6 +40,7 @@
 #include "platform/crash_log.h"
 #include "platform/paths.h"
 #include "rom/game_id.h"
+#include "rom/program_code.h"
 #include "rom/rom.h"
 #include "translated_table.h"
 #include "ui/game_settings.h"
@@ -90,7 +92,8 @@ constexpr const char* kUsage =
     "  --fit                 fill the window instead of scaling by whole numbers\n"
     "  --fullscreen          start full screen\n"
     "  --no-vsync            do not wait for the screen's refresh to show a picture\n"
-    "  --screen-filter MODE  scaling the screens: smooth (bilinear, the default) or\n"
+    "  --screen-filter MODE  scaling the screens: sharp_smooth_edges (sharp pixels,\n"
+    "                        smooth edges; the default), smooth (bilinear) or\n"
     "                        sharp (nearest)\n"
     "  --textures MODE       3D scenes' textures: sharp (nearest, as on the DS) or\n"
     "                        smooth (bilinear)\n"
@@ -108,6 +111,8 @@ constexpr const char* kUsage =
     "  --capture FILE        with --frames, write the window's last frame to FILE (BMP)\n"
     "  --interpret-only      do not use the translated code (bright-dawn-game only)\n"
     "  --video-drivers       list the window systems this build can use, and stop\n"
+    "  --extract-code ROM DIR  check the ROM, write its program code to DIR (for the\n"
+    "                        game builder), and stop\n"
     "  --version             print the version, and stop\n"
     "\n"
     "Keyboard: arrows, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start,\n"
@@ -244,7 +249,26 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     return played;
   }
 
-  const TranslatedEntry* translation = a.options.interpret_only ? kNoTranslations : a.translation;
+  // The game's code: linked in (bright-dawn-game), or the game library built
+  // from the player's ROM, or none. The library stays loaded while the
+  // console that runs it exists.
+  runtime::GameLibrary library;
+  const TranslatedEntry* translation = kNoTranslations;
+  if (!a.options.interpret_only) {
+    if (a.translated_build) {
+      translation = a.translation;
+    } else if (a.settings.toggle(ui::key::kPlayBuilt) && !a.user_data.empty()) {
+      const std::filesystem::path path = app::game_library_path(a.user_data);
+      if (std::filesystem::is_regular_file(path, ec)) {
+        if (library.open(path, BD_VERSION)) {
+          translation = library.table();
+          log::info("game", "the game library " + app::utf8(path) + ", built for " + library.built_for());
+        } else {
+          log::warning("game", "the game library " + app::utf8(path) + " is not used: " + library.error());
+        }
+      }
+    }
+  }
   std::size_t translated_functions = 0;
   while (translation[translated_functions].function != nullptr) ++translated_functions;
   std::printf("%zu translated functions in use\n", translated_functions);
@@ -385,6 +409,30 @@ int run(CommandLine& cl, int argc, char** argv) {
   return status;
 }
 
+// The game builder's first step: the ROM checked and its program code
+// written out, for the translator. Reports on the standard streams only.
+int extract_code(const char* rom_path, const char* folder) {
+  Result<rom::Rom> rom = rom::Rom::open(app::from_utf8(rom_path));
+  if (!rom) {
+    std::fprintf(stderr, "error: %s\n", rom.error().message.c_str());
+    return 1;
+  }
+  if (Status status = rom::require_dark_dawn(rom.value().header()); !status) {
+    std::fprintf(stderr, "error: %s\n", status.error().message.c_str());
+    return 1;
+  }
+  const rom::KnownTitle* title = rom::identify_title(rom.value().header());
+  std::printf("Golden Sun: Dark Dawn (%s, %.*s)\n", rom::to_string(title->region),
+              static_cast<int>(title->game_code.size()), title->game_code.data());
+  Result<std::size_t> written = rom::write_program_code(rom.value(), app::from_utf8(folder));
+  if (!written) {
+    std::fprintf(stderr, "error: %s\n", written.error().message.c_str());
+    return 1;
+  }
+  std::printf("Wrote %zu file(s) to %s\n", written.value(), folder);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -400,6 +448,12 @@ int main(int argc, char** argv) {
     } else if (arg == "--help" || arg == "-h") {
       std::printf("%s", kUsage);
       return 0;
+    } else if (arg == "--extract-code") {
+      if (i + 2 >= argc) {
+        std::fprintf(stderr, "error: --extract-code needs a ROM and a folder\n");
+        return 1;
+      }
+      return extract_code(argv[i + 1], argv[i + 2]);
     } else if (arg == "--video-drivers") {
       for (int d = 0; d < SDL_GetNumVideoDrivers(); ++d) std::printf("%s\n", SDL_GetVideoDriver(d));
       return 0;

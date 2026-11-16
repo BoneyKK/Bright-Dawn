@@ -57,9 +57,6 @@ class ChildProcess {
   int exit_code_ = -1;
 };
 
-// Starts a program that goes on by itself, whatever becomes of this one.
-bool start_detached(const std::vector<std::string>& args, std::string& error);
-
 // Runs a program to its end, for at most `timeout_ms`, and returns what it
 // wrote. `started` is false if it could not be started; `exit_code` is -1
 // if it had to be ended (and 0 where it is not known).

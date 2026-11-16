@@ -5,7 +5,7 @@
 #include <system_error>
 
 #include "app/child_process.h"
-#include "core/version.h"
+#include "game_library_host.h"
 #include "ui/build_progress.h"
 
 namespace bd::app {
@@ -14,8 +14,8 @@ namespace {
 bool is_builder(const std::filesystem::path& folder) {
   std::error_code ec;
   return std::filesystem::is_regular_file(folder / "tools" / "gamebuilder" / "build_game.py", ec) &&
-         std::filesystem::is_regular_file(folder / "CMakeLists.txt", ec) &&
-         std::filesystem::is_directory(folder / "src", ec);
+         std::filesystem::is_regular_file(folder / "tools" / "translator" / "translate_game.py", ec) &&
+         std::filesystem::is_regular_file(folder / "src" / "runtime" / "game_library_glue.cpp", ec);
 }
 
 FoundTool find_tool(const std::vector<std::vector<std::string>>& candidates, std::array<int, 3> least,
@@ -82,40 +82,21 @@ FoundTool find_python() {
 #endif
 }
 
-FoundTool find_cmake() { return find_tool({{"cmake"}}, {3, 20, 0}, "CMake"); }
-
-std::optional<std::filesystem::path> built_game(const std::filesystem::path& work) {
-#if defined(_WIN32)
-  const char* name = "bright-dawn-game.exe";
+std::optional<Download> python_download() {
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+  return Download{"Python 3.13.16",
+                  "https://api.nuget.org/v3-flatcontainer/python/3.13.16/python.3.13.16.nupkg",
+                  "95fad176338f1d6a799e45946488063f4aa61764e6cff2f132ddeffbf7a04c34",
+                  14817881,
+                  "tools",
+                  "tools/python.exe"};
 #else
-  const char* name = "bright-dawn-game";
-#endif
-  // As the builder looks for it: in the build folder, or in a folder of the
-  // configuration, for Visual Studio.
-  std::error_code ec;
-  for (const std::filesystem::path& p : {work / "game" / name, work / "game" / "Release" / name})
-    if (std::filesystem::is_regular_file(p, ec)) return p;
   return std::nullopt;
+#endif
 }
 
-BuiltGameVersion built_game_version(const std::filesystem::path& game) {
-  BuiltGameVersion result;
-  const ProgramOutput out = run_program({utf8(game), "--version"}, 10000);
-  if (!out.started) {
-    result.problem = "it could not be started";
-    return result;
-  }
-  std::string line = out.output.substr(0, out.output.find('\n'));
-  if (!line.empty() && line.back() == '\r') line.pop_back();
-  if ((ChildProcess::kExitCodeKnown && out.exit_code != 0) || line.rfind("bright-dawn ", 0) != 0) {
-    result.problem = "it did not say its version";
-    return result;
-  }
-  result.known = true;
-  result.version = line;
-  return result;
+std::filesystem::path game_library_path(const std::filesystem::path& user_data) {
+  return user_data / "game" / runtime::GameLibrary::file_name();
 }
-
-std::string own_version_line() { return std::string("bright-dawn ") + BD_VERSION; }
 
 }  // namespace bd::app

@@ -9,7 +9,9 @@
 
 #include "core/log.h"
 #include "core/version.h"
+#include "game_library_host.h"
 #include "imgui.h"
+#include "platform/paths.h"
 #include "rom/game_id.h"
 #include "rom/rom.h"
 #include "ui/game_settings.h"
@@ -56,7 +58,8 @@ void open_folder(const std::filesystem::path& folder) {
 }  // namespace
 
 Launcher::Launcher(App& app) : app_(app) {
-  if (!app_.user_data.empty()) work_ = app_.user_data / "game-build";
+  if (!app_.user_data.empty()) library_ = game_library_path(app_.user_data);
+  if (Result<std::filesystem::path> self = platform::executable_path(); self) program_ = self.value();
   const std::string remembered = app_.settings.value(ui::key::kRom);
   if (!remembered.empty()) choose_rom(from_utf8(remembered));
   builder_ = find_builder();
@@ -64,6 +67,7 @@ Launcher::Launcher(App& app) : app_(app) {
 }
 
 Launcher::~Launcher() {
+  fetch_.reset();
   if (build_ == nullptr || !build_->running()) return;
   // The window is closing during a build: the builder is asked to stop, and
   // made to if it does not.
@@ -98,126 +102,162 @@ void Launcher::choose_rom(const std::filesystem::path& path) {
 
 void Launcher::check_tools() {
   python_ = find_python();
-  cmake_ = find_cmake();
   builder_ = find_builder();
   tools_checked_ = true;
   log::info("builder", "builder files: " + (builder_ ? utf8(*builder_) : std::string("not found")));
   log::info("builder", python_.found ? "Python " + python_.version + " (" + python_.command[0] + ")" : python_.problem);
-  log::info("builder", cmake_.found ? "CMake " + cmake_.version : cmake_.problem);
 }
 
 void Launcher::check_built_game() {
-  built_.reset();
   built_state_ = BuiltState::None;
-  built_version_.clear();
-  if (app_.translated_build || work_.empty()) return;
-  built_ = built_game(work_);
-  if (!built_) return;
-  const BuiltGameVersion v = built_game_version(*built_);
-  if (!v.known) {
-    built_state_ = BuiltState::Broken;
-    built_version_ = v.problem;
+  built_detail_.clear();
+  if (app_.translated_build || library_.empty()) return;
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(library_, ec)) return;
+  // Loaded to be checked, and let go again: it is loaded for good when the
+  // game is played, and must not be held while the builder replaces it.
+  runtime::GameLibrary library;
+  if (library.open(library_, BD_VERSION)) {
+    built_state_ = BuiltState::Ready;
+    built_detail_ = std::string("built for ") + library.built_for();
   } else {
-    built_version_ = v.version;
-    built_state_ = v.version == own_version_line() ? BuiltState::Ready : BuiltState::OtherVersion;
+    built_detail_ = library.error();
+    built_state_ = built_detail_.find("was built for") != std::string::npos ? BuiltState::OtherVersion
+                                                                          : BuiltState::Broken;
   }
-  log::info("launcher", "built game " + utf8(*built_) + ": " + built_version_ +
-                            (built_state_ == BuiltState::Ready ? " (this version)" : ""));
+  log::info("launcher", "game library " + utf8(library_) + ": " +
+                            (built_state_ == BuiltState::Ready ? "ready, " : "not usable: ") + built_detail_);
 }
 
-void Launcher::start_build() {
-  if (build_ != nullptr && build_->running()) return;
-  std::vector<std::string> args = python_.command;
-  args.push_back(utf8(*builder_ / "tools" / "gamebuilder" / "build_game.py"));
-  args.push_back(utf8(rom_));
-  args.push_back("--work");
-  args.push_back(utf8(work_));
-  args.push_back("--stop-on-stdin-eof");
-  // The game is to name the same version as this program.
-  args.push_back(std::string("--cmake-arg=-DBD_BUILD_ID=") + BD_BUILD_ID);
-  if (std::strlen(BD_COMMIT) != 0) args.push_back(std::string("--cmake-arg=-DBD_COMMIT=") + BD_COMMIT);
-  const long long jobs = app_.settings.number(ui::key::kBuildJobs);
-  if (jobs > 0) {
-    args.push_back("--jobs");
-    args.push_back(std::to_string(jobs));
-  }
-  std::string line;
-  for (const std::string& a : args) line += (line.empty() ? "" : " ") + a;
-  log::info("builder", "starting: " + line);
+void Launcher::begin_build_output() {
   output_.clear();
   progress_ = ui::BuildProgress();
   build_result_.clear();
   build_failed_ = false;
   stopping_ = false;
-  build_ = std::make_unique<ChildProcess>();
-  std::string error;
-  if (!build_->start(args, true, error)) {
-    build_result_ = "The builder could not be started: " + error;
-    build_failed_ = true;
-    log::error("builder", build_result_);
-    build_.reset();
-    return;
-  }
   build_started_at_ = SDL_GetTicks();
 }
 
+void Launcher::add_output(std::string_view text) {
+  output_.emplace_back(text);
+  if (output_.size() > kMostOutputLines) output_.pop_front();
+  scroll_to_end_ = true;
+}
+
+void Launcher::start_build() {
+  if (building()) return;
+  begin_build_output();
+  if (python_.found) {
+    start_builder(python_.command);
+    return;
+  }
+  // No Python here: one is fetched for this build, and removed after it.
+  const std::optional<Download> download = python_download();
+  if (!download) {
+    finish_build(false, python_.problem + ": install Python 3.10 or later");
+    return;
+  }
+  fetch_ = std::make_unique<Fetch>();
+  std::string error;
+  add_output("Getting " + download->what + " for the build (" + std::to_string(download->size / (1024 * 1024)) +
+             " MB), from " + download->url);
+  if (!fetch_->start(*download, error)) {
+    fetch_.reset();
+    finish_build(false, download->what + " could not be fetched: " + error);
+  }
+}
+
+void Launcher::start_builder(const std::vector<std::string>& python) {
+  std::vector<std::string> args = python;
+  args.push_back(utf8(*builder_ / "tools" / "gamebuilder" / "build_game.py"));
+  args.push_back(utf8(rom_));
+  args.push_back("--program");
+  args.push_back(utf8(program_));
+  args.push_back("--out");
+  args.push_back(utf8(library_));
+  args.push_back("--stop-on-stdin-eof");
+  const long long jobs = app_.settings.number(ui::key::kBuildJobs);
+  if (jobs > 0) {
+    args.push_back("--jobs");
+    args.push_back(std::to_string(jobs));
+  }
+  if (const std::string compiler = app_.settings.value(ui::key::kBuildCompiler); !compiler.empty()) {
+    args.push_back("--compiler");
+    args.push_back(compiler);
+  }
+  std::string line;
+  for (const std::string& a : args) line += (line.empty() ? "" : " ") + a;
+  log::info("builder", "starting: " + line);
+  build_ = std::make_unique<ChildProcess>();
+  std::string error;
+  if (!build_->start(args, true, error)) {
+    build_.reset();
+    finish_build(false, "The builder could not be started: " + error);
+  }
+}
+
 void Launcher::stop_build() {
-  if (build_ == nullptr || !build_->running() || stopping_) return;
+  if (!building() || stopping_) return;
   log::info("builder", "stopping the build, as asked");
   stopping_ = true;
   stop_asked_at_ = SDL_GetTicks();
-  build_->close_input();
+  if (fetch_ != nullptr) fetch_->stop();
+  if (build_ != nullptr) build_->close_input();
+}
+
+void Launcher::finish_build(bool ok, const std::string& result) {
+  const std::uint64_t seconds = (SDL_GetTicks() - build_started_at_) / 1000;
+  char took[64];
+  std::snprintf(took, sizeof took, " (%" PRIu64 " min %" PRIu64 " s)", seconds / 60, seconds % 60);
+  build_failed_ = !ok;
+  build_result_ = result.empty() ? std::string("The game was built") + took + "." : result;
+  (build_failed_ ? log::warning : log::info)("builder", build_result_);
+  build_.reset();
+  // Python fetched for the build goes with it.
+  fetch_.reset();
+  stopping_ = false;
+  check_built_game();
 }
 
 void Launcher::poll_build() {
+  if (fetch_ != nullptr && build_ == nullptr) {
+    fetch_->poll([&](std::string_view text) { add_output(text); });
+    if (fetch_->state() == Fetch::State::Done) {
+      start_builder({utf8(fetch_->program())});
+    } else if (fetch_->state() == Fetch::State::Failed) {
+      finish_build(false, stopping_ ? "The build was stopped." : "Python could not be fetched: " + fetch_->error());
+    }
+    return;
+  }
   if (build_ == nullptr) return;
   build_->poll([&](std::string_view text) {
     progress_.take_line(text);
     if (text.rfind("== ", 0) == 0 || text.rfind("error: ", 0) == 0 || text.rfind("The game: ", 0) == 0)
       log::info("builder", std::string(text));
-    output_.emplace_back(text);
-    if (output_.size() > kMostOutputLines) output_.pop_front();
-    scroll_to_end_ = true;
+    add_output(text);
   });
   if (stopping_ && build_->running() && SDL_GetTicks() - stop_asked_at_ > 20000) {
     log::warning("builder", "the builder did not stop when asked: it is ended");
     build_->kill();
   }
   if (!build_->ended()) return;
-  const std::uint64_t seconds = (SDL_GetTicks() - build_started_at_) / 1000;
   const bool ok = (!ChildProcess::kExitCodeKnown || build_->exit_code() == 0) && !progress_.game().empty();
-  char took[64];
-  std::snprintf(took, sizeof took, " (%" PRIu64 " min %" PRIu64 " s)", seconds / 60, seconds % 60);
   if (stopping_) {
-    build_result_ = "The build was stopped.";
-    build_failed_ = true;
+    finish_build(false, "The build was stopped.");
   } else if (ok) {
-    build_result_ = std::string("The game was built") + took + ".";
-    build_failed_ = false;
+    finish_build(true, "");
   } else {
-    build_result_ = "The build failed" + std::string(took) + ": " +
-                    (progress_.error().empty() ? "exit status " + std::to_string(build_->exit_code())
-                                               : progress_.error()) +
-                    ".";
-    build_failed_ = true;
+    const std::uint64_t seconds = (SDL_GetTicks() - build_started_at_) / 1000;
+    char took[64];
+    std::snprintf(took, sizeof took, " (%" PRIu64 " min %" PRIu64 " s)", seconds / 60, seconds % 60);
+    finish_build(false, "The build failed" + std::string(took) + ": " +
+                            (progress_.error().empty() ? "exit status " + std::to_string(build_->exit_code())
+                                                       : progress_.error()) +
+                            ".");
   }
-  (build_failed_ ? log::warning : log::info)("builder", build_result_);
-  build_.reset();
-  stopping_ = false;
-  check_built_game();
 }
 
 void Launcher::play(LauncherChoice& choice) {
-  const bool built = !app_.translated_build && built_state_ == BuiltState::Ready && app_.settings.toggle(ui::key::kPlayBuilt);
-  if (built) {
-    std::string error;
-    log::info("launcher", "starting the built game " + utf8(*built_) + " with " + utf8(rom_));
-    if (start_detached({utf8(*built_), utf8(rom_)}, error)) {
-      choice.kind = LauncherChoice::Quit;
-      return;
-    }
-    log::error("launcher", "the built game could not be started: " + error + "; playing interpreted instead");
-  }
   choice.kind = LauncherChoice::Play;
   choice.rom = rom_;
 }
@@ -357,7 +397,7 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
   ImGui::Spacing();
   heading("Play");
   if (app_.translated_build) {
-    note("This is the built game: its code runs natively.");
+    note("This is a build with the game's code linked in: it runs natively.");
   } else if (built_state_ == BuiltState::Ready && app_.settings.toggle(ui::key::kPlayBuilt)) {
     note("The built game is played: its code runs natively.");
   } else if (built_state_ == BuiltState::Ready) {
@@ -366,9 +406,9 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
     note("The game is interpreted, which is slow: about a third of the console's speed. Build the game "
          "(Build the game, on the left) to run its code natively.");
     if (built_state_ == BuiltState::OtherVersion)
-      note("The game built before is of another version of Bright Dawn (" + built_version_ + "): build it again.");
+      note("The game built before cannot be used: " + built_detail_ + ". Build it again.");
     else if (built_state_ == BuiltState::Broken)
-      note("The game built before cannot be used: " + built_version_ + ". Build it again.");
+      note("The game built before cannot be used: " + built_detail_ + ". Build it again.");
   }
   ImGui::BeginDisabled(!rom_check_.ok);
   if (ImGui::Button("Play", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f))) {
@@ -384,10 +424,10 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
 
 void Launcher::draw_build() {
   heading("Build the game");
-  note("The builder translates the game's code, from your ROM, to C++ and compiles it for this computer. "
-       "It then runs natively instead of being interpreted. The translated code is made from your ROM and "
-       "stays on this computer. The first build takes a while: some minutes on a fast computer, longer on "
-       "a slower one, and SDL is downloaded for it.");
+  note("The builder translates the game's code, from your ROM, to C++ and compiles it for this computer, "
+       "into a library the program loads: the game then runs natively instead of being interpreted. The "
+       "translated code is made from your ROM and stays on this computer. A build takes some minutes on a "
+       "fast computer, longer on a slower one.");
   ImGui::Spacing();
   ImGui::TextUnformatted("What it needs:");
   const auto requirement = [](bool ok, const std::string& what, const std::string& detail) {
@@ -405,39 +445,42 @@ void Launcher::draw_build() {
   requirement(builder_.has_value(), builder_ ? "The builder's files" : "The builder's files were not found",
               builder_ ? utf8(*builder_)
                        : "They come with Bright Dawn, in the folder \"builder\" next to the program.");
-  requirement(python_.found, python_.found ? "Python " + python_.version : python_.problem,
-              python_.found ? "" : "Install Python 3.10 or later (python.org), then check again.");
-  requirement(cmake_.found, cmake_.found ? "CMake " + cmake_.version : cmake_.problem,
-              cmake_.found ? "" : "Install CMake 3.20 or later (cmake.org), then check again.");
-#if defined(_WIN32)
-  const char* compiler = "Visual Studio, or its Build Tools, with \"Desktop development with C++\".";
-#elif defined(__APPLE__)
-  const char* compiler = "Xcode's command line tools (xcode-select --install).";
-#else
-  const char* compiler =
-      "g++ or clang++, and the development files of X11 or Wayland that SDL needs (the build names any that are missing).";
-#endif
+  const std::optional<Download> python = python_download();
+  if (python_.found) {
+    requirement(true, "Python " + python_.version, "");
+  } else if (python) {
+    requirement(true, "Python: " + python->what + " is fetched for the build, and removed after it",
+                python_.problem + " on this computer.");
+  } else {
+    requirement(false, python_.problem,
+                "Install Python 3.10 or later (from your system's packages, or python.org), then check again.");
+  }
   ImGui::Bullet();
-  ImGui::TextWrapped("A C++ compiler: %s It is checked when the build starts.", compiler);
-  const bool running = build_ != nullptr && build_->running();
+  if (const std::string compiler = app_.settings.value(ui::key::kBuildCompiler); compiler.empty())
+    ImGui::TextWrapped("The compiler: Zig (Clang), about 95 MB, is fetched by the builder for the build and removed "
+                       "after it. It needs an internet connection, and about 2 GB of free space while it builds.");
+  else
+    ImGui::TextWrapped("The compiler: %s, as chosen in the settings (Builder). The build needs about 2 GB of free "
+                       "space while it runs.", compiler.c_str());
+  const bool running = building();
   ImGui::BeginDisabled(running);
   if (ImGui::Button("Check again")) check_tools();
   ImGui::EndDisabled();
 
   ImGui::Spacing();
-  ImGui::TextUnformatted("Where it builds:");
+  ImGui::TextUnformatted("The built game:");
   ImGui::SameLine();
-  ImGui::TextWrapped("%s", work_.empty() ? "(no user data folder)" : utf8(work_).c_str());
-  if (!work_.empty() && ImGui::SmallButton("Open the folder")) open_folder(work_);
-  if (built_state_ == BuiltState::Ready) coloured(kGood, "Built, and ready: " + built_version_);
-  else if (built_state_ == BuiltState::OtherVersion) coloured(kBad, "Built by another version: " + built_version_);
-  else if (built_state_ == BuiltState::Broken) coloured(kBad, "Built, but it cannot be used: " + built_version_);
+  ImGui::TextWrapped("%s", library_.empty() ? "(no user data folder)" : utf8(library_).c_str());
+  if (!library_.empty() && ImGui::SmallButton("Open the folder")) open_folder(library_.parent_path());
+  if (built_state_ == BuiltState::Ready) coloured(kGood, "Built, and ready: " + built_detail_);
+  else if (built_state_ != BuiltState::None) coloured(kBad, "Built, but it cannot be used: " + built_detail_);
 
   ImGui::Spacing();
-  const bool can_build = rom_check_.ok && builder_ && python_.found && cmake_.found && !work_.empty();
+  const bool can_build =
+      rom_check_.ok && builder_ && (python_.found || python) && !library_.empty() && !program_.empty();
   if (!running) {
     ImGui::BeginDisabled(!can_build);
-    if (ImGui::Button(built_ ? "Build it again" : "Build the game",
+    if (ImGui::Button(built_state_ != BuiltState::None ? "Build it again" : "Build the game",
                       ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f)))
       start_build();
     ImGui::EndDisabled();
@@ -447,7 +490,9 @@ void Launcher::draw_build() {
       stop_build();
     ImGui::EndDisabled();
     char label[160];
-    if (progress_.steps() == 0)
+    if (fetch_ != nullptr && build_ == nullptr)
+      std::snprintf(label, sizeof label, "Getting Python for the build");
+    else if (progress_.steps() == 0)
       std::snprintf(label, sizeof label, "Starting");
     else
       std::snprintf(label, sizeof label, "Step %d of %d: %s", progress_.step(), progress_.steps(),
@@ -458,8 +503,8 @@ void Launcher::draw_build() {
   }
   if (!build_result_.empty()) {
     coloured(build_failed_ ? kBad : kGood, build_result_);
-    if (!work_.empty())
-      note("Everything the build printed is in " + utf8(work_ / "build.log") + ".");
+    if (!library_.empty())
+      note("Everything the build printed is in " + utf8(library_.parent_path() / "build.log") + ".");
   }
 
   if (!output_.empty()) {

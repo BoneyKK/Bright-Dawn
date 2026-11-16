@@ -26,6 +26,7 @@ inline constexpr std::string_view kTextures = "graphics.textures";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";
 inline constexpr std::string_view kRom = "game.rom";
 inline constexpr std::string_view kBuildJobs = "builder.jobs";
+inline constexpr std::string_view kBuildCompiler = "builder.compiler";
 inline constexpr std::string_view kLogLevel = "log.level";
 inline constexpr std::string_view kLogsKept = "log.kept";
 }  // namespace key

@@ -6,6 +6,12 @@
 // completely must never enter the interpreter.
 //
 // usage: guest_mixed_test <guest image> [test that may use the interpreter]...
+//
+// Built with GUEST_FROM_LIBRARY, as guest_library_test, the translated code
+// is not linked in: it is loaded from a game library (game_library.h), built
+// from the same translation, exactly as the program loads the game's:
+//
+// usage: guest_library_test <library> <guest image> [test that may use the interpreter]...
 #include <cstdio>
 #include <cstring>
 #include <set>
@@ -13,6 +19,9 @@
 #include "guest_bus.h"
 #include "guest_runner.h"
 #include "machine.h"
+#ifdef GUEST_FROM_LIBRARY
+#include "game_library_host.h"
+#endif
 
 extern "C" {
 #include "inputs.h"
@@ -22,8 +31,8 @@ namespace {
 
 class MixedExecutor : public guest::Executor {
  public:
-  MixedExecutor(guest::Memory& memory, std::set<std::string> may_interpret)
-      : bus_(memory), machine_(bus_, system_, translated_table), may_interpret_(std::move(may_interpret)) {
+  MixedExecutor(guest::Memory& memory, std::set<std::string> may_interpret, const TranslatedEntry* table)
+      : bus_(memory), machine_(bus_, system_, table), may_interpret_(std::move(may_interpret)) {
     machine_.set_instruction_limit(2000000);
   }
 
@@ -122,14 +131,39 @@ class MixedExecutor : public guest::Executor {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef GUEST_FROM_LIBRARY
+  if (argc < 3) {
+    std::fprintf(stderr, "usage: guest_library_test <library> <guest image> [test that may use the interpreter]...\n");
+    return 2;
+  }
+  bd::runtime::GameLibrary library;
+  if (!library.open(argv[1], "guest test")) {
+    std::fprintf(stderr, "the game library %s cannot be used: %s\n", argv[1], library.error().c_str());
+    return 1;
+  }
+  // A library built for another version is refused.
+  {
+    bd::runtime::GameLibrary other;
+    if (other.open(argv[1], "another version") || other.error().find("not another version") == std::string::npos) {
+      std::fprintf(stderr, "a library built for another version was not refused: %s\n", other.error().c_str());
+      return 1;
+    }
+  }
+  std::printf("game library loaded, built for \"%s\"\n", library.built_for());
+  const TranslatedEntry* table = library.table();
+  ++argv;
+  --argc;
+#else
   if (argc < 2) {
     std::fprintf(stderr, "usage: guest_mixed_test <guest image> [test that may use the interpreter]...\n");
     return 2;
   }
+  const TranslatedEntry* table = translated_table;
+#endif
   std::set<std::string> may_interpret;
   for (int i = 2; i < argc; ++i) may_interpret.insert(argv[i]);
   guest::Memory memory;
-  MixedExecutor executor(memory, may_interpret);
+  MixedExecutor executor(memory, may_interpret, table);
   const int status = guest::run_all(executor, memory, argv[1], {});
   const bd::runtime::Statistics& t = executor.total();
   std::printf("interpreter: entered at %zu distinct addresses, %llu instructions interpreted\n",

@@ -22,6 +22,7 @@
 #include "rom/file_format.h"
 #include "rom/game_id.h"
 #include "rom/narc.h"
+#include "rom/program_code.h"
 #include "rom/rom.h"
 
 // In boot.cpp.
@@ -480,50 +481,9 @@ int cmd_extract(const std::filesystem::path& path, std::filesystem::path out_dir
   }
 
   if (with_code) {
-    auto arm9 = rom.arm9_decompressed();
-    if (!arm9) return report(arm9.error());
-    if (auto s = write_file(out_dir / "code" / "arm9.bin", arm9.value()); !s)
-      return report(s.error());
-    if (auto s = write_file(out_dir / "code" / "arm7.bin", rom.arm7()); !s)
-      return report(s.error());
-    written += 2;
-    for (const auto& overlay : rom.arm9_overlays()) {
-      auto image = rom.load_overlay(overlay);
-      if (!image) return report(image.error());
-      const std::vector<std::uint8_t>& data = image.value().data;
-      char name[32];
-      std::snprintf(name, sizeof name, "overlay9_%04u.bin", static_cast<unsigned>(overlay.id));
-      if (auto s = write_file(out_dir / "code" / name, data); !s) return report(s.error());
-      ++written;
-    }
-
-    // Where each program file belongs in memory. The code translator needs
-    // this: the files themselves do not say where they load or where their
-    // entry points are.
-    const auto& h = rom.header();
-    std::string manifest = "# Bright Dawn code manifest, version 1\n";
-    char line[200];
-    std::snprintf(line, sizeof line, "arm9 load=0x%08" PRIx32 " entry=0x%08" PRIx32 " file=arm9.bin\n",
-                  h.arm9.ram_address, h.arm9.entry_address);
-    manifest += line;
-    std::snprintf(line, sizeof line, "arm7 load=0x%08" PRIx32 " entry=0x%08" PRIx32 " file=arm7.bin\n",
-                  h.arm7.ram_address, h.arm7.entry_address);
-    manifest += line;
-    for (const auto& overlay : rom.arm9_overlays()) {
-      std::snprintf(line, sizeof line,
-                    "overlay9 id=%u load=0x%08" PRIx32 " size=%u bss=%u init_start=0x%08" PRIx32
-                    " init_end=0x%08" PRIx32 " file=overlay9_%04u.bin\n",
-                    static_cast<unsigned>(overlay.id), overlay.ram_address,
-                    static_cast<unsigned>(overlay.ram_size), static_cast<unsigned>(overlay.bss_size),
-                    overlay.static_init_start, overlay.static_init_end,
-                    static_cast<unsigned>(overlay.id));
-      manifest += line;
-    }
-    const ByteSpan manifest_bytes(reinterpret_cast<const std::uint8_t*>(manifest.data()),
-                                  manifest.size());
-    if (auto s = write_file(out_dir / "code" / "manifest.txt", manifest_bytes); !s)
-      return report(s.error());
-    ++written;
+    auto code = bd::rom::write_program_code(rom, out_dir / "code");
+    if (!code) return report(code.error());
+    written += code.value();
   }
 
   std::printf("Wrote %zu file(s) to %s\n", written, out_dir.string().c_str());
