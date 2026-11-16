@@ -103,6 +103,11 @@ class Emitter:
         return f"ds::{via}(c, {hexc(target | (1 if thumb else 0))})"
 
     @staticmethod
+    def poll_next(i: Insn) -> str:
+        """Takes an interrupt, if one is due, before the instruction after `i`."""
+        return f"if (ds::poll(c, {hexc(i.end | (1 if i.thumb else 0))})) return;"
+
+    @staticmethod
     def linked(ret: int, call: str) -> list[str]:
         """Statements for a call that is expected to return to `ret`."""
         r = hexc(ret)
@@ -140,6 +145,9 @@ class Emitter:
                 ret = i.end | (1 if i.thumb else 0)
                 return self.linked(ret, self.call_expr(target, tthumb))
             if target in self.fn.insns and tthumb == i.thumb and (target, tthumb) not in self.fn.tails:
+                if target <= i.addr:  # A loop: interrupts are taken before it goes round again.
+                    return [f"if (ds::poll(c, {hexc(target | (1 if i.thumb else 0))})) return;",
+                            f"goto L_{target:08x};"]
                 return [f"goto L_{target:08x};"]
             return [f"{self.call_expr(target, tthumb, link=False)}; return; /* tail call */"]
         if k == "bx":
@@ -191,6 +199,8 @@ class Emitter:
             mask = sum(0xFF << (8 * n) for n in range(4) if f["mask"] & (1 << n))
             if f["spsr"]:
                 return [f"c.spsr = (c.spsr & ~{hexc(mask)}) | ({v} & {hexc(mask)});"]
+            if mask & 0xFF:  # The interrupt mask may have been cleared.
+                return [f"ds::set_cpsr(c, {v}, {hexc(mask)});", self.poll_next(i)]
             return [f"ds::set_cpsr(c, {v}, {hexc(mask)});"]
         if k == "swp":
             rn, rm = self.reg(f["rn"], i), self.reg(f["rm"], i)
@@ -204,12 +214,12 @@ class Emitter:
             # program's r14 is untouched, and the usual wrapper ("swi n; bx lr") relies on that.
             # The address of the next instruction goes along: what the BIOS call does may
             # depend on it (waiting for an interrupt, which then returns there).
-            return [f"ds::swi(c, {n}u, {hexc(i.end | (1 if i.thumb else 0))}); /* BIOS call */"]
+            return [f"if (ds::swi(c, {n}u, {hexc(i.end | (1 if i.thumb else 0))})) return; /* BIOS call */"]
         if k == "cop":
             op = f["op"]
             if op == "mcr":
                 return [f"ds::cp_write(c, {f['cp']}, {f['opc1']}, {f['crn']}, {f['crm']}, {f['opc2']}, "
-                        f"{self.reg(f['rd'], i, 4)});"]
+                        f"{self.reg(f['rd'], i, 4)});", self.poll_next(i)]
             if op == "mrc":
                 read = f"ds::cp_read(c, {f['cp']}, {f['opc1']}, {f['crn']}, {f['crm']}, {f['opc2']})"
                 if f["rd"] == 15:
@@ -410,13 +420,27 @@ def lift_function(fn, names: dict, image=None) -> str:
              + (f" - note: {fn.bad}" if fn.bad else ""),
              f"void {names[(fn.addr, fn.thumb)]}(Cpu& c) {{"]
     prev = None
-    for a in sorted(fn.insns):
+    addresses = sorted(fn.insns)
+    # How many instructions run from each place that code is entered at (the
+    # start and every label) up to the next one: added to c.executed there,
+    # so that console time passes with the translated code. Instructions
+    # skipped by a branch out of the middle are counted all the same.
+    counts = {}
+    start = None
+    for a in addresses:
+        if start is None or a in fn.labels:
+            start = a
+            counts[start] = 0
+        counts[start] += 1
+    for a in addresses:
         i = fn.insns[a]
         if prev is not None and prev.end != a and not ends_flow(prev):
             lines.append(f"    ds::unhandled(c, {hexc(prev.end)}, \"code continues into data\"); return;")
         prev = i
         if a in fn.labels:
             lines.append(f"L_{a:08x}:")
+        if a in counts:
+            lines.append(f"    c.executed += {counts[a]};")
         raw = f"{i.raw:08x}" if i.size == 4 else f"{i.raw:04x}"
         lines.append(f"    /* {a:08x} {raw:>8}  {i.text()} */")
         stmts = e.insn(i)
@@ -464,6 +488,8 @@ struct Cpu {
     Frame frames[kMaxFrames];
     u32 depth = 0;                   // may exceed kMaxFrames; the excess is not recorded
     u32 unwind = 0;                  // call sites that must still give up (see leave)
+    u32 irq = 0;                     // set by the platform layer while an interrupt is requested
+    u32 executed = 0;                // instructions run since the platform layer last counted them
 
     u8  rd8(u32 a);
     u16 rd16(u32 a);
@@ -601,10 +627,23 @@ inline bool leave(Cpu& c, u32 ret) {
     return leave_slow(c, ret);
 }
 
+// Interrupts are taken where the translated code polls for them: before each
+// backward branch (every loop), after writes to the system coprocessor (which
+// can wait for an interrupt) and after changes of the status register (which
+// can unmask one). `next` is the instruction about to run, bit 0 set = Thumb.
+// The platform layer runs the handler, which returns to `next`. poll returns
+// true when the calling function must return at once, as leave does.
+bool interrupt(Cpu& c, u32 next);                            // provided by the platform layer
+inline bool poll(Cpu& c, u32 next) {
+    return c.irq != 0 && (c.cpsr_ctrl & 0x80u) == 0 && interrupt(c, next);
+}
+
 // provided by the platform layer
 void call(Cpu& c, u32 address);                              // a call; bit 0 set = Thumb code
 void jump(Cpu& c, u32 address);                              // a jump whose target is not known in advance
-void swi(Cpu& c, u32 number, u32 return_address);          // return_address: the next instruction, bit 0 set = Thumb
+// return_address: the next instruction, bit 0 set = Thumb. Returns true when the
+// calling function must return at once, as leave does.
+bool swi(Cpu& c, u32 number, u32 return_address);
 void cp_write(Cpu& c, int cp, int opc1, int crn, int crm, int opc2, u32 value);
 u32 cp_read(Cpu& c, int cp, int opc1, int crn, int crm, int opc2);
 void unhandled(Cpu& c, u32 address, const char* what);

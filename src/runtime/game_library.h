@@ -26,7 +26,7 @@
 // Changes whenever what passes between the program and the library changes:
 // this header, ds_cpu.h, translated_table.h. A library of another interface
 // is not used.
-#define BD_GAME_LIBRARY_INTERFACE 1
+#define BD_GAME_LIBRARY_INTERFACE 2
 
 // The name of the function the library exports.
 #define BD_GAME_LIBRARY_ENTRY "bd_game_library"
@@ -46,10 +46,11 @@ struct BdHostFunctions {
   bool (*leave_slow)(ds::Cpu* cpu, ds::u32 return_address);
   void (*call)(ds::Cpu* cpu, ds::u32 address);
   void (*jump)(ds::Cpu* cpu, ds::u32 address);
-  void (*swi)(ds::Cpu* cpu, ds::u32 number, ds::u32 return_address);
+  bool (*swi)(ds::Cpu* cpu, ds::u32 number, ds::u32 return_address);
   void (*cp_write)(ds::Cpu* cpu, int cp, int opc1, int crn, int crm, int opc2, ds::u32 value);
   ds::u32 (*cp_read)(ds::Cpu* cpu, int cp, int opc1, int crn, int crm, int opc2);
   void (*unhandled)(ds::Cpu* cpu, ds::u32 address, const char* what);
+  bool (*interrupt)(ds::Cpu* cpu, ds::u32 next);
 };
 
 // What the library answers. The sizes and the offset let the program check

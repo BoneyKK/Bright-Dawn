@@ -86,10 +86,24 @@ is no translation, is described in FALLBACK_INTERPRETER.md. In short:
   only while the bytes it was made from are in guest memory, so it follows
   whatever the game's own loader does without knowing anything about it.
 
-Still to be built at this boundary:
-
 - **Interrupts.** Translated code cannot be interrupted at an arbitrary
-  instruction. The runtime will deliver interrupts at defined points.
+  instruction: it does not keep the program counter. It polls instead, where
+  the translator knows the address of the next instruction and the whole
+  state is in the processor model: before each backward branch (every loop),
+  after writes to the system coprocessor (which can wait for an interrupt)
+  and to the status register (which can unmask one). The runtime also takes
+  one before a call or jump it resolves, and after a BIOS call. The poll is
+  one load and compare (`ds::poll`) while nothing is requested. Taking it,
+  the runtime enters IRQ mode and runs the handler, interpreted or
+  translated, as if a call site waited for its return to the interrupted
+  instruction; a handler that switches threads goes elsewhere, and the
+  waiting native frames are given up as for any other jump out.
+- **Time.** Translated code counts the instructions it runs (`c.executed`,
+  added at each place code is entered: the start of a function and each
+  branch target), and the runtime turns them into console time at its next
+  request: a memory access, a call it resolves, a BIOS call. A BIOS call that
+  runs as code (the ones that wait for an interrupt) is run until it returns,
+  from translated code as from interpreted.
 
 ## How the three headline features attach
 
