@@ -54,6 +54,7 @@ void print_usage(std::FILE* out) {
       "      --out DIR                    Destination (default: per-user data directory)\n"
       "      --code                       Also write decompressed program code and a\n"
       "                                   manifest of where each file loads\n"
+      "      --code-only                  Only the program code and its manifest\n"
       "  bdtool boot <rom or code directory> [--instructions N] [--frames F]\n"
       "                                   Run the game's start-up code in the interpreter\n"
       "                                   and report what it asks of the machine (a\n"
@@ -432,7 +433,7 @@ bd::Status write_file(const std::filesystem::path& path, ByteSpan data) {
   return {};
 }
 
-int cmd_extract(const std::filesystem::path& path, std::filesystem::path out_dir, bool with_code,
+int cmd_extract(const std::filesystem::path& path, std::filesystem::path out_dir, bool with_code, bool code_only,
                 const std::vector<std::string>& wanted) {
   auto opened = Rom::open(path);
   if (!opened) return report(opened.error());
@@ -450,7 +451,9 @@ int cmd_extract(const std::filesystem::path& path, std::filesystem::path out_dir
   }
 
   std::vector<const bd::rom::NamedFile*> selection;
-  if (wanted.empty()) {
+  if (code_only) {
+    if (!wanted.empty()) return report({bd::ErrorCode::InvalidArgument, "--code-only takes no file names"});
+  } else if (wanted.empty()) {
     for (const auto& file : rom.fs().named_files()) selection.push_back(&file);
   } else {
     for (const std::string& name : wanted) {
@@ -560,7 +563,7 @@ int main(int argc, char** argv) {
   }
 
   std::filesystem::path out_dir, wireframe, picture, screens;
-  bool with_code = false;
+  bool with_code = false, code_only = false;
   std::size_t top = 20;
   // Ten seconds of console time, which a busy program fills with a few
   // hundred million instructions.
@@ -573,6 +576,9 @@ int main(int argc, char** argv) {
       out_dir = args[i];
     } else if (arg == "--code" && command == "extract") {
       with_code = true;
+    } else if (arg == "--code-only" && command == "extract") {
+      with_code = true;
+      code_only = true;
     } else if (arg == "--top" && command == "survey") {
       if (++i == args.size()) return usage_error("--top needs a number");
       char* end = nullptr;
@@ -622,6 +628,6 @@ int main(int argc, char** argv) {
   if (command == "info") return cmd_info(rom_path);
   if (command == "list") return cmd_list(rom_path);
   if (command == "survey") return cmd_survey(rom_path, top);
-  return cmd_extract(rom_path, out_dir, with_code,
+  return cmd_extract(rom_path, out_dir, with_code, code_only,
                      std::vector<std::string>(positional.begin() + 1, positional.end()));
 }
