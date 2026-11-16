@@ -35,6 +35,9 @@ class FrameClock {
   // A console frame was run: one step taken out of the account. Taking one
   // that is not there leaves the account empty.
   void step_taken();
+  // Starts again from `now`, the account empty, as after a pause: the time
+  // the game was paused is not owed to it.
+  void restart(std::uint64_t now);
 
   // Whether a whole step is in the account: time to run a console frame.
   bool step_due() const { return account_ >= kStep; }

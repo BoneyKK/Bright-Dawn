@@ -72,6 +72,7 @@ add_library(bd_platform STATIC
   src/platform/crash_log.cpp
   src/platform/frame_clock.cpp
   src/platform/paths.cpp
+  src/platform/settings.cpp
 )
 target_link_libraries(bd_platform PUBLIC bd_core)
 
@@ -147,6 +148,10 @@ add_library(bd_gfx STATIC src/gfx/screen_image.cpp src/gfx/screen_layout.cpp)
 target_link_libraries(bd_gfx PUBLIC bd_core)
 add_library(bd_input STATIC src/input/bindings.cpp)
 target_link_libraries(bd_input PUBLIC bd_core)
+# What the window program's own screens show and keep, without the screens:
+# the settings and their descriptions, and following the game builder.
+add_library(bd_ui STATIC src/ui/build_progress.cpp src/ui/game_settings.cpp)
+target_link_libraries(bd_ui PUBLIC bd_platform bd_gfx)
 
 add_executable(bdtool tools/bdtool/main.cpp tools/bdtool/boot.cpp)
 target_link_libraries(bdtool PRIVATE bd_rom bd_platform bd_nds)
@@ -174,9 +179,41 @@ if(BD_BUILD_APP)
     FetchContent_MakeAvailable(SDL3)
     set(BD_SDL_TARGET SDL3::SDL3-static)
   endif()
+  # Dear ImGui (MIT licence), which draws the program's own screens: the
+  # launcher, the settings book and the game builder's page. Third-party code,
+  # compiled as it comes, without this project's warning flags.
+  add_library(bd_imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_sdl3.cpp
+    third_party/imgui/backends/imgui_impl_sdlrenderer3.cpp)
+  target_include_directories(bd_imgui PUBLIC third_party/imgui)
+  target_compile_features(bd_imgui PUBLIC cxx_std_20)
+  target_link_libraries(bd_imgui PUBLIC ${BD_SDL_TARGET})
+  if(MSVC)
+    target_compile_options(bd_imgui PRIVATE /w)
+  else()
+    target_compile_options(bd_imgui PRIVATE -w)
+  endif()
+
+  # The window program, but for main.cpp, which bright-dawn and
+  # bright-dawn-game each compile for themselves.
+  add_library(bd_app STATIC
+    src/app/app.cpp
+    src/app/build_tools.cpp
+    src/app/child_process.cpp
+    src/app/game_screen.cpp
+    src/app/gui.cpp
+    src/app/launcher.cpp
+    src/app/settings_book.cpp)
+  target_include_directories(bd_app PUBLIC src)
+  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui ${BD_SDL_TARGET})
+
   # WIN32: on Windows a window program, which opens no console.
   add_executable(bright-dawn WIN32 src/app/main.cpp)
-  target_link_libraries(bright-dawn PRIVATE bd_nds bd_gfx bd_input bd_platform ${BD_SDL_TARGET})
+  target_link_libraries(bright-dawn PRIVATE bd_app)
   set_target_properties(bright-dawn PROPERTIES BD_SYSTEM_LIBC ON)
 
   # The game with its code translated to C++, from the user's own ROM by
@@ -204,22 +241,31 @@ if(BD_BUILD_APP)
     endif()
     add_executable(bright-dawn-game WIN32 src/app/main.cpp)
     target_compile_definitions(bright-dawn-game PRIVATE BD_TRANSLATED_GAME=1)
-    target_link_libraries(bright-dawn-game PRIVATE bd_nds bd_gfx bd_input bd_platform bd_translated_game
-                          ${BD_SDL_TARGET})
+    target_link_libraries(bright-dawn-game PRIVATE bd_app bd_translated_game)
     set_target_properties(bright-dawn-game PROPERTIES BD_SYSTEM_LIBC ON)
   endif()
 endif()
 
-# What a player gets (cmake --install): the game's window and the licences
-# that come with it, nothing else. The developer tools and documents stay in
-# the build and the repository. The GPL is this project's; SkyEmu's MIT
-# licence must accompany copies of its code, which the program contains; SDL's
-# zlib licence does not ask for it, but it is shipped too.
+# What a player gets (cmake --install): the game's window, the licences that
+# come with it, and what building the game from their ROM needs. The
+# developer tools, tests and documents stay in the repository. The GPL is
+# this project's; the MIT licences of SkyEmu and Dear ImGui must accompany
+# copies of their code, which the program contains; SDL's zlib licence does
+# not ask for it, but it is shipped too.
 if(TARGET bright-dawn)
   install(TARGETS bright-dawn RUNTIME DESTINATION .)
+  install(FILES third_party/imgui/LICENSE.txt DESTINATION licenses RENAME DearImGui.txt)
   if(NOT BD_SYSTEM_SDL)
     install(FILES ${sdl3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL3.txt)
   endif()
+  # The builder: the program's launcher builds the game on the player's
+  # computer from these sources (tools/gamebuilder/build_game.py), the
+  # game's own code translated from their ROM there. Nothing of the game
+  # is in it.
+  install(FILES CMakeLists.txt LICENSE DESTINATION builder)
+  install(DIRECTORY src third_party DESTINATION builder)
+  install(DIRECTORY tools/bdtool tools/gamebuilder tools/translator DESTINATION builder/tools
+          PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
 endif()
 install(FILES LICENSE DESTINATION . RENAME LICENSE.txt)
 install(FILES third_party/skyemu/LICENSE DESTINATION licenses RENAME SkyEmu.txt)

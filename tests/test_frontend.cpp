@@ -308,3 +308,16 @@ TEST(frame_clock_shows_a_frame_after_four_unshown_in_a_row) {
   CHECK(clock.frame_done(now += 25072670));
   CHECK(clock.drops() == 0);
 }
+
+TEST(frame_clock_owes_nothing_for_a_pause) {
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  clock.tick(8357556);  // Half a step,
+  clock.restart(5'000'000'000ull);  // then a pause of five seconds.
+  CHECK(!clock.step_due() && clock.alpha() == 0 && clock.until_due() == 16715114);
+  CHECK(clock.drops() == 0);
+  clock.tick(5'000'000'000ull + 16715114);
+  CHECK(clock.step_due());
+  // A frame after the pause is shown.
+  CHECK(clock.frame_done(5'000'000'000ull + 16715114 + 1));
+}

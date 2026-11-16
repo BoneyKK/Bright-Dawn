@@ -4,8 +4,10 @@ translated to C++ and compiled for this computer.
 
 usage: build_game.py <rom> [--work DIR] [--jobs N] [--config NAME]
                      [--generator NAME] [--sdl-source DIR] [--cmake-arg ARG ...]
+                     [--stop-on-stdin-eof]
 
-Steps, each reported with the time it took:
+Steps, each announced as "== N/5. <name>" and reported with the time it
+took:
 
   1. Build bdtool from this source tree.
   2. Check the ROM (bdtool validate).
@@ -16,7 +18,9 @@ Steps, each reported with the time it took:
   5. Build bright-dawn-game, the window with the translated code linked in.
 
 Everything is written to the work directory: by default "game-build" in
-Bright Dawn's per-user data directory (the one bdtool uses). The extracted
+Bright Dawn's per-user data directory (the one bdtool uses), with a record
+of the whole build, everything printed by it and by the programs it runs, in
+build.log there. The extracted
 and translated code is the game's own, derived from your ROM: it stays on
 your computer. The work directory may not be inside this source tree, so that
 none of it can be committed by mistake.
@@ -24,14 +28,21 @@ none of it can be committed by mistake.
 Needs Python 3.10 or later, CMake 3.20 or later and a C++20 compiler, as for
 building the rest of the project, and SDL 3, which the build downloads unless
 --sdl-source names an unpacked copy of release 3.2.26.
+
+--stop-on-stdin-eof is for a program that runs the builder and reads its
+output (Bright Dawn's own builder screen): the build stops, with the
+programs it started, when the standard input is closed, so that it stops
+when that program asks it to or ends.
 """
 import argparse
 import filecmp
 import os
 import platform
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -67,11 +78,109 @@ def inside(path: Path, folder: Path) -> bool:
         return False
 
 
+class Output:
+    """What the build prints: to the standard output and to build.log."""
+
+    def __init__(self) -> None:
+        self.log = None
+
+    def open_log(self, path: Path) -> None:
+        self.log = open(path, "w", encoding="utf-8", errors="replace", newline="\n")
+
+    def say(self, text: str = "", error: bool = False) -> None:
+        stream = sys.stderr if error else sys.stdout
+        stream.write(text + "\n")
+        stream.flush()
+        if self.log is not None:
+            self.log.write(text + "\n")
+            self.log.flush()
+
+
+OUT = Output()
+
+
+class Stopper:
+    """With --stop-on-stdin-eof: when the standard input ends, the program
+    running now is stopped with every program it started, and so is the
+    build."""
+
+    def __init__(self) -> None:
+        self.enabled = False
+        self.stopped = threading.Event()
+        self.lock = threading.Lock()
+        self.current = None
+
+    def watch(self) -> None:
+        self.enabled = True
+
+        def wait_for_end() -> None:
+            # The file descriptor itself, not sys.stdin: a thread blocked in
+            # sys.stdin's read holds its lock, and Python aborts if it is held
+            # when the program ends.
+            try:
+                while os.read(sys.stdin.fileno(), 4096):
+                    pass
+            except (OSError, ValueError):
+                pass
+            self.stopped.set()
+            with self.lock:
+                if self.current is not None:
+                    stop_tree(self.current)
+
+        threading.Thread(target=wait_for_end, daemon=True).start()
+
+    def check(self) -> None:
+        if self.stopped.is_set():
+            raise BuildError("the build was stopped")
+
+
+STOP = Stopper()
+
+
+def stop_tree(process: subprocess.Popen) -> None:
+    """Ends a program and every program it started."""
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def run(command: list, what: str) -> None:
-    print("  $ " + " ".join(str(c) for c in command), flush=True)
-    result = subprocess.run([str(c) for c in command])
-    if result.returncode != 0:
-        raise BuildError(f"{what} failed (exit status {result.returncode})")
+    STOP.check()
+    OUT.say("  $ " + " ".join(str(c) for c in command))
+    options = {}
+    if STOP.enabled:
+        # A group of its own, so that it can be stopped with what it starts.
+        if os.name == "nt":
+            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            options["start_new_session"] = True
+    process = subprocess.Popen([str(c) for c in command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               stdin=subprocess.DEVNULL, **options)
+    with STOP.lock:
+        STOP.current = process
+    if STOP.stopped.is_set():
+        stop_tree(process)
+    try:
+        for raw in process.stdout:
+            OUT.say(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+        status = process.wait()
+    finally:
+        with STOP.lock:
+            STOP.current = None
+    STOP.check()
+    if status != 0:
+        raise BuildError(f"{what} failed (exit status {status})")
 
 
 def find_program(build_dir: Path, name: str, config: str) -> Path:
@@ -130,20 +239,24 @@ def main(argv: list) -> int:
     parser.add_argument("--generator", help="CMake generator, if not the default")
     parser.add_argument("--sdl-source", help="an unpacked SDL 3.2.26 source tree, instead of downloading it")
     parser.add_argument("--cmake-arg", action="append", default=[], help="passed to both CMake configurations")
+    parser.add_argument("--stop-on-stdin-eof", action="store_true",
+                        help="stop the build when the standard input is closed")
     args = parser.parse_args(argv)
+    if args.stop_on_stdin_eof:
+        STOP.watch()
 
     if sys.version_info < (3, 10):
-        print("error: Python 3.10 or later is needed", file=sys.stderr)
+        OUT.say("error: Python 3.10 or later is needed", error=True)
         return 1
     if args.jobs < 1:
-        print("error: --jobs must be 1 or more", file=sys.stderr)
+        OUT.say("error: --jobs must be 1 or more", error=True)
         return 1
     if shutil.which("cmake") is None:
-        print("error: CMake was not found; install CMake 3.20 or later", file=sys.stderr)
+        OUT.say("error: CMake was not found; install CMake 3.20 or later", error=True)
         return 1
     rom = args.rom.resolve()
     if not rom.is_file():
-        print(f"error: {rom} is not a file", file=sys.stderr)
+        OUT.say(f"error: {rom} is not a file", error=True)
         return 1
 
     try:
@@ -152,13 +265,21 @@ def main(argv: list) -> int:
             raise BuildError(f"the work directory {work} overlaps the source tree {REPO}: the game's code "
                              "must not be written where it could be committed")
         work.mkdir(parents=True, exist_ok=True)
-        print(f"Work directory: {work}")
+        OUT.open_log(work / "build.log")
+        OUT.say(f"Bright Dawn game builder, {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        OUT.say(f"Python {platform.python_version()} on {platform.platform()}")
+        OUT.say(f"Source: {REPO}")
+        OUT.say(f"ROM: {rom}")
+        OUT.say(f"Work directory: {work}")
         steps = []
+        total = 5
 
         def step(name: str, action) -> None:
-            print(f"\n== {len(steps) + 1}. {name}", flush=True)
+            STOP.check()
+            OUT.say(f"\n== {len(steps) + 1}/{total}. {name}")
             began = time.monotonic()
             action()
+            STOP.check()
             steps.append((name, time.monotonic() - began))
 
         tools = work / "tools"
@@ -189,7 +310,7 @@ def main(argv: list) -> int:
                  "--jobs", args.jobs], "translating")
             written, removed, unchanged = sync_tree(fresh, translated)
             shutil.rmtree(fresh)
-            print(f"  {written} file(s) written, {removed} removed, {unchanged} unchanged")
+            OUT.say(f"  {written} file(s) written, {removed} removed, {unchanged} unchanged")
 
         game = work / "game"
         result = []
@@ -205,15 +326,21 @@ def main(argv: list) -> int:
         step("Extracting the program code", extract)
         step("Translating it to C++", translate)
         step("Building the game", build_game)
+        assert len(steps) == total
     except BuildError as error:
-        print(f"\nerror: {error}", file=sys.stderr)
+        OUT.say("")
+        OUT.say(f"error: {error}", error=True)
         return 1
+    except KeyboardInterrupt:
+        OUT.say("")
+        OUT.say("error: the build was stopped", error=True)
+        return 130
 
-    print("\nDone:")
+    OUT.say("\nDone:")
     for name, seconds in steps:
-        print(f"  {name}: {seconds:.0f} s")
-    print(f"\nThe game: {result[0]}")
-    print(f"Run it with your ROM: \"{result[0]}\" \"{rom}\"")
+        OUT.say(f"  {name}: {seconds:.0f} s")
+    OUT.say(f"\nThe game: {result[0]}")
+    OUT.say(f"Run it with your ROM: \"{result[0]}\" \"{rom}\"")
     return 0
 
 
