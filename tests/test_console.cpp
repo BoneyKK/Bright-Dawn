@@ -429,6 +429,14 @@ TEST(console_stops_at_an_undefined_instruction) {
   CHECK(result.reason == bd::nds::StopReason::Unhandled);
   CHECK(result.address == 0x02000004);
   CHECK(result.detail.find("undefined instruction") != std::string::npos);
+  // The processor is left as it was before the instruction: in the mode the
+  // program runs in, not the one the exception would have entered, with the
+  // earlier instruction's result, and the undefined mode's registers as
+  // they were.
+  const ds::Cpu& cpu = console.machine().cpu();
+  CHECK((cpu.cpsr_ctrl & 0x1Fu) == 0x1Fu);
+  CHECK(cpu.r[0] == 7);
+  CHECK(cpu.bank_r14[5] == 0 && cpu.bank_spsr[5] == 0);
 }
 
 namespace {

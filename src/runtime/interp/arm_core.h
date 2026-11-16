@@ -68,6 +68,17 @@ void bd_arm_core_get_state(bd_arm_core* core, bd_arm_state* state);
  * for the program counter arriving there. */
 void bd_arm_core_step(bd_arm_core* core);
 
+/* What get_state would give as r[15] and cpsr, without the rest. Cheap: for
+ * calling after every step. */
+void bd_arm_core_get_pc_cpsr(const bd_arm_core* core, uint32_t* pc, uint32_t* cpsr);
+
+/* The state as it was before the last step, for a step that took the
+ * undefined-instruction exception: valid only then. Taking that exception
+ * changes only the program counter, the status register, and r14 and the
+ * saved status register of Undefined mode; those are kept when each step
+ * begins, and put back here. */
+void bd_arm_core_get_state_before_undefined(bd_arm_core* core, bd_arm_state* state);
+
 /* Non-zero if the last step changed the flow of control, i.e. the next
  * instruction is not simply the following one. */
 int bd_arm_core_branched(const bd_arm_core* core);

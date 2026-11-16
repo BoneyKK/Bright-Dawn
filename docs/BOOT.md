@@ -493,9 +493,12 @@ title screen needs; for sound, the sequence player. Interrupts in
 translated code before translated game code is run.
 
 Speed, for orientation only: on the development machine a release build
-runs these 600 frames in about 35 seconds, about 17 frames a second, with
-or without the window: about 9.6 million instructions a second all told.
-The console's rate needs about 34 million. A profile of 60 frames puts
-nearly 40% of the time in copying the processor's state out of the
-interpreter after every instruction, and 16% in memory reads, part of
-them the instruction read twice.
+ran these 600 frames in about 35 seconds, with or without the window. A
+profile of 60 frames put nearly 40% of the time in copying the processor's
+state out of the interpreter after every instruction. It is now read only
+when a branch, an exception or the end of a run needs it, and the 600
+frames take about 29 seconds, about 21 frames a second (11.6 million
+instructions a second all told), with the same screens and the same
+report. The console's rate needs about 34 million. 16% of the time went
+to memory reads, part of them each instruction read twice: once by the
+interpreter, once to look for a BIOS call.
