@@ -65,6 +65,9 @@ class GameScreen {
   void remove_gamepad(SDL_JoystickID id);
   void read_input();
   void upload_screens();
+  // The screens, enlarged to a whole multiple for SharpSmoothEdges, made
+  // again when the multiple changes or the screens do.
+  void prepare_enlarged(int factor);
   void draw();
   void capture();
   void count_rates(bool new_frame);
@@ -79,6 +82,12 @@ class GameScreen {
   gfx::ScreenLayout screens_;
   SDL_Texture* top_ = nullptr;
   SDL_Texture* bottom_ = nullptr;
+  gfx::ScreenFilter filter_ = gfx::ScreenFilter::SharpSmoothEdges;
+  std::array<SDL_Texture*, 2> enlarged_{};  // Render targets: top, bottom.
+  int enlarged_factor_ = 0;
+  bool enlarged_stale_ = true;
+  bool enlarging_failed_ = false;
+  int largest_texture_ = 4096;
   std::vector<SDL_Gamepad*> gamepads_;
   std::vector<Key> keys_;
   std::vector<PadButton> pad_buttons_;

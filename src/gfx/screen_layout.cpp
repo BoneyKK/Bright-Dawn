@@ -51,4 +51,16 @@ std::optional<Point> touch_point(const ScreenLayout& layout, double x, double y)
   return Point{std::clamp(across, 0, kScreenWidth - 1), std::clamp(down, 0, kScreenHeight - 1)};
 }
 
+int prescale_factor(double scale, int largest_texture) {
+  int factor = 1;
+  if (scale > 1) {
+    // A hair below a whole number counts as it: the layout's arithmetic is
+    // in doubles.
+    factor = static_cast<int>(std::ceil(scale - 1e-6));
+  }
+  const int most = largest_texture / kScreenWidth;
+  if (factor > most) factor = most;
+  return factor < 1 ? 1 : factor;
+}
+
 }  // namespace bd::gfx

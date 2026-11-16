@@ -321,3 +321,17 @@ TEST(frame_clock_owes_nothing_for_a_pause) {
   // A frame after the pause is shown.
   CHECK(clock.frame_done(5'000'000'000ull + 16715114 + 1));
 }
+
+TEST(screens_are_enlarged_to_the_whole_multiple_at_or_above_the_scale) {
+  using bd::gfx::prescale_factor;
+  // Smoothing then only shrinks, by less than half.
+  CHECK(prescale_factor(2.0, 8192) == 2);
+  CHECK(prescale_factor(2.0000001, 8192) == 2);  // The layout's arithmetic, a hair over.
+  CHECK(prescale_factor(1.9999999, 8192) == 2);
+  CHECK(prescale_factor(2.3, 8192) == 3);
+  CHECK(prescale_factor(4.97, 8192) == 5);
+  CHECK(prescale_factor(1.0, 8192) == 1 && prescale_factor(0.5, 8192) == 1 && prescale_factor(0, 8192) == 1);
+  // No larger than a texture may be: 2048 / 256 = 8.
+  CHECK(prescale_factor(11.2, 2048) == 8);
+  CHECK(prescale_factor(3.5, 100) == 1);
+}

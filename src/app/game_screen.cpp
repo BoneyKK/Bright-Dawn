@@ -20,6 +20,8 @@ GameScreen::~GameScreen() {
   for (SDL_Gamepad* pad : gamepads_) SDL_CloseGamepad(pad);
   if (top_ != nullptr) SDL_DestroyTexture(top_);
   if (bottom_ != nullptr) SDL_DestroyTexture(bottom_);
+  for (SDL_Texture* t : enlarged_)
+    if (t != nullptr) SDL_DestroyTexture(t);
 }
 
 bool GameScreen::open(std::string& error) {
@@ -30,11 +32,11 @@ bool GameScreen::open(std::string& error) {
       error = std::string("Cannot make a texture for the screens: ") + SDL_GetError();
       return false;
     }
-    // The screens are scaled up pixel for pixel, always: they hold the HUD,
-    // menus and text, which smoothing would blur. Smoothing the 3D scenes is
-    // the 3D renderer's to do, before the screens are put together.
-    SDL_SetTextureScaleMode(*texture, SDL_SCALEMODE_NEAREST);
+    // Opaque: drawn over what is there, not blended.
+    SDL_SetTextureBlendMode(*texture, SDL_BLENDMODE_NONE);
   }
+  largest_texture_ = static_cast<int>(SDL_GetNumberProperty(SDL_GetRendererProperties(app_.renderer),
+                                                            SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 4096));
   for (const input::Binding& b : input::default_keyboard_bindings()) {
     const SDL_Scancode code = SDL_GetScancodeFromName(b.control.c_str());
     if (code != SDL_SCANCODE_UNKNOWN) keys_.push_back({code, input::bit(b.button)});
@@ -64,6 +66,14 @@ void GameScreen::apply_settings(bool first) {
   const platform::Settings& s = app_.settings;
   settings_seen_ = s.revision();
   layout_ = ui::layout_options(s);
+  // Screen filtering (gfx::ScreenFilter). The screens' own textures are
+  // scaled nearest, except for Smooth; for SharpSmoothEdges they are first
+  // enlarged into render targets, which are then scaled bilinear. Both
+  // steps are done by the graphics hardware as it draws.
+  filter_ = ui::screen_filter(s);
+  for (SDL_Texture* texture : {top_, bottom_})
+    SDL_SetTextureScaleMode(texture, filter_ == gfx::ScreenFilter::Smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+  enlarged_stale_ = true;
   const bool smooth = ui::smooth_textures(s);
   console_.polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
                                                         : nds::PolygonRenderer::TextureFilter::Nearest);
@@ -94,10 +104,13 @@ void GameScreen::apply_settings(bool first) {
     }
   }
   if (first) {
-    log::writef(log::Level::Info, "game", "screens %s%s, %s, gap %d; 3D textures %s",
+    log::writef(log::Level::Info, "game", "screens %s%s, %s, filter %s, gap %d; 3D textures %s",
                 layout_.arrangement == gfx::Arrangement::Stacked ? "one above the other" : "side by side",
                 layout_.bottom_first ? ", touch screen first" : "",
                 layout_.scaling == gfx::Scaling::WholeNumbers ? "whole-number scaling" : "filling the window",
+                filter_ == gfx::ScreenFilter::SharpSmoothEdges ? "sharp pixels, smooth edges"
+                : filter_ == gfx::ScreenFilter::Smooth         ? "smooth"
+                                                               : "sharp",
                 layout_.gap, smooth ? "smooth" : "sharp");
   }
 }
@@ -193,6 +206,14 @@ bool GameScreen::handle_events() {
       case SDL_EVENT_WINDOW_FOCUS_GAINED:
         log::debug("window", "has the keyboard");
         break;
+      case SDL_EVENT_RENDER_TARGETS_RESET:
+        // The enlarged screens' contents were lost: made again.
+        enlarged_stale_ = true;
+        break;
+      case SDL_EVENT_RENDER_DEVICE_RESET:
+        log::warning("window", "the graphics device was reset");
+        enlarged_stale_ = true;
+        break;
       case SDL_EVENT_WINDOW_RESIZED:
         log::writef(log::Level::Debug, "window", "%d by %d", event.window.data1, event.window.data2);
         break;
@@ -284,12 +305,51 @@ void GameScreen::upload_screens() {
   };
   upload(top_, console_.display().top_screen());
   upload(bottom_, console_.display().bottom_screen());
+  enlarged_stale_ = true;
+}
+
+void GameScreen::prepare_enlarged(int factor) {
+  if (factor != enlarged_factor_) {
+    for (SDL_Texture*& t : enlarged_) {
+      if (t != nullptr) SDL_DestroyTexture(t);
+      t = SDL_CreateTexture(app_.renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET,
+                            gfx::kScreenWidth * factor, gfx::kScreenHeight * factor);
+      if (t == nullptr) {
+        log::warning("window", std::string("cannot make the enlarged screens, so they are shown sharp: ") +
+                                   SDL_GetError());
+        enlarging_failed_ = true;
+        return;
+      }
+      SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
+      SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
+    }
+    enlarged_factor_ = factor;
+    enlarged_stale_ = true;
+    log::writef(log::Level::Debug, "window", "screens enlarged %d times before smoothing", factor);
+  }
+  if (!enlarged_stale_) return;
+  SDL_Texture* const sources[2] = {top_, bottom_};
+  for (int i = 0; i < 2; ++i) {
+    SDL_SetRenderTarget(app_.renderer, enlarged_[static_cast<std::size_t>(i)]);
+    SDL_RenderTexture(app_.renderer, sources[i], nullptr, nullptr);
+  }
+  SDL_SetRenderTarget(app_.renderer, nullptr);
+  enlarged_stale_ = false;
 }
 
 void GameScreen::draw() {
   int width = 0, height = 0;
   SDL_GetCurrentRenderOutputSize(app_.renderer, &width, &height);
   screens_ = gfx::lay_out(width, height, layout_);
+  SDL_Texture* top = top_;
+  SDL_Texture* bottom = bottom_;
+  if (filter_ == gfx::ScreenFilter::SharpSmoothEdges && !enlarging_failed_) {
+    prepare_enlarged(gfx::prescale_factor(screens_.scale, largest_texture_));
+    if (!enlarging_failed_) {
+      top = enlarged_[0];
+      bottom = enlarged_[1];
+    }
+  }
   SDL_SetRenderDrawColor(app_.renderer, 0, 0, 0, 255);
   SDL_RenderClear(app_.renderer);
   const auto place = [&](SDL_Texture* texture, const gfx::Rect& r) {
@@ -297,8 +357,8 @@ void GameScreen::draw() {
                        static_cast<float>(r.h)};
     SDL_RenderTexture(app_.renderer, texture, nullptr, &to);
   };
-  place(top_, screens_.top);
-  place(bottom_, screens_.bottom);
+  place(top, screens_.top);
+  place(bottom, screens_.bottom);
 }
 
 void GameScreen::capture() {
@@ -371,6 +431,8 @@ bool GameScreen::run_menu() {
       }
       if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)
         menu_open_ = false;
+      if (event.type == SDL_EVENT_RENDER_TARGETS_RESET || event.type == SDL_EVENT_RENDER_DEVICE_RESET)
+        enlarged_stale_ = true;
       if (event.type == SDL_EVENT_GAMEPAD_ADDED) add_gamepad(event.gdevice.which);
       if (event.type == SDL_EVENT_GAMEPAD_REMOVED) remove_gamepad(event.gdevice.which);
     }
