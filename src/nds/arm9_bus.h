@@ -51,6 +51,10 @@ class Arm9Bus : public runtime::Bus {
   bool has_code_memory(std::uint32_t address) override { return locate(address, false) != nullptr; }
 
   VideoMemory& video_memory() { return video_; }
+  // The palette memory and the sprite attribute memory, two kibibytes each:
+  // the main display engine's half first. For the display.
+  const std::uint8_t* palette_memory() const { return palette_.data(); }
+  const std::uint8_t* sprite_memory() const { return sprites_.data(); }
 
   // The two small fast memories are placed and switched on by the program
   // through the system coprocessor. Until then nothing is mapped there.

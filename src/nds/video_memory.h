@@ -98,6 +98,8 @@ class VideoMemory {
   // What the 2D display hardware reads. peek() is read() without the
   // counting: zero where no bank is.
   std::uint32_t peek(std::uint32_t address, unsigned size) const;
+  // What the display capture writes: write() without the counting.
+  void poke(std::uint32_t address, unsigned size, std::uint32_t value);
   // A byte of an extended palette, or -1 where no bank is: `slot` 0 to 3 are
   // the backgrounds' and 4 is the sprites', each 8 KiB.
   static constexpr unsigned kExtendedPaletteSlots = 5;

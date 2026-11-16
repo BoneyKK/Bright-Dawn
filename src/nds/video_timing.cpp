@@ -57,7 +57,8 @@ void VideoTiming::watch_horizontal_blank(bool watch) {
 }
 
 Timeline::Time VideoTiming::next_event() const {
-  const bool wanted = (status_ & kHBlankInterrupt) != 0 || (hblank_watched_ && line_ < kVisibleLines);
+  const bool wanted =
+      (status_ & kHBlankInterrupt) != 0 || ((hblank_watched_ || on_line_done) && line_ < kVisibleLines);
   if (wanted && !hblank_done_) return line_start_ + kHBlankStart;
   return line_start_ + kCyclesPerLine;
 }
@@ -67,6 +68,7 @@ void VideoTiming::run_until(Timeline::Time now) {
     if (!hblank_done_ && now >= line_start_ + kHBlankStart) {
       hblank_done_ = true;
       if (status_ & kHBlankInterrupt) interrupts_.request(Interrupts::kHBlank);
+      if (line_ < kVisibleLines && on_line_done) on_line_done(line_);
       if (hblank_watched_ && line_ < kVisibleLines && on_horizontal_blank) on_horizontal_blank();
     }
     if (now < line_start_ + kCyclesPerLine) return;
@@ -78,6 +80,7 @@ void VideoTiming::start_line() {
   line_start_ += kCyclesPerLine;
   line_ = (line_ + 1) % kLines;
   hblank_done_ = false;
+  if (on_line_begins) on_line_begins(line_);
   if (line_ == match_line() && (status_ & kMatchInterrupt)) interrupts_.request(Interrupts::kVCount);
   if (line_ == kVisibleLines) {
     ++frames_;

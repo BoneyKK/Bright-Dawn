@@ -29,9 +29,10 @@ In `src/nds`:
 | Interrupt controller (`interrupts`) | The master switch, enable and request registers. When an enabled source has requested an interrupt, the master switch is on and the processor's mask is clear, the processor takes it before its next instruction. A source can also be a level, whose request stands for as long as its condition does. **Only interpreted code is interrupted so far** |
 | 3D engine, front half (`geometry_engine`) | The queue of commands, both ways into it, the status register and its interrupt; the four matrices with their stacks and every matrix command; the position, vector and box tests; the registers that read the matrices back. "Swap buffers" stops the engine until the vertical blank, what is sent meanwhile queues, and the processor waits when the queue is full. Vertices are made into polygons: through the matrices, by the kind of vertex list (triangles, four-cornered polygons, strips of either), dropped when they face a way that is not drawn, cut to the view volume, placed on the screen by the viewport; each vertex with its colour and texture coordinates, each polygon with its attribute, texture and palette words. A vertex colour is sent as such or worked out from a normal, up to four lights and the material's colours. A frame holds 6144 vertices and 2048 polygons, the count register reads how many there are, and "swap buffers" hands the frame over. Commands take no time. After GBATEK; the arithmetic of lighting, facing, cutting and placing, and which vertices a strip keeps, after NooDS, except that vertices that made no polygon are not kept |
 | 3D engine, back half (`polygon_renderer`) | Drawing a frame's polygons, 256 by 192, a line at a time: the clear plane; each polygon's span between its edges, with the hardware's rules for which edge pixels belong to it; depth by z or by w; colours and texture coordinates taken between the corners with perspective; all seven texture formats, read from the banks handed to the 3D engine, with repeating and mirroring; modulation, decal, toon and highlight; translucent polygons blended after the opaque ones; shadows with their masks; outlines; the alpha test; and when a line is done, edge marking, fog and anti-aliasing. Its registers, of which the control register can be read. After GBATEK's registers and NooDS's renderer, step by step. **Not here:** sorting of translucent polygons, the rear plane as a picture, the hiding of far one-dot polygons, any timing (a frame is drawn whole when asked), and resolutions other than the hardware's. **Nothing shows the drawn frame yet**: there is no 2D display hardware to put it on a screen; `bdtool boot --picture` writes it to a file |
-| 2D display engine (`display_engine`) | One of the two engines that make a screen's picture, a line at a time: backgrounds of tiles (16 or 256 colours, scrolled, mirrored tiles, extended palettes), tiles or bitmaps seen through a matrix, one large bitmap, the 3D picture as background 0; 128 sprites of tiles or bitmaps, in every shape, mirrored or through a matrix, translucent or as a window; the two topmost layers by priority; two windows and the sprites' window; alpha blending, brightening and darkening, with a 3D pixel blended by its own alpha; display off, the picture, or a bank shown directly; the master brightness. After GBATEK's registers and NooDS's 2D engine. **Not here:** mosaic except down the screen on tiles and sprites, the alpha of bitmap sprites, the display fed from main memory. **Not yet part of the console**: tested on its own; nothing calls it during a run |
+| 2D display engine (`display_engine`) | One of the two engines that make a screen's picture, a line at a time: backgrounds of tiles (16 or 256 colours, scrolled, mirrored tiles, extended palettes), tiles or bitmaps seen through a matrix, one large bitmap, the 3D picture as background 0; 128 sprites of tiles or bitmaps, in every shape, mirrored or through a matrix, translucent or as a window; the two topmost layers by priority; two windows and the sprites' window; alpha blending, brightening and darkening, with a 3D pixel blended by its own alpha; display off, the picture, or a bank shown directly; the master brightness. After GBATEK's registers and NooDS's 2D engine. **Not here:** mosaic except down the screen on tiles and sprites, the alpha of bitmap sprites, the display fed from main memory. |
+| Display (`display`) | The two engines driven by the display's timing: each visible line drawn when its dots are done, with the registers as they are then; the 3D picture drawn when a frame begins, from the polygons handed over at the vertical blank before; the display capture (the main engine's picture, the 3D picture alone, a bank, or two blended) into a bank of video memory; which engine is on which screen. Registers after GBATEK, capture after NooDS. **Not here:** the 3D picture is drawn anew only after a swap (the hardware draws it every frame), a capture source fed from main memory, switching the screens off. `bdtool boot --screens` writes both screens as last shown |
 | Time (`timeline`) | Console time in system clock cycles. Each interpreted instruction is taken to use one cycle, which is coarse. When the processor sleeps, time jumps to the next event |
-| Display timing (`video_timing`) | The line counter, the blanking flags, and the vertical blank, horizontal blank and line-match interrupts, at 263 lines of 2,130 cycles a frame. Nothing is drawn |
+| Display timing (`video_timing`) | The line counter, the blanking flags, and the vertical blank, horizontal blank and line-match interrupts, at 263 lines of 2,130 cycles a frame. It tells the display when each line begins and when its dots are done |
 | Divider and square root (`math_unit`) | The hardware's division in its three sizes and its square root, with what the hardware returns for division by zero and for the one division that overflows. Results are there at once |
 | Timers (`timers`) | All four, with the clock dividers, reload, counting another timer's overflows, and the overflow interrupt |
 | Buttons and lid (`keypad`) | The main program's button register, and the X and Y buttons and the lid sensor as the second processor passes them on. Nothing presses a button yet. The register that raises an interrupt on a button combination is not modelled |
@@ -462,23 +463,27 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
   console's output pixel by pixel. The program has textures, alpha
   blending, anti-aliasing and fog switched on (drawing control `0x049B`),
   clears to depth `0x7FFF`, and sets the fog and edge colour tables.
+- Both screens show. After ten seconds the top screen (the second engine,
+  backgrounds only) is the title logo over a sky, and the bottom screen
+  (the main engine) is the 3D landscape. The main engine shows bank D
+  directly (control `0x000E115D`), and the display capture fills bank D
+  with the main engine's picture, 256 by 192, of which the 3D picture is
+  background 0 (capture control `0x00330010`): so the 3D picture reaches
+  the screen by way of video memory, a frame late. In the ten seconds
+  555 3D pictures are drawn and 295 captures made. As with the 3D layer,
+  this was looked at, not compared with a console.
 - It uses the queue's interrupt. With the queue always drained at once,
   the condition it asks to be told of holds whenever it asks, and it takes
   that interrupt 72,000 times in the ten seconds. On a console, where
   commands take time, it would come less often.
 
-What it runs on is still thin. 72 hardware registers it uses have no
-model, most of them the 2D display hardware's; the 3D frame is drawn only
-when the trace tool asks for it and shown nowhere; no sequence is played,
-so there is no music.
+What it runs on is still thin. 20 hardware registers it uses have no
+model; the screens are made but only written to a file by the trace tool;
+no sequence is played, so there is no music.
 
-The program does not show its 3D layer directly. Every frame it turns on
-the display capture, which copies the picture of the main screen into video
-memory bank D, and it sets the main screen to show that bank.
-
-Next: the 2D display hardware (backgrounds, sprites, the 3D layer among
-them, both screens) and the display capture, so that there is a screen to
-look at; for sound, the sequence player. Interrupts in
+Next: a window to show the screens in and the buttons and touch screen
+read from the keyboard, mouse or a controller, so that the title screen can
+be passed; for sound, the sequence player. Interrupts in
 translated code before translated game code is run.
 
 Speed, for orientation only: the interpreter runs about 20 million

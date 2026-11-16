@@ -13,6 +13,7 @@ add_executable(bd_tests
   test_bios.cpp
   test_cartridge.cpp
   test_dma.cpp
+  test_display.cpp
   test_display_engine.cpp
   test_geometry_engine.cpp
   test_geometry_lighting.cpp

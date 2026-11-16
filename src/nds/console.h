@@ -22,6 +22,7 @@
 #include "nds/bios.h"
 #include "nds/cartridge.h"
 #include "nds/dma.h"
+#include "nds/display.h"
 #include "nds/geometry_engine.h"
 #include "nds/polygon_renderer.h"
 #include "nds/interrupts.h"
@@ -100,6 +101,7 @@ class Console : private runtime::System {
   // The 3D hardware's command queue and matrices.
   GeometryEngine& geometry() { return geometry_; }
   PolygonRenderer& polygon_renderer() { return polygon_renderer_; }
+  Display& display() { return display_; }
   Cartridge& cartridge() { return cartridge_; }
   // Puts a cartridge in the slot: a ROM image, which must outlive the console.
   void insert_cartridge(ByteSpan rom) { cartridge_.insert(rom); }
@@ -192,6 +194,7 @@ class Console : private runtime::System {
   Cartridge cartridge_;
   GeometryEngine geometry_;
   PolygonRenderer polygon_renderer_;
+  Display display_;
   MathUnit math_unit_;
   std::map<std::uint32_t, std::uint64_t> software_interrupts_;
   std::uint64_t accounted_instructions_ = 0;

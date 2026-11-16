@@ -176,6 +176,26 @@ TEST(video_timing_interrupts) {
   CHECK(blanks == 1);
 }
 
+TEST(video_timing_tells_when_lines_begin_and_when_their_dots_are_done) {
+  Display d;
+  std::vector<unsigned> begun, done;
+  std::vector<Timeline::Time> done_at;
+  d.video.on_line_begins = [&](unsigned line) { begun.push_back(line); };
+  d.video.on_line_done = [&](unsigned line) {
+    done.push_back(line);
+    done_at.push_back(d.timeline.now());
+  };
+  // A frame and a line. Every line begins (the very first, at time 0, is
+  // not told); the dots of the 192 visible lines are done 1536 cycles in.
+  d.timeline.advance_to(VideoTiming::kCyclesPerFrame + VideoTiming::kCyclesPerLine);
+  REQUIRE(begun.size() == 264 && done.size() == 193);
+  CHECK(begun[0] == 1 && begun[190] == 191 && begun[261] == 262 && begun[262] == 0 && begun[263] == 1);
+  CHECK(done[0] == 0 && done[191] == 191 && done[192] == 0);
+  CHECK(done_at[0] == VideoTiming::kHBlankStart);
+  CHECK(done_at[5] == 5 * VideoTiming::kCyclesPerLine + VideoTiming::kHBlankStart);
+  CHECK(done_at[192] == VideoTiming::kCyclesPerFrame + VideoTiming::kHBlankStart);
+}
+
 TEST(video_timing_status_flags_cannot_be_written) {
   Display d;
   d.io.write(0x04000004, 2, 0xFFFF);
