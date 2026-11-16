@@ -7,33 +7,12 @@
 
 #include "nds/program.h"
 #include "rom_builder.h"
+#include "temp_dir.h"
 #include "test.h"
 
 namespace {
 
-// A directory of its own for one test, removed afterwards.
-class TempDir {
- public:
-  TempDir() {
-    static std::atomic<int> counter{0};
-    path_ = std::filesystem::temp_directory_path() /
-            ("bd_program_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) + "_" +
-             std::to_string(counter++));
-    std::filesystem::create_directories(path_);
-  }
-  ~TempDir() {
-    std::error_code ignored;
-    std::filesystem::remove_all(path_, ignored);
-  }
-  const std::filesystem::path& path() const { return path_; }
-  void write(const std::string& name, const std::string& content) const {
-    std::ofstream out(path_ / name, std::ios::binary);
-    out << content;
-  }
-
- private:
-  std::filesystem::path path_;
-};
+using bd_test::TempDir;
 
 }  // namespace
 

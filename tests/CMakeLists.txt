@@ -32,6 +32,7 @@ add_executable(bd_tests
   test_formats.cpp
   test_frontend.cpp
   test_keypad.cpp
+  test_log.cpp
   test_math_unit.cpp
   test_narc.cpp
   test_rom.cpp
