@@ -480,17 +480,18 @@ The program has wrappers for seventeen BIOS calls: numbers 0x00, 0x03 to
 In the window (`bright-dawn`), the title screen waits for the touch
 screen, not for a button: holding Start over frames 600 to 610 leaves frame
 900 exactly as without it, and a touch over the same frames brings up the
-next page, a menu drawn as a book, by frame 900. Its rows are still empty
-at that frame; whether their text comes later or something it needs is
-missing has not been looked into. The window's picture of frame 600
-matches the trace tool's, every pixel of it.
+next page, a menu drawn as a book, by frame 900, its rows still empty. With
+no save in the save memory the game goes on by itself to its name entry, an
+on-screen keyboard on the touch screen, shown by frame 1500. The window's
+picture of frame 600 matches the trace tool's, every pixel of it.
 
 What it runs on is still thin. 20 hardware registers it uses have no
 model; no sequence is played, so there is no music.
 
-Next: the interpreter's own overhead (below); then what the menu after the
-title screen needs; for sound, the sequence player. Interrupts in
-translated code before translated game code is run.
+Next: playing on from the name entry, by hand and with scripted input,
+to find what the game needs next; the save memory kept in a file; for
+sound, the sequence player. Interrupts in translated code before
+translated game code is run.
 
 Speed, for orientation only: on the development machine a release build
 ran these 600 frames in about 35 seconds, with or without the window. A
