@@ -684,3 +684,58 @@ TEST(console_calls_on_frame_at_each_vertical_blank_and_ends_when_asked) {
   console.on_frame = [&] { return true; };
   CHECK(console.run(10000000, 5).reason == bd::nds::StopReason::FrameLimit);
 }
+
+namespace {
+
+// Stands in for translated code that waits for the vertical blank: it calls
+// a function that sleeps, in a loop, through the call-site checks the
+// translator puts around every call. Translated code does not take
+// interrupts, and no time passes while it runs.
+void sleeps(ds::Cpu& c) {
+  ds::cp_write(c, 15, 0, 7, 0, 4, 0);
+  c.ret_to = c.r[14];
+}
+void waits_for_the_vertical_blank(ds::Cpu& c) {
+  for (;;) {
+    c.r[14] = 0x02000008u;
+    ds::enter(c, 0x02000008u);
+    sleeps(c);
+    if (ds::leave(c, 0x02000008u)) return;
+  }
+}
+const TranslatedEntry kWaitsForTheVerticalBlank[] = {{0x02000000, waits_for_the_vertical_blank, -1, nullptr, 0},
+                                                      {0, nullptr, -1, nullptr, 0}};
+
+}  // namespace
+
+TEST(console_stops_translated_code_that_waits_for_an_interrupt_it_cannot_take) {
+  // The words the translation stands for; they are not run.
+  const bd::nds::Program program = program_of({0xEAFFFFFE});
+  bd::nds::Console console(program, kWaitsForTheVerticalBlank);
+  CHECK(console.direct_boot().ok());
+  // The vertical blank may request an interrupt.
+  console.io().write(0x04000004, 2, 1u << 3);
+  console.io().write(0x04000210, 4, 1u);
+  const bd::nds::RunResult result = console.run(1000000, 600);
+  CHECK(result.reason == bd::nds::StopReason::Unhandled);
+  CHECK(result.detail.find("never taken") != std::string::npos);
+  // Time stood still at the first vertical blank.
+  CHECK(console.timeline().now() == 192 * 2130);
+}
+
+TEST(console_lets_interpreted_code_sleep_with_an_interrupt_it_does_not_take) {
+  //   02000000  mcr p15, 0, r0, c7, c0, 4   (wait for interrupt)
+  //   02000004  b   02000000
+  // The vertical blank's request is enabled but the master switch is off:
+  // each sleep ends at once and nothing is taken, but time passes with the
+  // instructions, so this is not stopped.
+  const bd::nds::Program program = program_of({0xEE070F90, 0xEAFFFFFD});
+  bd::nds::Console console(program, kNoTranslations);
+  CHECK(console.direct_boot().ok());
+  console.io().write(0x04000004, 2, 1u << 3);
+  console.io().write(0x04000210, 4, 1u);
+  console.io().write(0x04000208, 4, 0u);
+  const bd::nds::RunResult result = console.run(1000000);
+  CHECK(result.reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(console.sleeps() > 400000);
+}
