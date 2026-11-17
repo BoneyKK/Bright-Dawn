@@ -126,6 +126,15 @@ the game library (see below): the translator and the few headers the
 translated code is compiled with. No ROM, no game data, and none of the
 tests, developer documents or tools beyond the builder's.
 
+A pre-release's description starts with the state of the project
+(`.github/release-state.md`: whether the game is playable, and what does not
+work yet), then lists the big changes since the last pre-release, then how to
+start (`.github/prerelease-notes.md`). `tools/release/release_notes.py` writes
+it from the commits since the last pre-release's tag: each `Release-Note:`
+trailer of a commit is one entry, a commit without one is listed by its
+subject, and one with `Release-Note: none` is left out. Every run of the
+checks shows the description that `main` would get in its summary.
+
 ## Using bright-dawn
 
 Start `bright-dawn` without anything else. The first time, and again after an

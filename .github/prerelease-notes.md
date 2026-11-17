@@ -1,9 +1,7 @@
-Automated pre-release, built from `main` after all checks passed.
+## Download and start
 
-**Early and not yet playable.** `bright-dawn` runs Golden Sun: Dark Dawn from
-a ROM you supply yourself, in a window, with every instruction of the game
-interpreted: about a third of the console's speed, without sound, and
-untried beyond the first screens. No ROM and no game data are included.
+Automated pre-release, built from `main` after all checks passed. No ROM and
+no game data are included.
 
 - `bright-dawn-windows-x86_64.zip`: Windows, 64-bit
 - `bright-dawn-linux-x86_64.tar.gz`: Linux, 64-bit (needs X11 or Wayland)
@@ -28,7 +26,9 @@ controller's guide button): the menu, with the settings. F11 or Alt+Enter:
 full screen. Tab: screens side by side or stacked. F12: whole-number scaling
 or filling the window.
 
-The game's save is not kept between runs yet. Every run writes a log, in
+## Reporting a problem
+
+Every run writes a log, in
 `logs` in the user data folder (`%LOCALAPPDATA%\BrightDawn` on Windows,
 `~/.local/share/bright-dawn` on Linux; the launcher's Log page opens it):
 please attach it, and the version `bright-dawn --version` prints, when

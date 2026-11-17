@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # Branches only: the tags are made by the release job, after the checks.
   push:
+    branches: ['**']
   pull_request:
 
 permissions:
@@ -131,11 +133,35 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # The description of the pre-release: the state, the changes since the
+  # last pre-release, then how to start. Made on every push, so a branch's
+  # run shows (in its summary) what main's release would say.
+  notes:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Every commit and tag, to find the last pre-release.
+      - name: Test the notes writer
+        run: python3 -m unittest discover -s tools/release -v
+      - name: Write the notes
+        run: |
+          version=$(sed -n 's/^project(BrightDawn VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          python3 tools/release/release_notes.py --tag "v${version}-pre.${GITHUB_RUN_NUMBER}" \
+            --repository "$GITHUB_REPOSITORY" --out release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
   # Every push to main that passes the jobs above is published as a
   # pre-release. Packages contain the tools only: no ROM and no game data.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, sanitizers, clang]
+    needs: [build, sanitizers, clang, notes]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -143,8 +169,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: bright-dawn-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
       - name: Publish pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -157,5 +187,4 @@ jobs:
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "Bright Dawn $tag" \
-            --notes-file .github/prerelease-notes.md \
-            --generate-notes
+            --notes-file release-notes.md
