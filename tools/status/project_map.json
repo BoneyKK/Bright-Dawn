@@ -1,0 +1,432 @@
+{
+  "title": "Bright Dawn project map",
+  "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
+  "last_change": {
+    "what": "The project map is shown in the README too; pre-release descriptions start with the state; README restructured",
+    "date": "2026-11-17"
+  },
+  "statuses": {
+    "done": "Works",
+    "part": "Partly works",
+    "block": "Blocks progress now",
+    "none": "Not started"
+  },
+  "diagram": {
+    "width": 1000,
+    "height": 640,
+    "groups": [
+      {
+        "x": 10,
+        "y": 10,
+        "w": 980,
+        "h": 170,
+        "label": "Once per version: build the game from your ROM"
+      },
+      {
+        "x": 10,
+        "y": 200,
+        "w": 980,
+        "h": 430,
+        "label": "Each run: the bright-dawn program"
+      }
+    ],
+    "boxes": [
+      {
+        "status": "done",
+        "x": 30,
+        "y": 50,
+        "w": 150,
+        "h": 58,
+        "label": "Your ROM",
+        "label_y": 74,
+        "lines": [
+          {
+            "y": 93,
+            "text": "supplied by you"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 220,
+        "y": 50,
+        "w": 160,
+        "h": 58,
+        "label": "rom",
+        "label_y": 74,
+        "lines": [
+          {
+            "y": 93,
+            "text": "read, check, unpack"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 420,
+        "y": 50,
+        "w": 160,
+        "h": 58,
+        "label": "translator",
+        "label_y": 74,
+        "lines": [
+          {
+            "y": 93,
+            "text": "ARM code to C++"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 620,
+        "y": 50,
+        "w": 160,
+        "h": 58,
+        "label": "game builder",
+        "label_y": 74,
+        "lines": [
+          {
+            "y": 93,
+            "text": "fetches compiler, builds"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 820,
+        "y": 50,
+        "w": 155,
+        "h": 58,
+        "label": "game library",
+        "label_y": 74,
+        "lines": [
+          {
+            "y": 93,
+            "text": "to name entry, 2x faster"
+          }
+        ]
+      },
+      {
+        "status": "part",
+        "x": 220,
+        "y": 120,
+        "w": 160,
+        "h": 48,
+        "label": "assets",
+        "label_y": 140,
+        "lines": [
+          {
+            "y": 157,
+            "text": "menu pictures only"
+          }
+        ]
+      },
+      {
+        "status": "none",
+        "x": 420,
+        "y": 120,
+        "w": 160,
+        "h": 48,
+        "label": "mods",
+        "label_y": 140,
+        "lines": [
+          {
+            "y": 157,
+            "text": "replace game files"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 30,
+        "y": 240,
+        "w": 300,
+        "h": 68,
+        "label": "app",
+        "label_y": 264,
+        "lines": [
+          {
+            "y": 283,
+            "text": "setup and launcher in the game's look,"
+          },
+          {
+            "y": 298,
+            "text": "settings book, pause menu, build"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 370,
+        "y": 240,
+        "w": 190,
+        "h": 68,
+        "label": "ui",
+        "label_y": 264,
+        "lines": [
+          {
+            "y": 283,
+            "text": "settings described once,"
+          },
+          {
+            "y": 298,
+            "text": "build progress"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 600,
+        "y": 240,
+        "w": 375,
+        "h": 68,
+        "label": "runtime",
+        "label_y": 264,
+        "lines": [
+          {
+            "y": 283,
+            "text": "game library first, interpreter behind it; interrupts,"
+          },
+          {
+            "y": 298,
+            "text": "time, calls that never return let go of at 1024"
+          }
+        ]
+      },
+      {
+        "status": "part",
+        "x": 30,
+        "y": 340,
+        "w": 945,
+        "h": 96,
+        "label": "nds: the console around the processor",
+        "label_y": 364,
+        "lines": [
+          {
+            "y": 384,
+            "text": "Works: memory map, registers, interrupts, timers, DMA, math unit, cartridge, 2D engines, 3D geometry and renderer, display capture, buttons, touch."
+          },
+          {
+            "y": 402,
+            "text": "Partly: second processor stand-in (4 of its services; no music sequences), save memory (not kept between runs),"
+          },
+          {
+            "y": 420,
+            "text": "time (one cycle per instruction). The game runs to its name entry, built or interpreted."
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 30,
+        "y": 468,
+        "w": 290,
+        "h": 62,
+        "label": "gfx",
+        "label_y": 492,
+        "lines": [
+          {
+            "y": 511,
+            "text": "Vulkan, or the system's renderer"
+          }
+        ]
+      },
+      {
+        "status": "none",
+        "x": 350,
+        "y": 468,
+        "w": 290,
+        "h": 62,
+        "label": "audio",
+        "label_y": 492,
+        "lines": [
+          {
+            "y": 511,
+            "text": "sound is made, not played yet"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 670,
+        "y": 468,
+        "w": 305,
+        "h": 62,
+        "label": "input",
+        "label_y": 492,
+        "lines": [
+          {
+            "y": 511,
+            "text": "keyboard, controllers, stylus"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 30,
+        "y": 556,
+        "w": 610,
+        "h": 56,
+        "label": "platform",
+        "label_y": 579,
+        "lines": [
+          {
+            "y": 597,
+            "text": "window, paths, settings, frame clock, crash and hang notes"
+          }
+        ]
+      },
+      {
+        "status": "done",
+        "x": 670,
+        "y": 556,
+        "w": 305,
+        "h": 56,
+        "label": "core",
+        "label_y": 579,
+        "lines": [
+          {
+            "y": 597,
+            "text": "errors, log, checksums"
+          }
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "d": "M180,79 H218",
+        "stop": false
+      },
+      {
+        "d": "M380,79 H418",
+        "stop": false
+      },
+      {
+        "d": "M580,79 H618",
+        "stop": false
+      },
+      {
+        "d": "M780,79 H818",
+        "stop": false
+      },
+      {
+        "d": "M300,108 V118",
+        "stop": false
+      },
+      {
+        "d": "M330,274 H368",
+        "stop": false
+      },
+      {
+        "d": "M897,108 V238",
+        "stop": false
+      },
+      {
+        "d": "M180,340 C180,330 180,320 180,310",
+        "stop": false
+      },
+      {
+        "d": "M787,308 V338",
+        "stop": false
+      },
+      {
+        "d": "M175,436 V466",
+        "stop": false
+      },
+      {
+        "d": "M495,436 V466",
+        "stop": false
+      },
+      {
+        "d": "M822,436 V466",
+        "stop": false
+      },
+      {
+        "d": "M175,530 V554",
+        "stop": false
+      },
+      {
+        "d": "M822,530 V554",
+        "stop": false
+      }
+    ]
+  },
+  "parts": [
+    {
+      "part": "rom",
+      "status": "done",
+      "now": "Checks the ROM, reads its file system, archives and every kind of compression the game uses."
+    },
+    {
+      "part": "assets",
+      "status": "part",
+      "now": "Decodes the menus' pictures and the game's font (NFTR) for the launcher. Textures, models and sounds: not yet."
+    },
+    {
+      "part": "mods",
+      "status": "none",
+      "now": "Planned: replace game files without changing the ROM."
+    },
+    {
+      "part": "translator",
+      "status": "done",
+      "now": "Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts."
+    },
+    {
+      "part": "game builder",
+      "status": "done",
+      "now": "Downloads its compiler (and Python on Windows) for the build and deletes it after. The downloaded compiler is not yet tried on a real build."
+    },
+    {
+      "part": "game library",
+      "status": "done",
+      "now": "Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24)."
+    },
+    {
+      "part": "runtime",
+      "status": "done",
+      "now": "Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes)."
+    },
+    {
+      "part": "nds",
+      "status": "part",
+      "now": "The console model runs the game to its name entry. No music, saves not kept between runs, beyond the name entry not yet tried."
+    },
+    {
+      "part": "gfx",
+      "status": "done",
+      "now": "Both screens in one window, any size, stacked or side by side, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet."
+    },
+    {
+      "part": "audio",
+      "status": "none",
+      "now": "The sound hardware is modelled, but nothing plays it to your speakers."
+    },
+    {
+      "part": "input",
+      "status": "done",
+      "now": "Keyboard, any number of controllers, the mouse as the stylus."
+    },
+    {
+      "part": "ui, app",
+      "status": "done",
+      "now": "Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu."
+    },
+    {
+      "part": "platform, core",
+      "status": "done",
+      "now": "Window, files, settings, frame timing, log, checksums. A crash is noted with where it happened; a game that stops finishing frames too."
+    },
+    {
+      "part": "CI and releases",
+      "status": "done",
+      "now": "Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one."
+    }
+  ],
+  "next": [
+    "Play on from the name entry, by hand and with scripted input, and fix what stops the game.",
+    "Music: the second processor's sequence player, and sound out of your speakers.",
+    "Saves kept between runs.",
+    "Widescreen, sharper 3D, and mods."
+  ]
+}

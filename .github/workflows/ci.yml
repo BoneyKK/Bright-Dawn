@@ -144,6 +144,12 @@ jobs:
           fetch-depth: 0  # Every commit and tag, to find the last pre-release.
       - name: Test the notes writer
         run: python3 -m unittest discover -s tools/release -v
+      # The README's project map must be made from tools/status/project_map.json,
+      # as the project map page is, so the two show the same.
+      - name: Check the project map in the README
+        run: |
+          python3 -m unittest discover -s tools/status -v
+          python3 tools/status/render_map.py --check
       - name: Write the notes
         run: |
           version=$(sed -n 's/^project(BrightDawn VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)

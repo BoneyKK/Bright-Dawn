@@ -30,10 +30,6 @@ affiliated with or endorsed by Nintendo or Camelot Software Planning.
 
 ## Roadmap and current state
 
-**[The project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8)** shows
-each part of Bright Dawn, how the parts connect, the state of each, and what
-comes next. It is kept up to date as the work goes on.
-
 In short: **not playable yet.** The game runs through its opening to the name
 entry, built or interpreted, and has not been tried beyond that. There is no
 sound, and the game's save is not kept between runs. Every part in detail:
@@ -41,6 +37,45 @@ sound, and the game's save is not kept between runs. Every part in detail:
 way: [docs/ASSESSMENT.md](docs/ASSESSMENT.md). The module design:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). How the game is started:
 [docs/BOOT.md](docs/BOOT.md).
+
+The project map below shows each part of Bright Dawn, how the parts connect,
+the state of each, and what comes next. It is made from
+`tools/status/project_map.json`, as the
+[project map page](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8) is, so
+the two always show the same; a check fails if the README is not up to date
+with that file.
+
+<!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
+**Last change** (17 November 2026): The project map is shown in the README too; pre-release descriptions start with the state; README restructured
+
+![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
+
+| Part | Status | Now |
+| --- | --- | --- |
+| `rom` | 🟢 Works | Checks the ROM, reads its file system, archives and every kind of compression the game uses. |
+| `assets` | 🟡 Partly works | Decodes the menus' pictures and the game's font (NFTR) for the launcher. Textures, models and sounds: not yet. |
+| `mods` | ⚪ Not started | Planned: replace game files without changing the ROM. |
+| `translator` | 🟢 Works | Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts. |
+| `game builder` | 🟢 Works | Downloads its compiler (and Python on Windows) for the build and deletes it after. The downloaded compiler is not yet tried on a real build. |
+| `game library` | 🟢 Works | Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24). |
+| `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). |
+| `nds` | 🟡 Partly works | The console model runs the game to its name entry. No music, saves not kept between runs, beyond the name entry not yet tried. |
+| `gfx` | 🟢 Works | Both screens in one window, any size, stacked or side by side, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet. |
+| `audio` | ⚪ Not started | The sound hardware is modelled, but nothing plays it to your speakers. |
+| `input` | 🟢 Works | Keyboard, any number of controllers, the mouse as the stylus. |
+| `ui, app` | 🟢 Works | Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu. |
+| `platform, core` | 🟢 Works | Window, files, settings, frame timing, log, checksums. A crash is noted with where it happened; a game that stops finishing frames too. |
+| `CI and releases` | 🟢 Works | Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one. |
+
+**Next:**
+
+1. Play on from the name entry, by hand and with scripted input, and fix what stops the game.
+2. Music: the second processor's sequence player, and sound out of your speakers.
+3. Saves kept between runs.
+4. Widescreen, sharper 3D, and mods.
+
+The same, as a page of its own: [the project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8).
+<!-- project-map:end -->
 
 ## Pre-built packages
 
@@ -244,6 +279,7 @@ src/app        bright-dawn: the window (SDL 3), launcher, settings book, game sc
 tools/gamebuilder  Builds bright-dawn-game from the user's ROM
 tools/translator   Machine code to C++
 tools/release      Writes the description of each pre-release
+tools/status       The project map: its data, and what makes the README's part and the page
 third_party    SkyEmu's ARM core (the interpreter) and Dear ImGui, MIT licence
 tools/bdtool   Command-line inspection tool
 tests          Unit and end-to-end tests, with a synthetic ROM generator

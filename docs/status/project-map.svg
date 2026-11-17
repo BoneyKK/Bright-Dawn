@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 684" width="1000" height="684" role="img" aria-label="Bright Dawn project map: each part and its status">
+<title>Bright Dawn project map: each part and its status</title>
+<style>text{font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}.sub{font-size:11px}.group text{font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase}.group rect{fill:none;stroke-dasharray:5 4}.box rect{stroke-width:1.5}.edge{stroke-width:1.4;fill:none;marker-end:url(#arrow)}.edge.stop{stroke-dasharray:4 3}.surface{fill:#fffdf8;stroke:#ddd4c4}text{fill:#2a2620}.sub{fill:#6d6458}.group rect{stroke:#ddd4c4}.group text{fill:#9a6b1f}.edge{stroke:#6d6458}.arrow{fill:#6d6458}.edge.stop{stroke:#b2452f}.done rect{fill:#e2f1e6;stroke:#2f7d4f}.done circle{fill:#2f7d4f}.part rect{fill:#fbefcf;stroke:#9a6b00}.part circle{fill:#9a6b00}.block rect{fill:#f8e1da;stroke:#b2452f}.block circle{fill:#b2452f}.none rect{fill:#ebeaee;stroke:#6b6b74}.none circle{fill:#6b6b74}@media (prefers-color-scheme:dark){.surface{fill:#201d16;stroke:#3a3428}text{fill:#ece5d8}.sub{fill:#a89e8e}.group rect{stroke:#3a3428}.group text{fill:#d9a54a}.edge{stroke:#a89e8e}.arrow{fill:#a89e8e}.edge.stop{stroke:#f08f78}.done rect{fill:#1d3325;stroke:#7fd19c}.done circle{fill:#7fd19c}.part rect{fill:#3a3016;stroke:#e8c25e}.part circle{fill:#e8c25e}.block rect{fill:#3d2119;stroke:#f08f78}.block circle{fill:#f08f78}.none rect{fill:#2b2a30;stroke:#b3b3bd}.none circle{fill:#b3b3bd}}</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"></path></marker></defs>
+<rect class="surface" x="0.5" y="0.5" width="999" height="683" rx="10"></rect>
+<g class="done"><circle cx="18" cy="22" r="6"></circle><text x="30" y="27">Works</text></g>
+<g class="part"><circle cx="100" cy="22" r="6"></circle><text x="112" y="27">Partly works</text></g>
+<g class="block"><circle cx="235" cy="22" r="6"></circle><text x="247" y="27">Blocks progress now</text></g>
+<g class="none"><circle cx="423" cy="22" r="6"></circle><text x="435" y="27">Not started</text></g>
+<g transform="translate(0 44)">
+<g class="group"><rect x="10" y="10" width="980" height="170" rx="10"></rect><text x="26" y="32">Once per version: build the game from your ROM</text></g>
+<g class="group"><rect x="10" y="200" width="980" height="430" rx="10"></rect><text x="26" y="222">Each run: the bright-dawn program</text></g>
+<g class="box done"><rect x="30" y="50" width="150" height="58" rx="8"></rect><text x="45" y="74">Your ROM</text><text class="sub" x="45" y="93">supplied by you</text></g>
+<g class="box done"><rect x="220" y="50" width="160" height="58" rx="8"></rect><text x="235" y="74">rom</text><text class="sub" x="235" y="93">read, check, unpack</text></g>
+<g class="box done"><rect x="420" y="50" width="160" height="58" rx="8"></rect><text x="435" y="74">translator</text><text class="sub" x="435" y="93">ARM code to C++</text></g>
+<g class="box done"><rect x="620" y="50" width="160" height="58" rx="8"></rect><text x="635" y="74">game builder</text><text class="sub" x="635" y="93">fetches compiler, builds</text></g>
+<g class="box done"><rect x="820" y="50" width="155" height="58" rx="8"></rect><text x="835" y="74">game library</text><text class="sub" x="835" y="93">to name entry, 2x faster</text></g>
+<g class="box part"><rect x="220" y="120" width="160" height="48" rx="8"></rect><text x="235" y="140">assets</text><text class="sub" x="235" y="157">menu pictures only</text></g>
+<g class="box none"><rect x="420" y="120" width="160" height="48" rx="8"></rect><text x="435" y="140">mods</text><text class="sub" x="435" y="157">replace game files</text></g>
+<g class="box done"><rect x="30" y="240" width="300" height="68" rx="8"></rect><text x="45" y="264">app</text><text class="sub" x="45" y="283">setup and launcher in the game&#x27;s look,</text><text class="sub" x="45" y="298">settings book, pause menu, build</text></g>
+<g class="box done"><rect x="370" y="240" width="190" height="68" rx="8"></rect><text x="385" y="264">ui</text><text class="sub" x="385" y="283">settings described once,</text><text class="sub" x="385" y="298">build progress</text></g>
+<g class="box done"><rect x="600" y="240" width="375" height="68" rx="8"></rect><text x="615" y="264">runtime</text><text class="sub" x="615" y="283">game library first, interpreter behind it; interrupts,</text><text class="sub" x="615" y="298">time, calls that never return let go of at 1024</text></g>
+<g class="box part"><rect x="30" y="340" width="945" height="96" rx="8"></rect><text x="45" y="364">nds: the console around the processor</text><text class="sub" x="45" y="384">Works: memory map, registers, interrupts, timers, DMA, math unit, cartridge, 2D engines, 3D geometry and renderer, display capture, buttons, touch.</text><text class="sub" x="45" y="402">Partly: second processor stand-in (4 of its services; no music sequences), save memory (not kept between runs),</text><text class="sub" x="45" y="420">time (one cycle per instruction). The game runs to its name entry, built or interpreted.</text></g>
+<g class="box done"><rect x="30" y="468" width="290" height="62" rx="8"></rect><text x="45" y="492">gfx</text><text class="sub" x="45" y="511">Vulkan, or the system&#x27;s renderer</text></g>
+<g class="box none"><rect x="350" y="468" width="290" height="62" rx="8"></rect><text x="365" y="492">audio</text><text class="sub" x="365" y="511">sound is made, not played yet</text></g>
+<g class="box done"><rect x="670" y="468" width="305" height="62" rx="8"></rect><text x="685" y="492">input</text><text class="sub" x="685" y="511">keyboard, controllers, stylus</text></g>
+<g class="box done"><rect x="30" y="556" width="610" height="56" rx="8"></rect><text x="45" y="579">platform</text><text class="sub" x="45" y="597">window, paths, settings, frame clock, crash and hang notes</text></g>
+<g class="box done"><rect x="670" y="556" width="305" height="56" rx="8"></rect><text x="685" y="579">core</text><text class="sub" x="685" y="597">errors, log, checksums</text></g>
+<path class="edge" d="M180,79 H218"></path>
+<path class="edge" d="M380,79 H418"></path>
+<path class="edge" d="M580,79 H618"></path>
+<path class="edge" d="M780,79 H818"></path>
+<path class="edge" d="M300,108 V118"></path>
+<path class="edge" d="M330,274 H368"></path>
+<path class="edge" d="M897,108 V238"></path>
+<path class="edge" d="M180,340 C180,330 180,320 180,310"></path>
+<path class="edge" d="M787,308 V338"></path>
+<path class="edge" d="M175,436 V466"></path>
+<path class="edge" d="M495,436 V466"></path>
+<path class="edge" d="M822,436 V466"></path>
+<path class="edge" d="M175,530 V554"></path>
+<path class="edge" d="M822,530 V554"></path>
+</g>
+</svg>
