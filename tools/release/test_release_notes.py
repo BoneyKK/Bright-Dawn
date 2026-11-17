@@ -61,8 +61,8 @@ class ReleaseNotesTest(unittest.TestCase):
         self.repo.commit("Fix a typo\n\nRelease-Note: none")
         self.repo.commit("Saves are kept")
         since = rn.previous_release(self.repo.root, "HEAD", "v0.1.0-pre.12")
-        self.assertEqual(since, "v0.1.0-pre.10")  # By number, not by name.
-        self.assertEqual(rn.changes(self.repo.root, since, "HEAD"),
+        self.assertEqual(since.tag, "v0.1.0-pre.10")  # By number, not by name.
+        self.assertEqual(rn.changes(self.repo.root, since.commit, "HEAD"),
                          ["Saves are kept", "Sound plays.", "The menu has a volume setting."])
 
     def test_a_rerun_does_not_count_its_own_tag(self) -> None:
@@ -70,7 +70,7 @@ class ReleaseNotesTest(unittest.TestCase):
         self.repo.tag("v0.1.0-pre.3")
         self.repo.commit("Two")
         self.repo.tag("v0.1.0-pre.4")
-        self.assertEqual(rn.previous_release(self.repo.root, "HEAD", "v0.1.0-pre.4"), "v0.1.0-pre.3")
+        self.assertEqual(rn.previous_release(self.repo.root, "HEAD", "v0.1.0-pre.4").tag, "v0.1.0-pre.3")
 
     def test_other_tags_are_not_releases(self) -> None:
         self.repo.commit("One")
@@ -78,13 +78,13 @@ class ReleaseNotesTest(unittest.TestCase):
         self.repo.commit("Two")
         self.repo.tag("experiment")
         self.repo.tag("v0.1.0-pre.2-fix")
-        self.assertEqual(rn.previous_release(self.repo.root, "HEAD", "v0.1.0-pre.5"), "v0.1.0-pre.2")
+        self.assertEqual(rn.previous_release(self.repo.root, "HEAD", "v0.1.0-pre.5").tag, "v0.1.0-pre.2")
 
     def test_order_state_then_changes_then_body(self) -> None:
-        text = rn.compose("STATE\n", "\nBODY", "v1-pre.2", "v1-pre.1", ["A", "B"], "o/r")
+        text = rn.compose("STATE\n", "\nBODY", "v1-pre.2", rn.Previous("v1-pre.1", "abc123"), ["A", "B"], "o/r")
         self.assertLess(text.index("STATE"), text.index("## Changes since v1-pre.1"))
         self.assertLess(text.index("- B"), text.index("BODY"))
-        self.assertIn("https://github.com/o/r/compare/v1-pre.1...v1-pre.2", text)
+        self.assertIn("https://github.com/o/r/compare/abc123...v1-pre.2", text)
 
     def test_nothing_new_is_said_so(self) -> None:
         self.repo.commit("One")
@@ -92,8 +92,28 @@ class ReleaseNotesTest(unittest.TestCase):
         self.repo.commit("Tidy\n\nRelease-Note: none")
         entries = rn.changes(self.repo.root, "v0.1.0-pre.1", "HEAD")
         self.assertEqual(entries, [])
-        text = rn.compose("S", "B", "v0.1.0-pre.2", "v0.1.0-pre.1", entries, None)
+        text = rn.compose("S", "B", "v0.1.0-pre.2", rn.Previous("v0.1.0-pre.1", "x"), entries, None)
         self.assertIn("- Nothing that changes what the program does.", text)
+
+    def test_a_rewritten_history_is_matched_by_its_files(self) -> None:
+        self.repo.commit("One")
+        self.repo.commit("Two")
+        self.repo.tag("v0.1.0-pre.7")
+        # The same files, in new commits (as after removing a commit).
+        self.repo.run("checkout", "-q", "--orphan", "new")
+        self.repo.run("commit", "-q", "-m", "Two, rewritten")
+        matching = self.repo.run("rev-parse", "HEAD").strip()
+        self.repo.commit("Three")
+        since = rn.previous_release(self.repo.root, "HEAD", "v0.1.0-pre.8")
+        self.assertEqual(since, rn.Previous("v0.1.0-pre.7", matching))
+        self.assertEqual(rn.changes(self.repo.root, since.commit, "HEAD"), ["Three"])
+
+    def test_a_release_not_in_the_history_at_all_is_none(self) -> None:
+        self.repo.commit("One")
+        self.repo.tag("v0.1.0-pre.1")
+        self.repo.run("checkout", "-q", "--orphan", "other")
+        self.repo.commit("Other")
+        self.assertIsNone(rn.previous_release(self.repo.root, "HEAD", "v0.1.0-pre.2"))
 
 
 if __name__ == "__main__":

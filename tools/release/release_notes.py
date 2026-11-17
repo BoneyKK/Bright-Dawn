@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 TRAILER = "Release-Note"
 TAG_PATTERN = re.compile(r"^v\d+(?:\.\d+)*-pre\.(\d+)$")
@@ -37,13 +38,22 @@ def git(repo: Path, *args: str) -> str:
     ).stdout
 
 
-def previous_release(repo: Path, head: str, tag: str) -> str | None:
-    """The pre-release tag before `tag` that `head` contains: the one with
-    the highest run number below `tag`'s (or, if `tag` has none, the highest)."""
+class Previous(NamedTuple):
+    tag: str
+    commit: str  # In `head`'s history: where the changes are counted from.
+
+
+def previous_release(repo: Path, head: str, tag: str) -> Previous | None:
+    """The last pre-release before `tag`: the one with the highest run
+    number below `tag`'s (or, if `tag` has none, the highest).
+
+    Its tag normally is in `head`'s history. If the history was rewritten
+    since (the commits are new, the files the same), the commit of `head`'s
+    history with the same files as the tag stands for it."""
     own = TAG_PATTERN.match(tag)
     limit = int(own.group(1)) if own else None
     best: tuple[int, str] | None = None
-    for name in git(repo, "tag", "--merged", head, "--list", "v*").split():
+    for name in git(repo, "tag", "--list", "v*").split():
         match = TAG_PATTERN.match(name)
         if not match or name == tag:
             continue
@@ -52,7 +62,22 @@ def previous_release(repo: Path, head: str, tag: str) -> str | None:
             continue
         if best is None or number > best[0]:
             best = (number, name)
-    return best[1] if best else None
+    if best is None:
+        return None
+    name = best[1]
+    commit = git(repo, "rev-parse", f"{name}^{{commit}}").strip()
+    contained = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit, head],
+        capture_output=True,
+    ).returncode == 0
+    if contained:
+        return Previous(name, commit)
+    tree = git(repo, "rev-parse", f"{name}^{{tree}}").strip()
+    for line in git(repo, "log", "--format=%H %T", head).splitlines():
+        sha, files = line.split()
+        if files == tree:
+            return Previous(name, sha)
+    return None
 
 
 def changes(repo: Path, since: str | None, head: str) -> list[str]:
@@ -83,14 +108,14 @@ def changes(repo: Path, since: str | None, head: str) -> list[str]:
     return entries
 
 
-def compose(state: str, body: str, tag: str, since: str | None,
+def compose(state: str, body: str, tag: str, since: Previous | None,
             entries: list[str], repository: str | None) -> str:
     parts = [state.strip()]
     if since:
-        lines = [f"## Changes since {since}", ""]
+        lines = [f"## Changes since {since.tag}", ""]
         lines += [f"- {e}" for e in entries] or ["- Nothing that changes what the program does."]
         if repository:
-            lines += ["", f"Every commit: https://github.com/{repository}/compare/{since}...{tag}"]
+            lines += ["", f"Every commit: https://github.com/{repository}/compare/{since.commit}...{tag}"]
     else:
         lines = ["## Changes", "", "- The first pre-release."]
     parts.append("\n".join(lines))
@@ -115,7 +140,7 @@ def main(argv: list[str]) -> int:
         args.body.read_text(encoding="utf-8"),
         args.tag,
         since,
-        changes(args.repo, since, args.head),
+        changes(args.repo, since.commit if since else None, args.head),
         args.repository,
     )
     if args.out:
