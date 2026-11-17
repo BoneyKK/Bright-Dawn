@@ -35,18 +35,10 @@ affiliated with or endorsed by Nintendo or Camelot Software Planning.
 In short: **not playable yet.** The game runs through its opening to the name
 entry, built or interpreted, and has not been tried beyond that. There is no
 sound, and the game's save is not kept between runs. Every part in detail:
-[docs/STATUS.md](docs/STATUS.md). What is feasible and what stands in the
-way: [docs/ASSESSMENT.md](docs/ASSESSMENT.md). The module design:
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). How the game is started:
-[docs/BOOT.md](docs/BOOT.md). How it is built and released:
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+[docs/STATUS.md](docs/STATUS.md). 
 
 The project map below shows each part of Bright Dawn, how the parts connect,
-the state of each, and what comes next. It is made from
-`tools/status/project_map.json`, as the
-[project map page](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8) is, so
-the two always show the same; a check fails if the README is not up to date
-with that file.
+the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
 **Last change** (17 November 2026): The project map is shown in the README too; pre-release descriptions start with the state; README restructured
