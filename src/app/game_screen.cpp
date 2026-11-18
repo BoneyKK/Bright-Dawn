@@ -37,16 +37,6 @@ bool GameScreen::open(std::string& error) {
   }
   largest_texture_ = static_cast<int>(SDL_GetNumberProperty(SDL_GetRendererProperties(app_.renderer),
                                                             SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 4096));
-  for (const input::Binding& b : input::default_keyboard_bindings()) {
-    const SDL_Scancode code = SDL_GetScancodeFromName(b.control.c_str());
-    if (code != SDL_SCANCODE_UNKNOWN) keys_.push_back({code, input::bit(b.button)});
-    else log::warning("input", "no key is called \"" + b.control + "\"");
-  }
-  for (const input::Binding& b : input::default_controller_bindings()) {
-    const SDL_GamepadButton button = SDL_GetGamepadButtonFromString(b.control.c_str());
-    if (button != SDL_GAMEPAD_BUTTON_INVALID) pad_buttons_.push_back({button, input::bit(b.button)});
-    else log::warning("input", "no controller button is called \"" + b.control + "\"");
-  }
   // Controllers already there: the launcher saw them come.
   int count = 0;
   if (SDL_JoystickID* ids = SDL_GetGamepads(&count)) {
@@ -69,6 +59,21 @@ bool GameScreen::open(std::string& error) {
 void GameScreen::apply_settings(bool first) {
   const platform::Settings& s = app_.settings;
   settings_seen_ = s.revision();
+  // The bindings (Settings, Controls), named as SDL names keys and
+  // controller buttons. A name it does not know is reported once.
+  keys_.clear();
+  pad_buttons_.clear();
+  for (const input::Binding& b : ui::keyboard_bindings(s)) {
+    const SDL_Scancode code = SDL_GetScancodeFromName(b.control.c_str());
+    if (code != SDL_SCANCODE_UNKNOWN) keys_.push_back({code, input::bit(b.button)});
+    else if (unknown_controls_.insert(b.control).second) log::warning("input", "no key is called \"" + b.control + "\"");
+  }
+  for (const input::Binding& b : ui::controller_bindings(s)) {
+    const SDL_GamepadButton button = SDL_GetGamepadButtonFromString(b.control.c_str());
+    if (button != SDL_GAMEPAD_BUTTON_INVALID) pad_buttons_.push_back({button, input::bit(b.button)});
+    else if (unknown_controls_.insert(b.control).second)
+      log::warning("input", "no controller button is called \"" + b.control + "\"");
+  }
   layout_ = ui::layout_options(s);
   // Screen filtering (gfx::ScreenFilter). The screens' own textures are
   // scaled nearest, except for Smooth; for SharpSmoothEdges they are first
@@ -425,7 +430,7 @@ bool GameScreen::run_menu() {
         end_ = GameEnd::Quit;
         return false;
       }
-      if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+      if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && !book_.waiting_for_input()) {
         if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
           // Escape goes back a page, and from the first closes the menu.
           if (menu_page_ == MenuPage::Settings) menu_page_ = MenuPage::Main;
@@ -434,7 +439,8 @@ bool GameScreen::run_menu() {
           handle_window_key(event.key);
         }
       }
-      if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)
+      if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE &&
+          !book_.waiting_for_input())
         menu_open_ = false;
       if (event.type == SDL_EVENT_RENDER_TARGETS_RESET || event.type == SDL_EVENT_RENDER_DEVICE_RESET)
         enlarged_stale_ = true;

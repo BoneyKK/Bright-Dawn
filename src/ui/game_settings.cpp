@@ -1,5 +1,6 @@
 #include "ui/game_settings.h"
 
+#include <algorithm>
 #include <string>
 
 namespace bd::ui {
@@ -123,7 +124,92 @@ std::vector<SettingDef> game_setting_definitions() {
                         "info"));
   defs.push_back(number(key::kLogsKept, "Log", "Logs kept", "The logs of this many runs are kept; older ones are "
                         "removed.", 1, 100, 10));
+  // The bindings: not in a chapter of their own, as the Controls page draws
+  // them; their defaults are input's.
+  const auto bound_by_default = [](const std::vector<input::Binding>& bindings, input::DsButton button) {
+    for (const input::Binding& b : bindings)
+      if (b.button == button) return b.control;
+    return std::string();
+  };
+  for (const Control& c : controls()) {
+    for (const bool keyboard : {true, false}) {
+      SettingDef d;
+      d.key = keyboard ? c.keyboard_key : c.controller_key;
+      d.label = (keyboard ? "Key for " : "Controller button for ") + c.label;
+      d.help = "Empty for none.";
+      d.kind = SettingKind::Text;
+      d.default_value = bound_by_default(
+          keyboard ? input::default_keyboard_bindings() : input::default_controller_bindings(), c.button);
+      defs.push_back(d);
+    }
+  }
   return defs;
+}
+
+const std::vector<Control>& controls() {
+  static const std::vector<Control> kControls = [] {
+    using input::DsButton;
+    std::vector<Control> list;
+    for (const DsButton button : {DsButton::A, DsButton::B, DsButton::X, DsButton::Y, DsButton::L, DsButton::R,
+                                  DsButton::Start, DsButton::Select, DsButton::Up, DsButton::Down, DsButton::Left,
+                                  DsButton::Right}) {
+      std::string id = input::name(button);
+      std::transform(id.begin(), id.end(), id.begin(),
+                     [](char ch) { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch; });
+      list.push_back({input::name(button), "controls.keyboard." + id, "controls.controller." + id, button});
+    }
+    return list;
+  }();
+  return kControls;
+}
+
+namespace {
+
+std::vector<input::Binding> bindings(const platform::Settings& settings, bool keyboard) {
+  std::vector<input::Binding> list;
+  for (const Control& c : controls()) {
+    const std::string control = settings.value(keyboard ? c.keyboard_key : c.controller_key);
+    if (!control.empty()) list.push_back({control, c.button});
+  }
+  return list;
+}
+
+bool same_name(const std::string& a, const std::string& b) {
+  const auto lower = [](char ch) { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch; };
+  return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [&](char x, char y) {
+           return lower(x) == lower(y);
+         });
+}
+
+}  // namespace
+
+std::vector<input::Binding> keyboard_bindings(const platform::Settings& settings) { return bindings(settings, true); }
+std::vector<input::Binding> controller_bindings(const platform::Settings& settings) {
+  return bindings(settings, false);
+}
+
+std::vector<std::string> bound_twice(const platform::Settings& settings, bool keyboard) {
+  std::vector<std::string> keys;
+  const std::vector<Control>& list = controls();
+  const auto key_of = [&](const Control& c) { return keyboard ? c.keyboard_key : c.controller_key; };
+  for (std::size_t i = 0; i < list.size(); ++i) {
+    const std::string mine = settings.value(key_of(list[i]));
+    if (mine.empty()) continue;
+    for (std::size_t j = 0; j < list.size(); ++j) {
+      if (j != i && same_name(mine, settings.value(key_of(list[j])))) {
+        keys.push_back(key_of(list[i]));
+        break;
+      }
+    }
+  }
+  return keys;
+}
+
+void reset_controls(platform::Settings& settings) {
+  for (const Control& c : controls()) {
+    settings.reset(c.keyboard_key);
+    settings.reset(c.controller_key);
+  }
 }
 
 gfx::LayoutOptions layout_options(const platform::Settings& settings) {

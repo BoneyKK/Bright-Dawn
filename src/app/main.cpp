@@ -123,8 +123,9 @@ constexpr const char* kUsage =
     "                        game builder), and stop\n"
     "  --version             print the version, and stop\n"
     "\n"
-    "Keyboard: arrows, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start,\n"
-    "Right Shift = Select. Controllers: by position, as on the DS. The left mouse\n"
+    "Keyboard, unless changed in Settings, Controls: arrows, X = A, Z = B, S = X,\n"
+    "A = Y, Q = L, W = R, Enter = Start, Right Shift = Select. Controllers: by\n"
+    "position, as on the DS. The left mouse\n"
     "button on the touch screen is the stylus. Escape (or a controller's guide\n"
     "button): the menu. F11 or Alt+Enter: full screen. Tab: stacked or side by side.\n"
     "F12: whole-number scaling or fill.\n";

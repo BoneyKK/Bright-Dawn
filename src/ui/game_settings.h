@@ -4,10 +4,12 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "gfx/screen_layout.h"
+#include "input/bindings.h"
 #include "nds/user_settings.h"
 #include "platform/settings.h"
 
@@ -35,6 +37,30 @@ inline constexpr std::string_view kLogsKept = "log.kept";
 }  // namespace key
 
 std::vector<platform::SettingDef> game_setting_definitions();
+
+// The Controls chapter of the settings book, drawn by a page of its own
+// (app/controls_page.h) rather than from the definitions.
+inline constexpr std::string_view kControlsChapter = "Controls";
+
+// What can be bound on the Controls page: a DS button, to a key and to a
+// controller button. Each binding is a setting of its own, kept in the
+// settings file like the others: the control's name as SDL names it
+// ("Right Shift", "dpup"), or empty for none.
+struct Control {
+  std::string label;
+  std::string keyboard_key;    // "controls.keyboard.<button>"
+  std::string controller_key;  // "controls.controller.<button>"
+  input::DsButton button;
+};
+const std::vector<Control>& controls();
+// The bindings the settings give: one for each control bound.
+std::vector<input::Binding> keyboard_bindings(const platform::Settings& settings);
+std::vector<input::Binding> controller_bindings(const platform::Settings& settings);
+// The keys of the bindings (keyboard or controller) whose control is also
+// bound to another DS button.
+std::vector<std::string> bound_twice(const platform::Settings& settings, bool keyboard);
+// Every binding back to its default.
+void reset_controls(platform::Settings& settings);
 
 // The screens' arrangement the settings ask for.
 gfx::LayoutOptions layout_options(const platform::Settings& settings);

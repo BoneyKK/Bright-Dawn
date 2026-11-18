@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "app/controls_page.h"
 #include "app/menu_widgets.h"
 #include "platform/settings.h"
 
@@ -24,6 +25,9 @@ class SettingsBook {
   // In the game's look: the help of the setting under the pointer, for the
   // message bar; empty when there is none.
   const std::string& hovered_help() const { return hovered_help_; }
+  // Whether the Controls page waits for a key or controller button to bind:
+  // Escape and the like are then for it.
+  bool waiting_for_input() const { return controls_.waiting(); }
 
  private:
   void draw_setting(platform::Settings& settings, const platform::SettingDef& def, std::vector<std::string>& changed);
@@ -31,6 +35,8 @@ class SettingsBook {
                             std::vector<std::string>& changed);
   void draw_in_look(platform::Settings& settings, const std::vector<std::string>& chapters,
                     std::vector<std::string>& changed);
+  // The chapters: the settings', with Controls after Game.
+  static std::vector<std::string> chapters_of(const platform::Settings& settings);
 
   const menu::Look* look_ = nullptr;
   std::string hovered_help_;
@@ -42,6 +48,7 @@ class SettingsBook {
   // once the editing ends.
   std::map<std::string, int> numbers_;
   std::map<std::string, std::string> texts_;
+  ControlsPage controls_;
 };
 
 }  // namespace bd::app

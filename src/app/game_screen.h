@@ -15,6 +15,7 @@
 
 #include <array>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -91,6 +92,7 @@ class GameScreen {
   std::vector<SDL_Gamepad*> gamepads_;
   std::vector<Key> keys_;
   std::vector<PadButton> pad_buttons_;
+  std::set<std::string> unknown_controls_;  // Reported in the log already.
   std::array<std::uint8_t, gfx::kScreenWidth * gfx::kScreenHeight * 4> pixels_{};
   bool touching_ = false;
   gfx::Point touch_at_;

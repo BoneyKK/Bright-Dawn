@@ -1,5 +1,6 @@
 // Settings: values checked against their descriptions, the file, one-run
 // overrides; Bright Dawn's own settings; following the game builder.
+#include <algorithm>
 #include <string>
 
 #include "platform/settings.h"
@@ -179,6 +180,55 @@ TEST(game_settings_are_valid_and_shown_in_chapters) {
   const bd::gfx::LayoutOptions changed = bd::ui::layout_options(s);
   CHECK(changed.arrangement == bd::gfx::Arrangement::SideBySide && changed.scaling == bd::gfx::Scaling::Fit);
   CHECK(changed.gap == 12 && changed.bottom_first);
+}
+
+TEST(control_bindings_default_to_input_defaults) {
+  Settings s(bd::ui::game_setting_definitions());
+  const auto same = [](std::vector<bd::input::Binding> a, std::vector<bd::input::Binding> b) {
+    const auto order = [](const bd::input::Binding& x, const bd::input::Binding& y) { return x.button < y.button; };
+    std::sort(a.begin(), a.end(), order);
+    std::sort(b.begin(), b.end(), order);
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+      if (a[i].control != b[i].control || a[i].button != b[i].button) return false;
+    return true;
+  };
+  CHECK(same(bd::ui::keyboard_bindings(s), bd::input::default_keyboard_bindings()));
+  CHECK(same(bd::ui::controller_bindings(s), bd::input::default_controller_bindings()));
+  // Every DS button has a row, and no control is bound twice.
+  CHECK(bd::ui::controls().size() == bd::input::kDsButtonCount);
+  CHECK(bd::ui::bound_twice(s, true).empty() && bd::ui::bound_twice(s, false).empty());
+  // The bindings are not settings of a chapter: the Controls page draws them.
+  CHECK(s.find("controls.keyboard.a") != nullptr && s.find("controls.keyboard.a")->chapter.empty());
+  CHECK(s.value("controls.keyboard.select") == "Right Shift" && s.value("controls.controller.up") == "dpup");
+}
+
+TEST(control_bindings_are_read_and_saved_in_the_settings_file) {
+  Settings s(bd::ui::game_setting_definitions());
+  // Read: a key given, a controller button taken away (empty: none).
+  CHECK(s.from_text("controls.keyboard.a = Space\ncontrols.controller.b =\n").empty());
+  bool a_on_space = false, b_on_controller = false;
+  for (const bd::input::Binding& b : bd::ui::keyboard_bindings(s))
+    a_on_space = a_on_space || (b.button == bd::input::DsButton::A && b.control == "Space");
+  for (const bd::input::Binding& b : bd::ui::controller_bindings(s))
+    b_on_controller = b_on_controller || b.button == bd::input::DsButton::B;
+  CHECK(a_on_space && !b_on_controller);
+  CHECK(bd::ui::controller_bindings(s).size() == bd::input::kDsButtonCount - 1);
+  // Saved and read back the same.
+  CHECK(s.set("controls.keyboard.start", "Right Shift").ok());
+  Settings t(bd::ui::game_setting_definitions());
+  CHECK(t.from_text(s.to_text()).empty());
+  CHECK(t.value("controls.keyboard.a") == "Space" && t.value("controls.controller.b").empty());
+  CHECK(t.value("controls.keyboard.start") == "Right Shift");
+  // One key on two DS buttons is found, in any letter case; both are named.
+  CHECK((bd::ui::bound_twice(t, true) ==
+         std::vector<std::string>{"controls.keyboard.start", "controls.keyboard.select"}));
+  CHECK(t.set("controls.keyboard.start", "right shift").ok() && bd::ui::bound_twice(t, true).size() == 2);
+  CHECK(bd::ui::bound_twice(t, false).empty());
+  // Back to the defaults.
+  bd::ui::reset_controls(t);
+  CHECK(t.value("controls.keyboard.a") == "X" && t.value("controls.controller.b") == "a");
+  CHECK(bd::ui::bound_twice(t, true).empty());
 }
 
 TEST(build_progress_follows_the_builder) {

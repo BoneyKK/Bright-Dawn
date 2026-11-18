@@ -48,11 +48,15 @@ build/bright-dawn path/to/your-rom.nds
 | Left mouse button on the touch screen | The stylus |
 | A controller | By position, as on the DS: the right face button is A, the bottom one B, the top one X, the left one Y; the shoulders and triggers L and R; the left stick or the pad the directions |
 
+These are the defaults. Settings, Controls binds another key or controller
+button to each DS button: click the binding, then press the key or button.
+
 Escape, or a controller's guide button, pauses the game and opens its menu:
 continue, the settings, report a problem, back to the launcher, quit. F11 or Alt+Enter switches
 full screen, Tab puts the screens side by side or one above the other, F12
 switches between whole-number scaling and filling the window. The title bar
-shows the frames shown per second; the console's rate is 59.83.
+shows the game's frames a second (the console's rate is 59.83) and the
+pictures shown a second.
 
 *Screen filtering* (Settings, Display) says how the screens are scaled to the
 window. By default each DS pixel stays a crisp block, every one the same size,

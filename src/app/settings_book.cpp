@@ -5,15 +5,23 @@
 #include <cstring>
 
 #include "imgui.h"
+#include "ui/game_settings.h"
 
 namespace bd::app {
 
 using platform::SettingDef;
 using platform::SettingKind;
 
+std::vector<std::string> SettingsBook::chapters_of(const platform::Settings& settings) {
+  std::vector<std::string> chapters = settings.chapters();
+  const auto game = std::find(chapters.begin(), chapters.end(), "Game");
+  chapters.insert(game != chapters.end() ? game + 1 : chapters.end(), std::string(ui::kControlsChapter));
+  return chapters;
+}
+
 std::vector<std::string> SettingsBook::draw(platform::Settings& settings) {
   std::vector<std::string> changed;
-  const std::vector<std::string> chapters = settings.chapters();
+  const std::vector<std::string> chapters = chapters_of(settings);
   if (chapters.empty()) return changed;
   chapter_ = std::min(chapter_, chapters.size() - 1);
   hovered_help_.clear();
@@ -54,8 +62,12 @@ std::vector<std::string> SettingsBook::draw(platform::Settings& settings) {
   ImGui::PopFont();
   ImGui::PopStyleColor();
   ImGui::Separator();
-  for (const SettingDef& def : settings.definitions())
-    if (def.chapter == chapters[chapter_]) draw_setting(settings, def, changed);
+  if (chapters[chapter_] == ui::kControlsChapter) {
+    controls_.draw(settings, nullptr, changed);
+  } else {
+    for (const SettingDef& def : settings.definitions())
+      if (def.chapter == chapters[chapter_]) draw_setting(settings, def, changed);
+  }
   ImGui::EndChild();
   return changed;
 }
@@ -159,8 +171,13 @@ void SettingsBook::draw_in_look(platform::Settings& settings, const std::vector<
     ImGui::SameLine();
   }
   ImGui::BeginChild("page", ImVec2(0, 0));
-  for (const SettingDef& def : settings.definitions())
-    if (def.chapter == chapters[chapter_]) draw_setting_in_look(settings, def, changed);
+  if (chapters[chapter_] == ui::kControlsChapter) {
+    controls_.draw(settings, look_, changed);
+    hovered_help_ = controls_.hovered_help();
+  } else {
+    for (const SettingDef& def : settings.definitions())
+      if (def.chapter == chapters[chapter_]) draw_setting_in_look(settings, def, changed);
+  }
   ImGui::EndChild();
 }
 

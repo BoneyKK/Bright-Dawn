@@ -656,8 +656,11 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
   ImGui::EndDisabled();
   explain(rom_check_.ok ? "Play Golden Sun: Dark Dawn from your ROM." : "Choose your ROM first.");
   ImGui::Spacing();
-  note("Keyboard: arrows, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Right Shift = Select. "
-       "Controllers: by position, as on the DS. The left mouse button on the touch screen is the stylus. "
+  std::string keys;
+  for (const input::Binding& b : ui::keyboard_bindings(app_.settings))
+    keys += (keys.empty() ? "" : ", ") + b.control + " = " + input::name(b.button);
+  note("Keyboard: " + keys + ". Controllers: by position, as on the DS. Settings, Controls changes them. "
+       "The left mouse button on the touch screen is the stylus. "
        "Escape (or a controller's guide button) pauses and opens the menu. F11: full screen.");
 }
 
