@@ -1,0 +1,5 @@
+# Left out of the source archives of the releases (git archive): the setup
+# for working on the project with Claude Code and graphify.
+/CLAUDE.md export-ignore
+/.claude export-ignore
+/.graphifyignore export-ignore

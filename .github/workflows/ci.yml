@@ -150,6 +150,12 @@ jobs:
         run: |
           python3 -m unittest discover -s tools/status -v
           python3 tools/status/render_map.py --check
+      # The source archives of a release are made by git archive; the setup
+      # for working with Claude Code and graphify is not part of a release.
+      - name: Check the source archive leaves out the development setup
+        run: |
+          left=$(git archive HEAD | tar -t | grep -iE '^(CLAUDE\.md|\.claude/|\.graphify|graphify-out/)' || true)
+          if [ -n "$left" ]; then echo "In the source archive:"; echo "$left"; exit 1; fi
       - name: Write the notes
         run: |
           version=$(sed -n 's/^project(BrightDawn VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
