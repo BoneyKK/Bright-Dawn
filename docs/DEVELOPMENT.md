@@ -49,7 +49,7 @@ build/bright-dawn path/to/your-rom.nds
 | A controller | By position, as on the DS: the right face button is A, the bottom one B, the top one X, the left one Y; the shoulders and triggers L and R; the left stick or the pad the directions |
 
 Escape, or a controller's guide button, pauses the game and opens its menu:
-continue, the settings, back to the launcher, quit. F11 or Alt+Enter switches
+continue, the settings, report a problem, back to the launcher, quit. F11 or Alt+Enter switches
 full screen, Tab puts the screens side by side or one above the other, F12
 switches between whole-number scaling and filling the window. The title bar
 shows the frames shown per second; the console's rate is 59.83.
@@ -71,7 +71,10 @@ Linux), a text file with each setting described. Every run writes a log to
 `logs/` there, keeping the last ten: the system, the settings, what was done
 and how the run ended, including a crash (where it happened, in the program
 and in the game's code) or the game not finishing a frame for 10 seconds.
-Please attach it when reporting a problem. `--log-level debug` (or Settings,
+Please attach it when reporting a problem: *Report a problem* (the
+launcher's Log page, or the pause menu) opens the bug form on GitHub with the
+version, system, renderer, game code and built game or interpreter filled in
+(`src/ui/problem_report.h`), and the logs folder. `--log-level debug` (or Settings,
 Log) records more.
 
 Bright Dawn draws through Vulkan where the computer has it, and through the

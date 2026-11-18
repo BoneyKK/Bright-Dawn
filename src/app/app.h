@@ -13,6 +13,7 @@
 #include "app/gui.h"
 #include "input/bindings.h"
 #include "platform/settings.h"
+#include "ui/problem_report.h"
 #include "translated_table.h"
 
 namespace bd::app {
@@ -40,6 +41,8 @@ struct App {
   // The translated code linked in (bright-dawn-game), or an empty table.
   const TranslatedEntry* translation = nullptr;
   bool translated_build = false;
+  // What "Report a problem" fills in; kept up to date as the run goes on.
+  ui::ProblemReport report;
 
   explicit App(platform::Settings s) : settings(std::move(s)) {}
 
@@ -51,5 +54,13 @@ struct App {
 // Shows a message in a box, as well as logging it, since on Windows the
 // window program has no console to print to.
 void complain(SDL_Window* window, const std::string& message);
+
+// Opens a folder in the system's file manager, making it first if need be.
+void open_folder(const std::filesystem::path& folder);
+
+// "Report a problem": opens the project's bug form in the browser, with what
+// is known of this run filled in, and the folder of the logs, so that the
+// log can be attached.
+void report_problem(const App& app);
 
 }  // namespace bd::app

@@ -1,0 +1,21 @@
+name: Feature request
+description: Something Bright Dawn should do or do differently.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The project's next steps are in the README ("Next"). **Never attach the ROM, saves or other game files.**
+  - type: textarea
+    id: wish
+    attributes:
+      label: What you would like
+      description: What it should do, and why it would help you.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Bright Dawn version
+      description: If it is about the version you play.
+      placeholder: 0.1.0-pre.12 (abc1234)

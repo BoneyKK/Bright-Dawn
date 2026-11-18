@@ -19,6 +19,11 @@ data, and they never will. To play, you need a ROM image dumped from a
 cartridge of the game that you own. Please do not ask for ROMs, or post
 links to them or any game data, in issues.
 
+Found a problem? *Report a problem*, in the launcher (Log) or the pause menu
+(Escape), opens the [report form](https://github.com/BoneyKK/Bright-Dawn/issues/new/choose)
+filled in with your version and system, and the folder of the logs: attach
+the log, never the ROM, saves or other game files.
+
 Everything Bright Dawn takes from the game is read from your own ROM on your
 own computer, while it runs: the launcher's pictures and font, and the game's
 code that the game builder translates and compiles. What it makes from your
@@ -41,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (18 November 2026): The game's save is kept between runs
+**Last change** (18 November 2026): Report a problem from the program; the game's language is a setting
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -54,13 +59,13 @@ the state of each, and what comes next.
 | `game builder` | 🟢 Works | Downloads its compiler (and Python on Windows) for the build and deletes it after. The downloaded compiler is not yet tried on a real build. |
 | `game library` | 🟢 Works | Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24). |
 | `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). |
-| `nds` | 🟡 Partly works | The console model runs the game to its name entry. The game's save is kept between runs. No music, beyond the name entry not yet tried. |
+| `nds` | 🟡 Partly works | The console model runs the game to its name entry. The game's save is kept between runs; the console's language is a setting. No music, beyond the name entry not yet tried. |
 | `gfx` | 🟢 Works | Both screens in one window, any size, stacked or side by side, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet. |
 | `audio` | ⚪ Not started | The sound hardware is modelled, but nothing plays it to your speakers. |
 | `input` | 🟢 Works | Keyboard, any number of controllers, the mouse as the stylus. |
-| `ui, app` | 🟢 Works | Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu. |
+| `ui, app` | 🟢 Works | Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. |
 | `platform, core` | 🟢 Works | Window, files, settings, frame timing, log, checksums. A crash is noted with where it happened; a game that stops finishing frames too. |
-| `CI and releases` | 🟢 Works | Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one. |
+| `CI and releases` | 🟢 Works | Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one. Issue forms for bugs, a stuck game or wrong graphics, and wishes. |
 
 **Next:**
 

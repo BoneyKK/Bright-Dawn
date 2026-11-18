@@ -1,0 +1,74 @@
+name: Stuck or wrong graphics in the game
+description: The game stops going on (a scene, menu or battle that does not end, a freeze), or draws something wrongly.
+labels: ["bug", "in-game"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Attach the log; never the ROM, saves or other game files.** Bright Dawn's packages and this repository hold none of the game, and reports must not either: no ROM, no `.sav` files, no extracted or translated game files. Screenshots of a problem are fine.
+
+        The log is in `logs` in the user data folder (`%LOCALAPPDATA%\BrightDawn\logs` on Windows, `~/.local/share/bright-dawn/logs` on Linux); *Report a problem* in the launcher (Log) or the pause menu (Escape) opens it. The newest file is the last run's.
+  - type: input
+    id: version
+    attributes:
+      label: Bright Dawn version
+      description: The title of the pre-release, or the first line of the log.
+      placeholder: 0.1.0-pre.12 (abc1234)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, Ubuntu 24.04, ...
+    validations:
+      required: true
+  - type: input
+    id: renderer
+    attributes:
+      label: Renderer
+      description: What draws the window. The log says it ("renderer:" near the start); Settings, Display, Drawing chooses it.
+      placeholder: vulkan, direct3d11, opengl, ...
+  - type: input
+    id: game-code
+    attributes:
+      label: Game code
+      description: Which release of the game your ROM is. The launcher shows it when the ROM is chosen.
+      placeholder: BO5E (America), BO5P (Europe) or BO5J (Japan)
+    validations:
+      required: true
+  - type: input
+    id: code
+    attributes:
+      label: Built game or interpreter
+      description: Whether the game built from your ROM was played, or the interpreter alone. The log says it ("translated functions in use").
+      placeholder: The built game, or The interpreter
+  - type: textarea
+    id: steps
+    attributes:
+      label: Where and what
+      description: Where in the game it happened (place, scene, menu or battle), what you did just before, and what you see. A screenshot helps; for wrong graphics, say how it should look.
+    validations:
+      required: true
+  - type: dropdown
+    id: again
+    attributes:
+      label: Does it happen again?
+      options:
+        - Every time, from the same place
+        - Sometimes
+        - Once so far
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Drag the log file of the run here (it is a text file). Do not paste or attach anything else of the game.
+    validations:
+      required: true
+  - type: checkboxes
+    id: no-game-files
+    attributes:
+      label: No game files
+      options:
+        - label: This report holds no ROM, save or other game file, and no link to one.
+          required: true

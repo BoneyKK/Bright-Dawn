@@ -31,8 +31,9 @@ copy of it as it was before the last run that changed it (`.sav.backup`).
 
 ## Reporting a problem
 
-Every run writes a log, in
-`logs` in the user data folder (`%LOCALAPPDATA%\BrightDawn` on Windows,
-`~/.local/share/bright-dawn` on Linux; the launcher's Log page opens it):
-please attach it, and the version `bright-dawn --version` prints, when
-reporting a problem.
+*Report a problem*, on the launcher's Log page or in the pause menu
+(Escape), opens the project's form for a report on GitHub with the version,
+system, renderer, game code and built game or interpreter filled in, and the
+folder of the logs. Every run writes a log, in `logs` in the user data folder
+(`%LOCALAPPDATA%\BrightDawn` on Windows, `~/.local/share/bright-dawn` on
+Linux): please attach it. Never attach the ROM, saves or other game files.

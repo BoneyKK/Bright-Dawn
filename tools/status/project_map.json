@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "The game's save is kept between runs",
+    "what": "Report a problem from the program; the game's language is a setting",
     "date": "2026-11-18"
   },
   "statuses": {
@@ -390,7 +390,7 @@
     {
       "part": "nds",
       "status": "part",
-      "now": "The console model runs the game to its name entry. The game's save is kept between runs. No music, beyond the name entry not yet tried."
+      "now": "The console model runs the game to its name entry. The game's save is kept between runs; the console's language is a setting. No music, beyond the name entry not yet tried."
     },
     {
       "part": "gfx",
@@ -410,7 +410,7 @@
     {
       "part": "ui, app",
       "status": "done",
-      "now": "Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu."
+      "now": "Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub."
     },
     {
       "part": "platform, core",
@@ -420,7 +420,7 @@
     {
       "part": "CI and releases",
       "status": "done",
-      "now": "Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one."
+      "now": "Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one. Issue forms for bugs, a stuck game or wrong graphics, and wishes."
     }
   ],
   "next": [

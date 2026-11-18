@@ -469,6 +469,10 @@ void GameScreen::draw_menu() {
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     if (ImGui::Button("Continue", button)) menu_open_ = false;
     if (ImGui::Button("Settings", button)) menu_page_ = MenuPage::Settings;
+    if (ImGui::Button("Report a problem", button)) report_problem(app_);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Opens the form for a problem report on GitHub, and the log folder.\n"
+                        "Attach the log; never the ROM, saves or other game files.");
     if (can_go_back_ && ImGui::Button("Back to the launcher", button)) {
       log::info("game", "back to the launcher");
       end_ = GameEnd::ToLauncher;

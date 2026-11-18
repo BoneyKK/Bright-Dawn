@@ -30,16 +30,6 @@ const ImVec4 kBadOnPaper(0.66f, 0.12f, 0.06f, 1.0f);
 constexpr ImGuiWindowFlags kWholeWindow = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                           ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
-void open_folder(const std::filesystem::path& folder) {
-  std::error_code ec;
-  std::filesystem::create_directories(folder, ec);
-  std::string url = "file:///" + utf8(folder);
-  for (char& c : url)
-    if (c == '\\') c = '/';
-  // "file:////home" is read as a network share on some systems.
-  if (url.rfind("file:////", 0) == 0) url.erase(7, 1);
-  if (!SDL_OpenURL(url.c_str())) log::warning("launcher", std::string("cannot open the folder: ") + SDL_GetError());
-}
 
 }  // namespace
 
@@ -87,6 +77,7 @@ void Launcher::choose_rom(const std::filesystem::path& path) {
   } else {
     const rom::KnownTitle* title = rom::identify_title(rom.value().header());
     rom_check_.ok = true;
+    app_.report.game_code = title->game_code;
     rom_check_.text = std::string("Golden Sun: Dark Dawn (") + rom::to_string(title->region) + ", " +
                       std::string(title->game_code) + ")";
   }
@@ -802,6 +793,14 @@ void Launcher::draw_log() {
   ImGui::TextWrapped("This run's log: %s", utf8(file).c_str());
   if (button("Open the log folder")) open_folder(file.parent_path());
   explain("Open the folder the logs are in. The newest log is this run's.");
+  if (button("Report a problem")) {
+    const bool built = app_.translated_build ||
+                       (built_state_ == BuiltState::Ready && app_.settings.toggle(ui::key::kPlayBuilt));
+    app_.report.code = built ? "The built game" : "The interpreter";
+    report_problem(app_);
+  }
+  explain("Open the form for a problem report on GitHub, filled in with this computer and version, and the "
+          "log folder. Attach the log; never the ROM, saves or other game files.");
 }
 
 }  // namespace bd::app

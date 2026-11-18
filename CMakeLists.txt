@@ -166,7 +166,7 @@ add_library(bd_input STATIC src/input/bindings.cpp)
 target_link_libraries(bd_input PUBLIC bd_core)
 # What the window program's own screens show and keep, without the screens:
 # the settings and their descriptions, and following the game builder.
-add_library(bd_ui STATIC src/ui/build_progress.cpp src/ui/game_settings.cpp)
+add_library(bd_ui STATIC src/ui/build_progress.cpp src/ui/game_settings.cpp src/ui/problem_report.cpp)
 target_link_libraries(bd_ui PUBLIC bd_platform bd_gfx bd_assets)
 
 add_executable(bdtool tools/bdtool/main.cpp tools/bdtool/boot.cpp)

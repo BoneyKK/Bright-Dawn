@@ -312,6 +312,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
   std::fflush(stdout);
   log::writef(log::Level::Info, "game", "%zu translated functions in use%s", translated_functions,
               translated_functions == 0 ? ": every instruction is interpreted" : "");
+  a.report.code = translated_functions == 0 ? "The interpreter" : "The built game";
   nds::Console console(loaded.value(), translation);
   if (rom) console.insert_cartridge(rom.value().bytes());
   nds::UserSettings user = console.user_settings();
@@ -325,6 +326,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
   std::optional<nds::SaveKeeper> keeper;
   if (rom && !a.user_data.empty()) {
     const rom::KnownTitle* title = rom::identify_title(rom.value().header());
+    a.report.game_code = title->game_code;
     keeper.emplace(console.save_memory(), a.user_data / "saves" / (std::string(title->game_code) + ".sav"));
     if (Status status = keeper->load(); status) {
       log::info("game", "the save is kept in " + app::utf8(keeper->path()));
@@ -458,6 +460,9 @@ int run(CommandLine& cl, int argc, char** argv) {
     }
     SDL_SetWindowMinimumSize(a.window, gfx::kScreenWidth / 2, gfx::kScreenHeight / 2);
     log_system(a.renderer);
+    a.report.version = BD_VERSION;
+    a.report.os = SDL_GetPlatform();
+    if (const char* name = SDL_GetRendererName(a.renderer); name != nullptr) a.report.renderer = name;
     std::string error;
     if (!a.gui.init(a.window, a.renderer, error)) {
       complain(a.window, error);
