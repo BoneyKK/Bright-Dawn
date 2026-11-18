@@ -23,3 +23,13 @@ and make the map: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#code-map-graphify).
   translated code), or at a folder outside the repository, and never use its
   `add` command or a model backend for it: the map must hold only the
   repository's own files.
+
+## Issues
+
+- Work on an issue only when the owner chose it.
+- A commit that fixes an issue says so in its message body: `Fixes #N`
+  (one line per issue). GitHub closes the issue when the commit reaches
+  `main`. If an issue stays open after its fix is on `main`, close it with a
+  comment naming the commit.
+- Never copy a ROM, save, game file or a link to one from an issue into the
+  repository, and never download such an attachment.
