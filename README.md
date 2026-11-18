@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (18 November 2026): 3D drawn on several threads; controls can be bound; the touch screen can be shown alone
+**Last change** (18 November 2026): 3D scenes drawn by the graphics hardware, sharper, at up to 8 times the DS's resolution
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -60,7 +60,7 @@ the state of each, and what comes next.
 | `game library` | 🟢 Works | Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24). |
 | `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). |
 | `nds` | 🟡 Partly works | The console model runs the game to its name entry. The game's save is kept between runs; the console's language is a setting. No music, beyond the name entry not yet tried. |
-| `gfx` | 🟢 Works | Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet. |
+| `gfx` | 🟢 Works | Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, or by the processor. Widescreen: not yet. |
 | `audio` | ⚪ Not started | The sound hardware is modelled, but nothing plays it to your speakers. |
 | `input` | 🟢 Works | Keyboard, any number of controllers, the mouse as the stylus. Keys and buttons can be bound in Settings, Controls. |
 | `ui, app` | 🟢 Works | Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. |
@@ -71,7 +71,7 @@ the state of each, and what comes next.
 
 1. Play on from the name entry, by hand and with scripted input, and fix what stops the game.
 2. Music: the second processor's sequence player, and sound out of your speakers.
-3. Widescreen, sharper 3D, and mods.
+3. Widescreen and mods.
 
 The same, as a page of its own: [the project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8).
 <!-- project-map:end -->

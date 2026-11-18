@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "3D drawn on several threads; controls can be bound; the touch screen can be shown alone",
+    "what": "3D scenes drawn by the graphics hardware, sharper, at up to 8 times the DS's resolution",
     "date": "2026-11-18"
   },
   "statuses": {
@@ -227,7 +227,7 @@
         "lines": [
           {
             "y": 511,
-            "text": "Vulkan, or the system's renderer"
+            "text": "Vulkan; 3D on the GPU up to 8x"
           }
         ]
       },
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, or by the processor. Widescreen: not yet."
     },
     {
       "part": "audio",
@@ -426,6 +426,6 @@
   "next": [
     "Play on from the name entry, by hand and with scripted input, and fix what stops the game.",
     "Music: the second processor's sequence player, and sound out of your speakers.",
-    "Widescreen, sharper 3D, and mods."
+    "Widescreen and mods."
   ]
 }
