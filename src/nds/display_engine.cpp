@@ -155,6 +155,7 @@ void DisplayEngine::place(unsigned background, int x, std::uint32_t colour, bool
 }
 
 void DisplayEngine::draw_line(int line) {
+  marked_ = false;
   Dot backdrop;
   backdrop.colour = colour_of(0);
   top_.fill(backdrop);
@@ -194,7 +195,7 @@ void DisplayEngine::draw_line(int line) {
     if (shown(1)) draw_tiles(1, line);
     if (shown(0)) {
       if (which_ == kMain && (control_ & kBackground0Is3D) != 0)
-        draw_3d(line);
+        hardware_3d_ ? mark_3d() : draw_3d(line);
       else
         draw_tiles(0, line);
     }
@@ -238,6 +239,8 @@ void DisplayEngine::draw_line(int line) {
       shown_line[x] = result;
     }
   }
+  if (marked_ && ((control_ >> kDisplayModeShift) & 3) == 1)
+    for (std::size_t x = 0; x < static_cast<std::size_t>(kWidth); ++x) shown_line[x] |= marks_[x];
 }
 
 void DisplayEngine::draw_sprites(int line, bool window_pass) {
@@ -366,6 +369,26 @@ void DisplayEngine::draw_3d(int line) {
   for (int x = 0; x < kWidth; ++x) {
     const std::uint8_t alpha = static_cast<std::uint8_t>(part_of(pixels[x], 18));
     if (alpha != 0) place(0, x, pixels[x] & 0x3FFFF, true, alpha);
+  }
+}
+
+void DisplayEngine::mark_3d() {
+  // Where the 3D layer would be on top, and how a pixel of it would be mixed
+  // with what is then below it, as blend() does.
+  const unsigned effect = (blend_control_ >> 6) & 3;
+  const auto priority = static_cast<std::int8_t>(background_control_[0] & 3);
+  marks_.fill(0);
+  for (int x = 0; x < kWidth; ++x) {
+    const unsigned inside = shown_inside(x);
+    const Dot& below = top_[static_cast<std::size_t>(x)];
+    if ((inside & 1) == 0 || priority > below.priority) continue;
+    u32 mark = kMark3D;
+    if ((blend_control_ & (1u << (8 + below.layer))) != 0)
+      mark |= 1u << kMarkEffectShift;
+    else if (effect >= 2 && (blend_control_ & 1) != 0 && (inside & 0x20) != 0)
+      mark |= effect << kMarkEffectShift | u32{blend_brightness_} << kMarkFactorShift;
+    marks_[static_cast<std::size_t>(x)] = mark;
+    marked_ = true;
   }
 }
 

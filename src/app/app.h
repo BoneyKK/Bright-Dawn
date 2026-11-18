@@ -37,6 +37,10 @@ struct App {
   std::filesystem::path settings_path;  // Empty: not saved.
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
+  // The GPU device the renderer draws with, when it is SDL's GPU renderer
+  // (on Vulkan): the graphics hardware's 3D scenes use it too. Destroyed
+  // after the renderer.
+  SDL_GPUDevice* gpu = nullptr;
   Gui gui;
   // The translated code linked in (bright-dawn-game), or an empty table.
   const TranslatedEntry* translation = nullptr;

@@ -102,6 +102,10 @@ constexpr const char* kUsage =
     "                        sharp (nearest)\n"
     "  --textures MODE       3D scenes' textures: sharp (nearest, as on the DS) or\n"
     "                        smooth (bilinear)\n"
+    "  --3d WAY              drawing 3D scenes: hardware (the graphics hardware; the\n"
+    "                        default) or processor (exact, slower)\n"
+    "  --3d-resolution N     the graphics hardware's 3D at N times the DS's\n"
+    "                        resolution (1 to 8), or auto (to fit the window)\n"
     "  --language LANGUAGE   the console's language, which the game shows its text in:\n"
     "                        english, french, german, italian, spanish or japanese\n"
     "  --renderer WAY        drawing the window: vulkan (the default; the system's own\n"
@@ -210,14 +214,25 @@ void log_system(SDL_Renderer* renderer) {
 }
 
 // Opens the window and its renderer, hidden until both are there. With
-// `vulkan`, the window is made for Vulkan and drawn with SDL's Vulkan
-// renderer; where that cannot be done (no Vulkan driver, or one too old),
-// the window is made again for the system's own renderer.
+// `vulkan`, the window is made for Vulkan and drawn with SDL's GPU renderer
+// on a Vulkan device, which the graphics hardware's 3D scenes share (else
+// with SDL's Vulkan renderer); where neither can be done (no Vulkan driver,
+// or one too old), the window is made again for the system's own renderer.
 bool open_window(App& a, gfx::Point size, bool vulkan) {
   const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;
   if (vulkan) {
     a.window = SDL_CreateWindow("Bright Dawn", size.x, size.y, flags | SDL_WINDOW_VULKAN);
-    if (a.window != nullptr) a.renderer = SDL_CreateRenderer(a.window, "vulkan");
+    if (a.window != nullptr) {
+      a.gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, "vulkan");
+      if (a.gpu != nullptr) a.renderer = SDL_CreateGPURenderer(a.gpu, a.window);
+      if (a.renderer == nullptr) {
+        log::warning("window", std::string("SDL's GPU renderer cannot be used, so its Vulkan renderer draws instead: ") +
+                                   SDL_GetError());
+        if (a.gpu != nullptr) SDL_DestroyGPUDevice(a.gpu);
+        a.gpu = nullptr;
+        a.renderer = SDL_CreateRenderer(a.window, "vulkan");
+      }
+    }
     if (a.renderer == nullptr) {
       log::warning("window", std::string("Vulkan cannot be used, so the system's own renderer draws instead: ") +
                                  SDL_GetError());
@@ -515,6 +530,7 @@ int run(CommandLine& cl, int argc, char** argv) {
   // The program's screens go before the renderer they draw with.
   a.gui.shutdown();
   SDL_DestroyRenderer(a.renderer);
+  if (a.gpu != nullptr) SDL_DestroyGPUDevice(a.gpu);
   SDL_DestroyWindow(a.window);
   SDL_Quit();
   log::writef(log::Level::Info, "start", "the end, with status %d", status);
@@ -580,6 +596,10 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kRenderer, argv[++i]);
     } else if (arg == "--language" && has_value) {
       cl.overrides.emplace_back(ui::key::kLanguage, argv[++i]);
+    } else if (arg == "--3d" && has_value) {
+      cl.overrides.emplace_back(ui::key::k3DDrawing, argv[++i]);
+    } else if (arg == "--3d-resolution" && has_value) {
+      cl.overrides.emplace_back(ui::key::k3DResolution, argv[++i]);
     } else if (arg == "--textures" && has_value) {
       cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
     } else if (arg == "--log-level" && has_value) {

@@ -46,9 +46,19 @@ void Display::line_begins(unsigned line) {
     main_.start_frame();
     second_.start_frame();
     // The polygons handed over at the last vertical blank, if there are new
-    // ones, make this frame's 3D picture.
-    if (geometry_.statistics().swaps != swaps_drawn_) {
-      swaps_drawn_ = geometry_.statistics().swaps;
+    // ones, make this frame's 3D picture (or scene).
+    const std::uint64_t swaps = geometry_.statistics().swaps;
+    scene_this_frame_ = hardware_3d_ && (capture_control_ & kCaptureOn) == 0;
+    main_.set_hardware_3d(scene_this_frame_);
+    if (scene_this_frame_) {
+      if (swaps != swaps_built_) {
+        swaps_built_ = swaps;
+        renderer_.build_scene(geometry_.finished(), video_);
+        have_scene_ = true;
+        ++statistics_.pictures_3d;
+      }
+    } else if (swaps != swaps_drawn_) {
+      swaps_drawn_ = swaps;
       renderer_.draw(geometry_.finished(), video_);
       have_3d_ = true;
       ++statistics_.pictures_3d;
@@ -122,6 +132,9 @@ void Display::vertical_blank() {
   const bool main_on_top = (power_control_ & kMainOnTop) != 0;
   top_ = main_on_top ? main_.screen() : second_.screen();
   bottom_ = main_on_top ? second_.screen() : main_.screen();
+  frame_has_scene_ = scene_this_frame_ && have_scene_;
+  frame_brightness_ = main_.master_brightness();
+  frame_main_on_top_ = main_on_top;
   ++statistics_.frames;
 }
 

@@ -163,6 +163,13 @@ TEST(game_settings_are_valid_and_shown_in_chapters) {
   CHECK(s.set(bd::ui::key::kScreenFilter, "sharp").ok() && bd::ui::screen_filter(s) == bd::gfx::ScreenFilter::Sharp);
   CHECK(s.set(bd::ui::key::kScreenFilter, "smooth").ok() && bd::ui::screen_filter(s) == bd::gfx::ScreenFilter::Smooth);
   CHECK(s.set(bd::ui::key::kTextures, "smooth").ok() && bd::ui::smooth_textures(s));
+  // 3D scenes by the graphics hardware, by default at the least resolution
+  // that fills the screen as shown; or by the processor.
+  CHECK(bd::ui::hardware_3d(s) && bd::ui::resolution_3d(s, 192) == 1 && bd::ui::resolution_3d(s, 193) == 2);
+  CHECK(bd::ui::resolution_3d(s, 720) == 4 && bd::ui::resolution_3d(s, 1440) == 8 && bd::ui::resolution_3d(s, 4000) == 8);
+  CHECK(bd::ui::resolution_3d(s, 0) == 1);
+  CHECK(s.set(bd::ui::key::k3DResolution, "3").ok() && bd::ui::resolution_3d(s, 1440) == 3);
+  CHECK(s.set(bd::ui::key::k3DDrawing, "processor").ok() && !bd::ui::hardware_3d(s));
   // The console's language: English unless chosen, each choice the
   // firmware's own value for it.
   using Language = bd::nds::UserSettings::Language;

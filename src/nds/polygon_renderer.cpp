@@ -110,12 +110,7 @@ void PolygonRenderer::write_control(std::uint32_t value, std::uint32_t mask) {
   control_ = (control_ & ~mask) | (value & mask);
 }
 
-const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame& frame, const VideoMemory& video) {
-  frame_ = &frame;
-  video_ = &video;
-  w_buffer_ = frame.depth_is_w;
-  if ((control_ & kRearBitmap) != 0) ++notes_["the rear plane as a picture"];
-
+void PolygonRenderer::make_shapes(const GeometryEngine::Frame& frame) {
   shapes_.clear();
   for (const GeometryEngine::Polygon& polygon : frame.polygons) {
     if (polygon.size < 3 || polygon.size > 10 || polygon.first + std::size_t{polygon.size} > frame.vertices.size()) continue;
@@ -165,6 +160,14 @@ const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame&
     shape.smooth = texture_filter_ == TextureFilter::Bilinear && shape.format != 0 && !polygon.flat;
     shapes_.push_back(shape);
   }
+}
+
+const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame& frame, const VideoMemory& video) {
+  frame_ = &frame;
+  video_ = &video;
+  w_buffer_ = frame.depth_is_w;
+  if ((control_ & kRearBitmap) != 0) ++notes_["the rear plane as a picture"];
+  make_shapes(frame);
 
   const std::size_t pixels = static_cast<std::size_t>(kWidth) * kHeight;
   for (std::vector<Pixel>& layer : layers_) layer.assign(pixels, Pixel{});
@@ -178,6 +181,159 @@ const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame&
   frame_ = nullptr;
   video_ = nullptr;
   return image_;
+}
+
+namespace {
+
+// The FNV-1a hash, a number at a time.
+u64 hashed(u64 hash, u32 value) { return (hash ^ value) * 0x100000001B3ull; }
+// Six bits to eight.
+u32 eight_bits(u32 six) { return ((six & 0x3F) << 2) | ((six & 0x3F) >> 4); }
+float fraction_of_31(u32 five) { return static_cast<float>(five & 0x1F) / 31.0f; }
+
+}  // namespace
+
+std::uint32_t PolygonRenderer::scene_texture(const Shape& shape) {
+  // The texels depend on the texture word (but for repeating and flipping)
+  // and the palette: a texture used again in the scene is looked at once.
+  const u32 word = shape.polygon->texture & ~0x000F0000u;
+  const u64 words = u64{word} << 32 | shape.polygon->palette;
+  if (const auto it = scene_textures_.find(words); it != scene_textures_.end()) return it->second;
+
+  // What the texture is made of: its bytes and its palette's, hashed.
+  const VideoMemory& video = *video_;
+  u64 hash = hashed(hashed(0xCBF29CE484222325ull, word), shape.palette_address);
+  static constexpr u32 kBits[8] = {0, 8, 2, 4, 8, 2, 8, 16};
+  const u32 texels = static_cast<u32>(shape.size_s * shape.size_t_);
+  const u32 bytes = texels * kBits[shape.format] / 8;
+  for (u32 i = 0; i < bytes; ++i) hash = hashed(hash, static_cast<u32>(video.texture(shape.texture_address + i)));
+  static constexpr u32 kColours[8] = {0, 32, 4, 16, 256, 0, 8, 0};
+  u32 colours = kColours[shape.format];
+  if (shape.format == 5) {
+    // The table of each block of four by four texels, and the palette as
+    // far as the table reaches into it.
+    const u32 table = 0x20000 + (shape.texture_address % 0x20000) / 2 + (shape.texture_address / 0x20000 == 2 ? 0x10000 : 0);
+    u32 largest = 0;
+    for (u32 block = 0; block < texels / 16; ++block) {
+      const int low = video.texture(table + block * 2), high = video.texture(table + block * 2 + 1);
+      hash = hashed(hashed(hash, static_cast<u32>(low)), static_cast<u32>(high));
+      if (low >= 0 && high >= 0) largest = std::max(largest, static_cast<u32>(low | high << 8) & 0x3FFF);
+    }
+    colours = largest * 2 + 4;
+  }
+  for (u32 i = 0; i < colours * 2; ++i)
+    hash = hashed(hash, static_cast<u32>(video.texture_palette(shape.palette_address + i)));
+
+  auto found = decoded_.find(hash);
+  if (found == decoded_.end()) {
+    auto pixels = std::make_shared<std::vector<u32>>(texels);
+    for (int t = 0; t < shape.size_t_; ++t) {
+      for (int s = 0; s < shape.size_s; ++s) {
+        const u32 c = texel(shape, s, t);
+        (*pixels)[static_cast<std::size_t>(t * shape.size_s + s)] =
+            eight_bits(c) | eight_bits(c >> 6) << 8 | eight_bits(c >> 12) << 16 | eight_bits(c >> 18) << 24;
+      }
+    }
+    decoded_bytes_ += std::size_t{texels} * 4;
+    found = decoded_.emplace(hash, Decoded{std::move(pixels), shape.size_s, shape.size_t_, 0}).first;
+  }
+  found->second.last_used = scene_.serial;
+  scene_.textures.push_back({hash, found->second.width, found->second.height, found->second.pixels});
+  const auto index = static_cast<std::uint32_t>(scene_.textures.size() - 1);
+  scene_textures_.emplace(words, index);
+  return index;
+}
+
+const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& frame, const VideoMemory& video) {
+  frame_ = &frame;
+  video_ = &video;
+  make_shapes(frame);
+  HardwareScene& scene = scene_;
+  ++scene.serial;
+  scene.vertices.clear();
+  scene.runs.clear();
+  scene.textures.clear();
+  scene_textures_.clear();
+
+  for (unsigned i = 0; i < 3; ++i) scene.clear_colour[i] = fraction_of_31(clear_colour_ >> (5 * i));
+  scene.clear_colour[3] = fraction_of_31(clear_colour_ >> 16);
+  scene.clear_depth = clear_depth_ == 0x7FFF ? 1.0f : static_cast<float>(clear_depth_ << 9) / 16777216.0f;
+  for (std::size_t i = 0; i < scene.toon.size(); ++i)
+    for (unsigned part = 0; part < 3; ++part) scene.toon[i][part] = fraction_of_31(toon_table_[i] >> (5 * part));
+  scene.highlight = (control_ & kHighlight) != 0;
+  // Alpha, six bits: 0 is never drawn; with the alpha test, nor is what has
+  // five bits of alpha at or under the reference.
+  scene.alpha_threshold = ((control_ & kAlphaTest) != 0 ? static_cast<float>(alpha_reference_ & 0x1F) * 2 + 1.5f : 0.5f) / 63.0f;
+
+  // Opaque polygons first, then the translucent ones, each in the order sent.
+  const auto add = [&](bool translucent_pass) {
+    for (const Shape& shape : shapes_) {
+      const bool translucent = shape.alpha < 0x3F || shape.format == 1 || shape.format == 6;
+      if (translucent != translucent_pass) continue;
+      // Left out: polygons drawn as outlines, and shadows.
+      if (shape.alpha == 0 || shape.mode == 3) continue;
+      const HardwareScene::Kind kind = !translucent      ? HardwareScene::Kind::Opaque
+                                       : shape.new_depth ? HardwareScene::Kind::Translucent
+                                                         : HardwareScene::Kind::Overlay;
+      u32 info[4] = {0, 0, shape.mode, 0};
+      if (shape.format != 0) {
+        info[0] = scene_texture(shape);
+        info[1] = static_cast<u32>(shape.size_s) | static_cast<u32>(shape.size_t_) << 16;
+        info[2] |= HardwareScene::kTextured | (shape.repeat_s ? HardwareScene::kRepeatS : 0) |
+                   (shape.repeat_t ? HardwareScene::kRepeatT : 0) | (shape.flip_s ? HardwareScene::kFlipS : 0) |
+                   (shape.flip_t ? HardwareScene::kFlipT : 0);
+      }
+      const GeometryEngine::Polygon& polygon = *shape.polygon;
+      HardwareScene::Vertex corners[10];
+      for (unsigned i = 0; i < polygon.size; ++i) {
+        const Vertex& v = frame.vertices[polygon.first + std::size_t{i}];
+        HardwareScene::Vertex& c = corners[i];
+        const float w = v.w > 0 ? static_cast<float>(v.w) / 4096.0f : 1.0f / 4096.0f;
+        c.position[0] = (static_cast<float>(v.x) / 128.0f - 1.0f) * w;
+        c.position[1] = (1.0f - static_cast<float>(v.y) / 96.0f) * w;
+        c.position[2] = std::clamp(static_cast<float>(v.z) / 16777216.0f, 0.0f, 1.0f) * w;
+        c.position[3] = w;
+        c.texel[0] = static_cast<float>(v.s) / 16.0f;
+        c.texel[1] = static_cast<float>(v.t) / 16.0f;
+        c.colour[0] = static_cast<std::uint8_t>(eight_bits(v.colour));
+        c.colour[1] = static_cast<std::uint8_t>(eight_bits(v.colour >> 6));
+        c.colour[2] = static_cast<std::uint8_t>(eight_bits(v.colour >> 12));
+        c.colour[3] = static_cast<std::uint8_t>(eight_bits(shape.alpha));
+        std::copy(std::begin(info), std::end(info), c.info);
+      }
+      // An uncut polygon of a strip of four-cornered polygons is stored in
+      // the strip's order.
+      if (polygon.strip_order) std::swap(corners[2], corners[3]);
+      const auto number = static_cast<std::uint8_t>(translucent ? shape.number + 1 : 0);
+      if (scene.runs.empty() || scene.runs.back().kind != kind || scene.runs.back().depth_equal != shape.depth_equal ||
+          scene.runs.back().number != number)
+        scene.runs.push_back({static_cast<u32>(scene.vertices.size()), 0, kind, shape.depth_equal, number});
+      // A fan of triangles from the first corner.
+      for (unsigned i = 1; i + 1 < polygon.size; ++i) {
+        scene.vertices.push_back(corners[0]);
+        scene.vertices.push_back(corners[i]);
+        scene.vertices.push_back(corners[i + 1]);
+        scene.runs.back().count += 3;
+      }
+    }
+  };
+  add(false);
+  add(true);
+
+  // Textures not used for a second are forgotten once many are kept.
+  if (decoded_bytes_ > (std::size_t{64} << 20)) {
+    for (auto it = decoded_.begin(); it != decoded_.end();) {
+      if (it->second.last_used + 60 < scene.serial) {
+        decoded_bytes_ -= it->second.pixels->size() * 4;
+        it = decoded_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  frame_ = nullptr;
+  video_ = nullptr;
+  return scene;
 }
 
 void PolygonRenderer::draw_line(int line) {

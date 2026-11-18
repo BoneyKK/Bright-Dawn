@@ -29,6 +29,8 @@ inline constexpr std::string_view kFullscreen = "display.fullscreen";
 inline constexpr std::string_view kVsync = "display.vsync";
 inline constexpr std::string_view kRenderer = "display.renderer";
 inline constexpr std::string_view kTextures = "graphics.textures";
+inline constexpr std::string_view k3DDrawing = "graphics.drawing_3d";
+inline constexpr std::string_view k3DResolution = "graphics.resolution_3d";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";
 inline constexpr std::string_view kLanguage = "game.language";
 inline constexpr std::string_view kRom = "game.rom";
@@ -84,6 +86,12 @@ gfx::ScreenFilter screen_filter(const platform::Settings& settings);
 // Whether the 3D scenes' textures are to be smoothed (bilinear) rather than
 // sharp (nearest, as on the DS).
 bool smooth_textures(const platform::Settings& settings);
+// Whether the graphics hardware is to draw the 3D scenes.
+bool hardware_3d(const platform::Settings& settings);
+// How many times the DS's resolution the graphics hardware draws 3D scenes
+// at (1 to 8), for a screen shown `shown_height` pixels high: as set, or
+// for "auto" the least that is at least as high, so no detail is lost.
+int resolution_3d(const platform::Settings& settings, int shown_height);
 // The language the console is set to, which the game reads at its start.
 nds::UserSettings::Language game_language(const platform::Settings& settings);
 

@@ -191,8 +191,8 @@ if(BD_BUILD_APP)
     set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(SDL3
-      URL https://github.com/libsdl-org/SDL/releases/download/release-3.2.26/SDL3-3.2.26.tar.gz
-      URL_HASH SHA256=dad488474a51a0b01d547cd2834893d6299328d2e30f479a3564088b5476bae2
+      URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.12/SDL3-3.4.12.tar.gz
+      URL_HASH SHA256=f07b958a9ac5020fb7a44cadb957f658b2149c3c8abb4f63145fac9303249db7
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     FetchContent_MakeAvailable(SDL3)
     set(BD_SDL_TARGET SDL3::SDL3-static)
@@ -226,6 +226,7 @@ if(BD_BUILD_APP)
     src/app/hang_watch.cpp
     src/app/fetch.cpp
     src/app/game_screen.cpp
+    src/app/hardware_3d.cpp
     src/app/gui.cpp
     src/app/launcher.cpp
     src/app/menu_skin.cpp

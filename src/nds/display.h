@@ -81,6 +81,18 @@ class Display {
   const std::vector<std::uint32_t>& top_screen() const { return top_; }
   const std::vector<std::uint32_t>& bottom_screen() const { return bottom_; }
 
+  // The 3D picture drawn by the graphics hardware where it can be: the
+  // polygon renderer then makes a scene (PolygonRenderer::build_scene) in
+  // place of the picture, and the main engine marks where it goes. A frame
+  // with a display capture is still drawn here, as the capture needs it.
+  void set_hardware_3d(bool on) { hardware_3d_ = on; }
+  // Of the frame last completed: whether its main engine's screen has
+  // marks for the scene, the main engine's master brightness, and whether
+  // the main engine was on the top screen.
+  bool frame_has_scene() const { return frame_has_scene_; }
+  std::uint16_t frame_brightness() const { return frame_brightness_; }
+  bool frame_main_on_top() const { return frame_main_on_top_; }
+
   DisplayEngine& main_engine() { return main_; }
   DisplayEngine& second_engine() { return second_; }
   std::uint32_t capture_control() const { return capture_control_; }
@@ -97,8 +109,12 @@ class Display {
   DisplayEngine main_, second_;
   std::uint32_t capture_control_ = 0, power_control_ = 0;
   bool capturing_ = false;
-  std::uint64_t swaps_drawn_ = 0;   // The 3D engine's swap count when the 3D picture was last drawn.
-  bool have_3d_ = false;
+  std::uint64_t swaps_drawn_ = 0;   // The 3D engine's swap count when the 3D picture was last drawn,
+  std::uint64_t swaps_built_ = 0;   // and when the scene was last made.
+  bool have_3d_ = false, have_scene_ = false;
+  bool hardware_3d_ = false, scene_this_frame_ = false;
+  bool frame_has_scene_ = false, frame_main_on_top_ = true;
+  std::uint16_t frame_brightness_ = 0;
   std::vector<std::uint32_t> top_, bottom_;
   Statistics statistics_;
   std::map<std::string, std::uint64_t> notes_;

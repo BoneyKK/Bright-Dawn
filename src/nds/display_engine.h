@@ -92,6 +92,16 @@ class DisplayEngine {
   // The 3D picture for background 0 (main engine): kWidth * kHeight pixels
   // of six bits a part with alpha from bit 18, or null for none.
   void set_3d_picture(const std::vector<std::uint32_t>* picture) { picture_3d_ = picture; }
+  // The 3D picture is drawn by the graphics hardware (nds/hardware_scene.h):
+  // the screen is mixed as if the 3D layer were empty, and each pixel where
+  // the 3D layer is on top is marked with how a 3D pixel is mixed there
+  // (the marks below, over the colour). The other layers are mixed with it
+  // as if it were not there.
+  void set_hardware_3d(bool on) { hardware_3d_ = on; }
+  static constexpr std::uint32_t kMark3D = 1u << 31;
+  static constexpr unsigned kMarkEffectShift = 24;  // Two bits: 0 as it is, 1 blended by its alpha, 2 brighter, 3 darker.
+  static constexpr unsigned kMarkFactorShift = 26;  // Five bits: sixteenths, for brighter and darker.
+  std::uint16_t master_brightness() const { return master_brightness_; }
 
   // A frame begins: the reference points of the matrix backgrounds start
   // over.
@@ -130,6 +140,7 @@ class DisplayEngine {
   void place(unsigned background, int x, std::uint32_t colour, bool from_3d = false, std::uint8_t alpha = 0);
   void draw_sprites(int line, bool window_pass);
   void draw_3d(int line);
+  void mark_3d();
   void draw_tiles(unsigned background, int line);
   void draw_matrix_tiles(unsigned background, int line);
   void draw_extended(unsigned background, int line);
@@ -141,6 +152,9 @@ class DisplayEngine {
   const std::uint8_t* const palette_;
   const std::uint8_t* const sprites_;
   const std::vector<std::uint32_t>* picture_3d_ = nullptr;
+  bool hardware_3d_ = false;
+  bool marked_ = false;                       // The line has marks.
+  std::array<std::uint32_t, 256> marks_{};
   const std::uint32_t vram_;  // Where this engine's backgrounds are in video memory.
 
   std::uint32_t control_ = 0;

@@ -82,8 +82,23 @@ std::vector<SettingDef> game_setting_definitions() {
   defs.push_back(choice(key::kRenderer, "Display", "Drawing",
                         "Sets what draws the window, from the next start.",
                         {{"vulkan", "Vulkan"}, {"system", "The system's own"}}, "vulkan"));
+  defs.push_back(choice(key::k3DDrawing, "Graphics", "3D drawing",
+                        "Sets what draws 3D scenes: the graphics hardware (fast, sharper) or the processor (exact).",
+                        {{"hardware", "Graphics hardware"}, {"processor", "Processor"}}, "hardware"));
+  defs.push_back(choice(key::k3DResolution, "Graphics", "3D resolution",
+                        "Sets how many times the DS's resolution the graphics hardware draws 3D scenes at.",
+                        {{"auto", "To fit the window"},
+                         {"1", "1x (256 by 192)"},
+                         {"2", "2x"},
+                         {"3", "3x"},
+                         {"4", "4x"},
+                         {"5", "5x"},
+                         {"6", "6x"},
+                         {"7", "7x"},
+                         {"8", "8x (2048 by 1536)"}},
+                        "auto"));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
-                        "Sets whether the textures of 3D scenes are sharp or smoothed.",
+                        "Sets whether the processor draws 3D textures sharp or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));
   defs.push_back(toggle(key::kPlayBuilt, "Game", "Play the built game",
                         "Plays the game built from your ROM, when there is one.",
@@ -244,6 +259,14 @@ gfx::ScreenFilter screen_filter(const platform::Settings& settings) {
 }
 
 bool smooth_textures(const platform::Settings& settings) { return settings.choice(key::kTextures) == "smooth"; }
+
+bool hardware_3d(const platform::Settings& settings) { return settings.choice(key::k3DDrawing) == "hardware"; }
+
+int resolution_3d(const platform::Settings& settings, int shown_height) {
+  const std::string chosen = settings.choice(key::k3DResolution);
+  if (chosen.size() == 1 && chosen[0] >= '1' && chosen[0] <= '8') return chosen[0] - '0';
+  return std::clamp((shown_height + 191) / 192, 1, 8);
+}
 
 nds::UserSettings::Language game_language(const platform::Settings& settings) {
   using Language = nds::UserSettings::Language;

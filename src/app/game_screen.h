@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "app/app.h"
+#include "app/hardware_3d.h"
 #include "app/settings_book.h"
 #include "gfx/screen_layout.h"
 #include "nds/console.h"
@@ -91,6 +92,12 @@ class GameScreen {
   bool enlarged_stale_ = true;
   bool enlarging_failed_ = false;
   int largest_texture_ = 4096;
+  // The 3D scenes by the graphics hardware (Settings, Graphics): tried once
+  // when first asked for; the main engine's screen as it made it, for the
+  // frame last shown, or null when the frame was drawn here.
+  Hardware3D hardware_;
+  bool hardware_tried_ = false, hardware_failed_ = false;
+  SDL_Texture* main_3d_ = nullptr;
   std::vector<SDL_Gamepad*> gamepads_;
   std::vector<Key> keys_;
   std::vector<PadButton> pad_buttons_;

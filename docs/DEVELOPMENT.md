@@ -66,9 +66,9 @@ melonDS's display. The screen is enlarged without smoothing to the next whole
 multiple of its size, then smoothed (bilinear) down to the window, both by the
 graphics hardware. *Smooth* is plain bilinear, *Sharp* plain nearest. The
 textures of 3D scenes are separate: sharp, as on the DS, unless *Textures in 3D
-scenes* (Settings, Graphics) is set to smooth (bilinear); polygons drawn
-without perspective, as a game draws its HUD in 3D, keep their texels either
-way.
+scenes* (Settings, Graphics) is set to smooth (bilinear) while the processor
+draws them; polygons drawn without perspective, as a game draws its HUD in
+3D, keep their texels either way.
 
 The settings are kept in `settings.txt` in the per-user data directory
 (`%LOCALAPPDATA%\BrightDawn` on Windows, `~/.local/share/bright-dawn` on
@@ -85,7 +85,13 @@ Log) records more.
 Bright Dawn draws through Vulkan where the computer has it, and through the
 system's own renderer (Direct3D on Windows, OpenGL elsewhere) where it does
 not: *Drawing* (Settings, Display) or `--renderer system` chooses the latter.
-The log says which one is used.
+The log says which one is used. With Vulkan, the graphics hardware also draws
+the 3D scenes, at *3D resolution* (Settings, Graphics; `--3d-resolution`)
+times the DS's, by default the least that fills the screen as shown; *3D
+drawing* or `--3d processor` has the processor draw them as the DS does,
+256 by 192, and it does where the graphics hardware cannot. The shaders are
+kept compiled in `src/app/hardware_shaders.h`; after a change to
+`src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 
 `bright-dawn --help` lists the options. Some change a setting for one run
 (`--scale`, `--side-by-side`, `--textures smooth`, ...); `--no-settings` uses
@@ -147,7 +153,7 @@ seconds instead of 24, unthrottled). See [docs/BOOT.md](BOOT.md).
 ## Building
 
 Requirements: CMake 3.20+ and a C++20 compiler. The window, `bright-dawn`,
-uses SDL 3: the build downloads release 3.2.26 from the SDL project, checks it
+uses SDL 3: the build downloads release 3.4.12 from the SDL project, checks it
 against its SHA-256 and builds it in (`-DBD_SYSTEM_SDL=ON` uses an installed
 SDL 3 instead; `-DBD_BUILD_APP=OFF` leaves the window out). On Linux, SDL
 needs the development headers of the window systems it should support, for

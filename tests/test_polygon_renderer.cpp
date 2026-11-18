@@ -805,3 +805,56 @@ TEST(renderer_smoothing_keeps_outlines_and_mixes_alpha) {
   f.draw();
   CHECK(f.at(1, 0) == rgba(44, 19, 0, 45));
 }
+
+TEST(renderer_scene_for_the_graphics_hardware) {
+  using Scene = bd::nds::HardwareScene;
+  Fixture f;
+  f.control(PolygonRenderer::kTextures);
+  f.fill_textures();
+  for (u32 t = 0; t < 8; ++t)
+    for (u32 s = 0; s < 8; ++s) f.texture_word((t * 8 + s) * 2, 0x8000 | s | t << 5);
+  f.texture_word((2 * 8 + 2) * 2, 2 | 2u << 5);  // Without its alpha bit.
+  f.hand_over_textures();
+  f.rectangle(0, 0, 128, 96, kRed, kOpaque);                                   // Opaque: two triangles.
+  f.textured_square(8, format(7) | kRepeatS, alpha(15) | number(5));            // Translucent, textured.
+  f.rectangle(0, 0, 8, 8, kRed, alpha(0));                                      // An outline: left out.
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque | mode(3));                             // A shadow: left out.
+  const Scene& scene = f.r.build_scene(f.frame, f.video);
+  CHECK(scene.serial == 1 && scene.vertices.size() == 12 && scene.runs.size() == 2);
+  CHECK(scene.runs[0].kind == Scene::Kind::Opaque && scene.runs[0].first == 0 && scene.runs[0].count == 6);
+  CHECK(scene.runs[1].kind == Scene::Kind::Overlay && scene.runs[1].count == 6 && scene.runs[1].number == 6);
+  // Places from the top left of the screen to clip space, depth 0 to 1.
+  const Scene::Vertex& corner = scene.vertices[0];
+  const float w = corner.position[3];
+  CHECK(w == 1.0f && corner.position[0] == -1.0f && corner.position[1] == 1.0f && corner.position[2] == 0.25f);
+  CHECK(scene.vertices[2].position[0] == 0.0f && scene.vertices[2].position[1] == 0.0f);
+  CHECK(corner.colour[0] == 255 && corner.colour[1] == 0 && corner.colour[3] == 255);
+  // The textured one: its texture decoded once, to bytes.
+  const Scene::Vertex& textured = scene.vertices[6];
+  CHECK(textured.colour[3] == (31 << 2 | 31 >> 4) && textured.info[0] == 0 && textured.info[1] == (8u | 8u << 16));
+  CHECK(textured.info[2] == (Scene::kTextured | Scene::kRepeatS));
+  CHECK(scene.textures.size() == 1 && scene.textures[0].width == 8 && scene.textures[0].height == 8);
+  const auto& pixels = *scene.textures[0].pixels;
+  CHECK(pixels[5 * 8 + 3] == (28u | 44u << 8 | 255u << 24) && (pixels[2 * 8 + 2] >> 24) == 0);
+  // The same texture again is the same decoded picture; changed, another.
+  const std::uint64_t key = scene.textures[0].key;
+  const auto* decoded = scene.textures[0].pixels.get();
+  f.r.build_scene(f.frame, f.video);
+  CHECK(scene.serial == 2 && scene.textures[0].key == key && scene.textures[0].pixels.get() == decoded);
+  f.fill_textures();
+  f.texture_word(0, 0x8000 | 31);
+  f.hand_over_textures();
+  f.r.build_scene(f.frame, f.video);
+  CHECK(scene.textures[0].key != key && ((*scene.textures[0].pixels)[0] & 0xFF) == 255);
+  // What is behind: the clear colour and depth, and the alpha under which
+  // nothing is drawn (0 always; with the alpha test, up to the reference).
+  f.io.write(PolygonRenderer::kClearColour, 4, 31u | 16u << 16);
+  f.io.write(PolygonRenderer::kClearDepth, 2, 0x4000);
+  f.r.build_scene(f.frame, f.video);
+  CHECK(scene.clear_colour[0] == 1.0f && scene.clear_colour[1] == 0.0f && scene.clear_colour[3] == 16.0f / 31.0f);
+  CHECK(scene.clear_depth == 0.5f && scene.alpha_threshold == 0.5f / 63.0f);
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kAlphaTest);
+  f.io.write(PolygonRenderer::kAlphaTestReference, 2, 10);
+  f.r.build_scene(f.frame, f.video);
+  CHECK(scene.alpha_threshold == 21.5f / 63.0f);
+}

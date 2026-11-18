@@ -37,7 +37,8 @@
 // - Time. A frame is drawn whole when asked. The hardware draws line by
 //   line, ahead of the display, and tells a program when it falls behind;
 //   that never happens here.
-// - Other resolutions than the hardware's.
+// - Other resolutions than the hardware's. For those, build_scene hands the
+//   frame to the graphics hardware instead (nds/hardware_scene.h).
 //
 // One choice that is not the hardware's: textures may be smoothed
 // (TextureFilter::Bilinear), each pixel then mixed from the four texels
@@ -55,11 +56,13 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/workers.h"
 #include "nds/arm9_io.h"
 #include "nds/geometry_engine.h"
+#include "nds/hardware_scene.h"
 #include "nds/video_memory.h"
 
 namespace bd::nds {
@@ -117,6 +120,11 @@ class PolygonRenderer {
   // Draws a frame. Textures are read from `video` as it is now.
   const Image& draw(const GeometryEngine::Frame& frame, const VideoMemory& video);
   const Image& image() const { return image_; }
+  // Makes the frame ready for the graphics hardware instead of drawing it.
+  // Textures are read from `video` as it is now, and decoded only when their
+  // contents were not seen before.
+  const HardwareScene& build_scene(const GeometryEngine::Frame& frame, const VideoMemory& video);
+  const HardwareScene& scene() const { return scene_; }
 
   // State, for tests and reports.
   std::uint32_t clear_colour() const { return clear_colour_; }
@@ -155,6 +163,9 @@ class PolygonRenderer {
     bool smooth = false;           // Its texels mixed (TextureFilter::Bilinear).
   };
 
+  void make_shapes(const GeometryEngine::Frame& frame);
+  // The index in scene_.textures of a shape's texture, decoded if new.
+  std::uint32_t scene_texture(const Shape& shape);
   void draw_line(int line);
   void draw_polygon(int line, const Shape& shape);
   void finish_line(int line);
@@ -188,6 +199,18 @@ class PolygonRenderer {
   // writes only that line, and reads only what no line's drawing changes
   // (finish_line reads the lines next to its own, so all are drawn first).
   std::unique_ptr<core::Workers> workers_;
+
+  // For the graphics hardware: the last scene, and the textures decoded so
+  // far by their contents, each with the scene that last used it.
+  struct Decoded {
+    std::shared_ptr<const std::vector<std::uint32_t>> pixels;
+    int width = 0, height = 0;
+    std::uint64_t last_used = 0;
+  };
+  HardwareScene scene_;
+  std::unordered_map<std::uint64_t, Decoded> decoded_;
+  std::size_t decoded_bytes_ = 0;
+  std::unordered_map<std::uint64_t, std::uint32_t> scene_textures_;  // This scene's, by texture and palette words.
 };
 
 }  // namespace bd::nds

@@ -220,3 +220,43 @@ TEST(display_the_3d_picture) {
   f.frame();
   CHECK(f.display.statistics().pictures_3d == 2 && f.bank_a(0, 191) == 0x8000);
 }
+
+TEST(display_marks_where_the_graphics_hardware_puts_the_3d_scene) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.backdrop(false, kGreen15);
+  // Background 0 is 3D; blended over the backdrop (a second target).
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.io.write(0x04000050, 2, 1u | 1u << 13);
+  f.frame();
+  f.frame();
+  // A scene was made in place of the picture; the screen is the backdrop,
+  // marked everywhere, to be blended by the 3D pixel's alpha.
+  CHECK(f.display.frame_has_scene() && f.display.statistics().pictures_3d == 1);
+  CHECK(f.renderer.scene().serial == 1 && f.renderer.scene().vertices.size() == 3);
+  const u32 pixel = f.display.bottom_screen()[191 * 256];
+  CHECK((pixel & 0x3FFFF) == kGreen && (pixel & DisplayEngine::kMark3D) != 0);
+  CHECK(((pixel >> DisplayEngine::kMarkEffectShift) & 3) == 1);
+  // Darkened by the blend effect instead, by sixteenths.
+  f.io.write(0x04000050, 2, 1u | 3u << 6);
+  f.io.write(0x04000054, 2, 8);
+  f.frame();
+  const u32 darker = f.display.bottom_screen()[0];
+  CHECK(((darker >> DisplayEngine::kMarkEffectShift) & 3) == 3 && ((darker >> DisplayEngine::kMarkFactorShift) & 31) == 8);
+  // Not marked where a window hides background 0 (window 0, from x 0 to
+  // 254, shows all but it), nor while a capture needs the picture drawn here.
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8 | 1u << 13);
+  f.io.write(0x04000040, 2, 0x00FF);
+  f.io.write(0x04000044, 2, 0x00C0);
+  f.io.write(0x04000048, 2, 0x3E);
+  f.io.write(0x0400004A, 2, 0x3F);
+  f.frame();
+  CHECK((f.display.bottom_screen()[0] & DisplayEngine::kMark3D) == 0 &&
+        (f.display.bottom_screen()[255] & DisplayEngine::kMark3D) != 0);
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.io.write(0x04000050, 2, 0);
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20);
+  f.frame();
+  CHECK(!f.display.frame_has_scene() && f.display.bottom_screen()[191 * 256] == rgb(63, 0, 0));
+}

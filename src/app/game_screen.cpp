@@ -88,6 +88,17 @@ void GameScreen::apply_settings(bool first) {
   for (SDL_Texture* texture : {top_, bottom_})
     SDL_SetTextureScaleMode(texture, filter_ == gfx::ScreenFilter::Smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
   enlarged_stale_ = true;
+  // The 3D scenes: by the graphics hardware where it can, else here.
+  bool hardware = ui::hardware_3d(s);
+  if (hardware && !hardware_tried_) {
+    hardware_tried_ = true;
+    std::string why;
+    if (!hardware_.open(app_.renderer, why))
+      log::warning("3d", "the graphics hardware cannot draw 3D scenes, so the processor draws them: " + why);
+  }
+  hardware = hardware && hardware_.is_open() && !hardware_failed_;
+  console_.display().set_hardware_3d(hardware);
+  if (!hardware) main_3d_ = nullptr;
   const bool smooth = ui::smooth_textures(s);
   console_.polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
                                                         : nds::PolygonRenderer::TextureFilter::Nearest);
@@ -329,8 +340,26 @@ void GameScreen::upload_screens() {
     gfx::to_rgba_bytes(screen.data(), screen.size(), pixels_.data());
     SDL_UpdateTexture(texture, nullptr, pixels_.data(), gfx::kScreenWidth * 4);
   };
-  upload(top_, console_.display().top_screen());
-  upload(bottom_, console_.display().bottom_screen());
+  const nds::Display& display = console_.display();
+  const bool main_on_top = display.frame_main_on_top();
+  // The main engine's screen with the scene the graphics hardware drew, at
+  // the resolution for the screen as it was last laid out.
+  main_3d_ = nullptr;
+  const gfx::Rect& main_place = main_on_top ? screens_.top : screens_.bottom;
+  if (display.frame_has_scene() && hardware_.is_open() && main_place.h > 0) {
+    main_3d_ = hardware_.draw(console_.polygon_renderer().scene(), main_on_top ? display.top_screen() : display.bottom_screen(),
+                              display.frame_brightness(), ui::resolution_3d(app_.settings, static_cast<int>(main_place.h)));
+    if (main_3d_ == nullptr) {
+      // Not again: the processor draws the 3D scenes from the next frame.
+      log::warning("3d", "the graphics hardware failed to draw a 3D scene, so the processor draws them from now on");
+      hardware_failed_ = true;
+      console_.display().set_hardware_3d(false);
+    } else {
+      SDL_SetTextureScaleMode(main_3d_, filter_ == gfx::ScreenFilter::Sharp ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+    }
+  }
+  if (main_3d_ == nullptr || !main_on_top) upload(top_, display.top_screen());
+  if (main_3d_ == nullptr || main_on_top) upload(bottom_, display.bottom_screen());
   enlarged_stale_ = true;
 }
 
@@ -384,6 +413,9 @@ void GameScreen::draw() {
                        static_cast<float>(r.h)};
     SDL_RenderTexture(app_.renderer, texture, nullptr, &to);
   };
+  // The graphics hardware's picture is already enlarged a whole number of
+  // times, so it is only smoothed (unless sharp) the rest of the way.
+  if (main_3d_ != nullptr) (console_.display().frame_main_on_top() ? top : bottom) = main_3d_;
   place(top, screens_.top);
   place(bottom, screens_.bottom);
 }
