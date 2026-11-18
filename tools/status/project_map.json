@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "Every frame shown with vsync; the window title shows true rates and the code that runs",
+    "what": "3D drawn on several threads; controls can be bound; the touch screen can be shown alone",
     "date": "2026-11-18"
   },
   "statuses": {
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked or side by side, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet."
     },
     {
       "part": "audio",
@@ -405,7 +405,7 @@
     {
       "part": "input",
       "status": "done",
-      "now": "Keyboard, any number of controllers, the mouse as the stylus."
+      "now": "Keyboard, any number of controllers, the mouse as the stylus. Keys and buttons can be bound in Settings, Controls."
     },
     {
       "part": "ui, app",
