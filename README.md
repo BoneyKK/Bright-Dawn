@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (18 November 2026): Report a problem from the program; the game's language is a setting
+**Last change** (18 November 2026): Every frame shown with vsync; the window title shows true rates and the code that runs
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
