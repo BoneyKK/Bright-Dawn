@@ -39,6 +39,7 @@
 #include "nds/console.h"
 #include "nds/keypad.h"
 #include "nds/program.h"
+#include "nds/save_keeper.h"
 #include "platform/crash_log.h"
 #include "platform/paths.h"
 #include "rom/game_id.h"
@@ -311,6 +312,24 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
               translated_functions == 0 ? ": every instruction is interpreted" : "");
   nds::Console console(loaded.value(), translation);
   if (rom) console.insert_cartridge(rom.value().bytes());
+
+  // The game's save, kept between runs (nds/save_keeper.h): one file for each
+  // release, as their saves may differ. A run from a code directory has no
+  // cartridge, so no save is kept for it.
+  std::optional<nds::SaveKeeper> keeper;
+  if (rom && !a.user_data.empty()) {
+    const rom::KnownTitle* title = rom::identify_title(rom.value().header());
+    keeper.emplace(console.save_memory(), a.user_data / "saves" / (std::string(title->game_code) + ".sav"));
+    if (Status status = keeper->load(); status) {
+      log::info("game", "the save is kept in " + app::utf8(keeper->path()));
+    } else {
+      log::warning("game", status.error().message + "; nothing of this run will be saved");
+      complain(a.window, status.error().message + ".\n\nThe game starts without it, and nothing of this run "
+                         "will be saved. The file is left as it is.");
+    }
+  } else {
+    log::info("game", "no save is kept for this run");
+  }
   if (auto status = console.direct_boot(); !status) {
     complain(a.window, status.error().message);
     played.status = 1;
@@ -330,8 +349,10 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     // A crash or a hang from here on names where the game's code was.
     platform::set_crash_guest_address(&console.machine().last_entered());
     app::HangWatch hang_watch(console.machine().last_entered(), std::chrono::seconds(10));
-    console.on_frame = [&screen, &hang_watch] {
+    console.on_frame = [&screen, &hang_watch, &keeper] {
       hang_watch.pause();
+      if (keeper)
+        if (Status status = keeper->frame(); !status) log::warning("game", status.error().message);
       const bool go_on = screen.frame();
       hang_watch.resume();
       return go_on;
@@ -341,6 +362,13 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     hang_watch.pause();
     console.on_frame = nullptr;
     platform::set_crash_guest_address(nullptr);
+  }
+  if (keeper) {
+    if (Status status = keeper->flush(); !status) {
+      log::warning("game", status.error().message);
+      complain(a.window, "The game's save could not be written: " + status.error().message);
+    }
+    log::writef(log::Level::Info, "game", "the save file was written %" PRIu64 " times", keeper->writes());
   }
   const std::uint64_t frames = console.display().statistics().frames;
   std::printf("%" PRIu64 " frames shown\n", frames);

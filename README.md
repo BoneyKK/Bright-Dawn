@@ -34,14 +34,14 @@ affiliated with or endorsed by Nintendo or Camelot Software Planning.
 
 In short: **not playable yet.** The game runs through its opening to the name
 entry, built or interpreted, and has not been tried beyond that. There is no
-sound, and the game's save is not kept between runs. Every part in detail:
+sound. The game's save is kept between runs. Every part in detail:
 [docs/STATUS.md](docs/STATUS.md). 
 
 The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (17 November 2026): The project map is shown in the README too; pre-release descriptions start with the state; README restructured
+**Last change** (18 November 2026): The game's save is kept between runs
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -54,7 +54,7 @@ the state of each, and what comes next.
 | `game builder` | 🟢 Works | Downloads its compiler (and Python on Windows) for the build and deletes it after. The downloaded compiler is not yet tried on a real build. |
 | `game library` | 🟢 Works | Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24). |
 | `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). |
-| `nds` | 🟡 Partly works | The console model runs the game to its name entry. No music, saves not kept between runs, beyond the name entry not yet tried. |
+| `nds` | 🟡 Partly works | The console model runs the game to its name entry. The game's save is kept between runs. No music, beyond the name entry not yet tried. |
 | `gfx` | 🟢 Works | Both screens in one window, any size, stacked or side by side, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. Widescreen and sharper 3D: not yet. |
 | `audio` | ⚪ Not started | The sound hardware is modelled, but nothing plays it to your speakers. |
 | `input` | 🟢 Works | Keyboard, any number of controllers, the mouse as the stylus. |
@@ -66,8 +66,7 @@ the state of each, and what comes next.
 
 1. Play on from the name entry, by hand and with scripted input, and fix what stops the game.
 2. Music: the second processor's sequence player, and sound out of your speakers.
-3. Saves kept between runs.
-4. Widescreen, sharper 3D, and mods.
+3. Widescreen, sharper 3D, and mods.
 
 The same, as a page of its own: [the project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8).
 <!-- project-map:end -->

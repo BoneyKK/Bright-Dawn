@@ -83,8 +83,13 @@ The log says which one is used.
 (`--scale`, `--side-by-side`, `--textures smooth`, ...); `--no-settings` uses
 the defaults. `--hold` and `--touch` press a button or touch the screen over
 given frames, and `--frames` with `--capture` write the window's last frame to
-a file: together they reproduce a run without a person at the keyboard. The
-game's save is not kept between runs yet.
+a file: together they reproduce a run without a person at the keyboard.
+
+The game's save is kept in `saves` in the user data directory, one file for
+each release (`BO5E.sav`, `BO5P.sav` or `BO5J.sav`): the chip's 256 KiB as
+they are, as many emulators keep a DS save. Beside it, `.sav.backup` is the
+save as it was before the last run that changed it. A save file that cannot
+be used is said so at the start and never written over.
 
 ## Building the game from your ROM
 

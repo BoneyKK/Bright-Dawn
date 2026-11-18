@@ -26,6 +26,9 @@ controller's guide button): the menu, with the settings. F11 or Alt+Enter:
 full screen. Tab: screens side by side or stacked. F12: whole-number scaling
 or filling the window.
 
+The game's save is kept in `saves` in the user data folder (below), with a
+copy of it as it was before the last run that changed it (`.sav.backup`).
+
 ## Reporting a problem
 
 Every run writes a log, in

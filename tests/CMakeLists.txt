@@ -23,6 +23,7 @@ add_executable(bd_tests
   test_polygon_renderer.cpp
   test_console.cpp
   test_program.cpp
+  test_save_keeper.cpp
   test_save_memory.cpp
   test_sound_driver.cpp
   test_sound_hardware.cpp

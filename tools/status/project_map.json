@@ -2,8 +2,8 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "The project map is shown in the README too; pre-release descriptions start with the state; README restructured",
-    "date": "2026-11-17"
+    "what": "The game's save is kept between runs",
+    "date": "2026-11-18"
   },
   "statuses": {
     "done": "Works",
@@ -208,7 +208,7 @@
           },
           {
             "y": 402,
-            "text": "Partly: second processor stand-in (4 of its services; no music sequences), save memory (not kept between runs),"
+            "text": "Partly: second processor stand-in (4 of its services, the save chip kept in a file; no music sequences),"
           },
           {
             "y": 420,
@@ -390,7 +390,7 @@
     {
       "part": "nds",
       "status": "part",
-      "now": "The console model runs the game to its name entry. No music, saves not kept between runs, beyond the name entry not yet tried."
+      "now": "The console model runs the game to its name entry. The game's save is kept between runs. No music, beyond the name entry not yet tried."
     },
     {
       "part": "gfx",
@@ -426,7 +426,6 @@
   "next": [
     "Play on from the name entry, by hand and with scripted input, and fix what stops the game.",
     "Music: the second processor's sequence player, and sound out of your speakers.",
-    "Saves kept between runs.",
     "Widescreen, sharper 3D, and mods."
   ]
 }
