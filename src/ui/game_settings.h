@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gfx/screen_layout.h"
+#include "nds/user_settings.h"
 #include "platform/settings.h"
 
 namespace bd::ui {
@@ -25,6 +26,7 @@ inline constexpr std::string_view kVsync = "display.vsync";
 inline constexpr std::string_view kRenderer = "display.renderer";
 inline constexpr std::string_view kTextures = "graphics.textures";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";
+inline constexpr std::string_view kLanguage = "game.language";
 inline constexpr std::string_view kRom = "game.rom";
 inline constexpr std::string_view kBuildJobs = "builder.jobs";
 inline constexpr std::string_view kBuildCompiler = "builder.compiler";
@@ -41,6 +43,8 @@ gfx::ScreenFilter screen_filter(const platform::Settings& settings);
 // Whether the 3D scenes' textures are to be smoothed (bilinear) rather than
 // sharp (nearest, as on the DS).
 bool smooth_textures(const platform::Settings& settings);
+// The language the console is set to, which the game reads at its start.
+nds::UserSettings::Language game_language(const platform::Settings& settings);
 
 // Where the settings are kept: settings.txt in the user data directory.
 std::filesystem::path settings_file(const std::filesystem::path& user_data);

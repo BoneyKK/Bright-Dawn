@@ -30,7 +30,7 @@ at a glance, with what comes next.
 | Sound | Begun, tested: the sound hardware (channels, mixer, capture units) and the part of the second processor's sound program that drives it directly, with its alarms. The real program's echo set-up runs on it. The music player (sequences) is not there, so nothing is heard, and there is no audio device yet |
 | Buttons and lid | Done, tested: the main program's register and what the second processor passes on. Driven by the window |
 | Save memory (256 KiB serial flash) | Done, tested; the real program reads it, and it is kept in a file between runs (`saves` in the user data directory), with a copy of the save before the last run that changed it |
-| Console settings the game reads (language, owner, network address) | Done, tested. Fixed values for now; not yet a user setting |
+| Console settings the game reads (language, owner, network address) | Done, tested. The language is a setting (Settings, Game, or `--language`): on the real European ROM, German gives the German title and name entry. The others are fixed values |
 | BIOS calls | 12 of the 17 the game has wrappers for, tested: 9 natively, 3 that wait for interrupts as this project's own code on the processor |
 | DMA | Transfers that start at once, transfers fed by the cartridge and transfers timed by the display's blanks: done, tested. Transfers started by other hardware events: not yet |
 | Cartridge slot (reading data) | Done, tested, and used by the real program to read its file tables and overlays |

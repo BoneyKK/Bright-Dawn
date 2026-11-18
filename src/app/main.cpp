@@ -100,6 +100,8 @@ constexpr const char* kUsage =
     "                        sharp (nearest)\n"
     "  --textures MODE       3D scenes' textures: sharp (nearest, as on the DS) or\n"
     "                        smooth (bilinear)\n"
+    "  --language LANGUAGE   the console's language, which the game shows its text in:\n"
+    "                        english, french, german, italian, spanish or japanese\n"
     "  --renderer WAY        drawing the window: vulkan (the default; the system's own\n"
     "                        where Vulkan cannot be used) or system\n"
     "  --log-level LEVEL     error, warning, info or debug\n"
@@ -312,6 +314,10 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
               translated_functions == 0 ? ": every instruction is interpreted" : "");
   nds::Console console(loaded.value(), translation);
   if (rom) console.insert_cartridge(rom.value().bytes());
+  nds::UserSettings user = console.user_settings();
+  user.language = ui::game_language(a.settings);
+  console.set_user_settings(user);
+  log::info("game", "the console's language: " + a.settings.value(ui::key::kLanguage));
 
   // The game's save, kept between runs (nds/save_keeper.h): one file for each
   // release, as their saves may differ. A run from a code directory has no
@@ -545,6 +551,8 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kScreenFilter, argv[++i]);
     } else if (arg == "--renderer" && has_value) {
       cl.overrides.emplace_back(ui::key::kRenderer, argv[++i]);
+    } else if (arg == "--language" && has_value) {
+      cl.overrides.emplace_back(ui::key::kLanguage, argv[++i]);
     } else if (arg == "--textures" && has_value) {
       cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
     } else if (arg == "--log-level" && has_value) {

@@ -85,6 +85,18 @@ std::vector<SettingDef> game_setting_definitions() {
                         "When the game has been built from your ROM, play that: its code runs natively, much "
                         "faster than the interpreter.",
                         true));
+  defs.push_back(choice(key::kLanguage, "Game", "Language",
+                        "The language the console is set to. The game shows its text in it if your copy of the "
+                        "game has it: the European release has English, French, German, Italian and Spanish; "
+                        "the American one English; the Japanese one Japanese. Otherwise the game chooses one "
+                        "itself. Takes effect when the game next starts.",
+                        {{"english", "English"},
+                         {"french", "French (Fran\u00e7ais)"},
+                         {"german", "German (Deutsch)"},
+                         {"italian", "Italian (Italiano)"},
+                         {"spanish", "Spanish (Espa\u00f1ol)"},
+                         {"japanese", "Japanese"}},
+                        "english"));
   SettingDef rom;
   rom.key = std::string(key::kRom);
   rom.label = "ROM";
@@ -132,6 +144,17 @@ gfx::ScreenFilter screen_filter(const platform::Settings& settings) {
 }
 
 bool smooth_textures(const platform::Settings& settings) { return settings.choice(key::kTextures) == "smooth"; }
+
+nds::UserSettings::Language game_language(const platform::Settings& settings) {
+  using Language = nds::UserSettings::Language;
+  const std::string& v = settings.choice(key::kLanguage);
+  if (v == "french") return Language::French;
+  if (v == "german") return Language::German;
+  if (v == "italian") return Language::Italian;
+  if (v == "spanish") return Language::Spanish;
+  if (v == "japanese") return Language::Japanese;
+  return Language::English;
+}
 
 std::filesystem::path settings_file(const std::filesystem::path& user_data) { return user_data / "settings.txt"; }
 

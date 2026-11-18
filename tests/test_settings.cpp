@@ -162,6 +162,15 @@ TEST(game_settings_are_valid_and_shown_in_chapters) {
   CHECK(s.set(bd::ui::key::kScreenFilter, "sharp").ok() && bd::ui::screen_filter(s) == bd::gfx::ScreenFilter::Sharp);
   CHECK(s.set(bd::ui::key::kScreenFilter, "smooth").ok() && bd::ui::screen_filter(s) == bd::gfx::ScreenFilter::Smooth);
   CHECK(s.set(bd::ui::key::kTextures, "smooth").ok() && bd::ui::smooth_textures(s));
+  // The console's language: English unless chosen, each choice the
+  // firmware's own value for it.
+  using Language = bd::nds::UserSettings::Language;
+  CHECK(bd::ui::game_language(s) == Language::English);
+  const std::pair<const char*, Language> languages[] = {{"french", Language::French},   {"german", Language::German},
+                                                        {"italian", Language::Italian}, {"spanish", Language::Spanish},
+                                                        {"japanese", Language::Japanese}, {"english", Language::English}};
+  for (const auto& [name, language] : languages) CHECK(s.set(bd::ui::key::kLanguage, name).ok() && bd::ui::game_language(s) == language);
+  CHECK(!s.set(bd::ui::key::kLanguage, "klingon").ok() && bd::ui::game_language(s) == Language::English);
   const bd::gfx::LayoutOptions defaults = bd::ui::layout_options(s);
   CHECK(defaults.arrangement == bd::gfx::Arrangement::Stacked && defaults.scaling == bd::gfx::Scaling::WholeNumbers);
   CHECK(defaults.gap == 0 && !defaults.bottom_first);
