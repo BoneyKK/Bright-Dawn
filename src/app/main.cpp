@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -387,6 +388,24 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
               " interrupts taken, %" PRIu64 " sleeps",
               frames, stats.interpreted_instructions, stats.interpreter_entries.size(), stats.interrupts_taken,
               console.sleeps());
+  // Where the time went: translated code, the interpreter behind it, and the
+  // places the interpreter was entered most (gaps in the translation).
+  log::writef(log::Level::Info, "game",
+              "%" PRIu64 " instructions run by translated code; from the interpreter %" PRIu64
+              " calls and %" PRIu64 " jumps back into it; %" PRIu64 " overlay translations checked, %" PRIu64
+              " rejected",
+              stats.translated_instructions, stats.native_calls_from_interpreter, stats.native_jumps_from_interpreter,
+              stats.translations_checked, stats.translations_rejected);
+  {
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> entries;
+    for (const auto& [address, count] : stats.interpreter_entries) entries.emplace_back(count, address);
+    const std::size_t shown = std::min<std::size_t>(entries.size(), 10);
+    std::partial_sort(entries.begin(), entries.begin() + static_cast<std::ptrdiff_t>(shown), entries.end(),
+                      std::greater<>());
+    for (std::size_t i = 0; i < shown; ++i)
+      log::writef(log::Level::Info, "game", "interpreter entered at 0x%08" PRIX32 " %" PRIu64 " times",
+                  entries[i].second, entries[i].first);
+  }
   if (stats.nesting_dropped != 0)
     log::writef(log::Level::Info, "game",
                 "call sites that were never returned to were let go of %" PRIu64 " times (%u deep each time)",

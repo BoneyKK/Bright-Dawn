@@ -53,9 +53,11 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "core/workers.h"
 #include "nds/arm9_io.h"
 #include "nds/geometry_engine.h"
 #include "nds/video_memory.h"
@@ -182,6 +184,10 @@ class PolygonRenderer {
   std::array<bool, kHeight> stencil_cleared_{};
   Image image_;
   std::map<std::string, std::uint64_t> notes_;
+  // The lines are drawn at once on several threads: each line's drawing
+  // writes only that line, and reads only what no line's drawing changes
+  // (finish_line reads the lines next to its own, so all are drawn first).
+  std::unique_ptr<core::Workers> workers_;
 };
 
 }  // namespace bd::nds

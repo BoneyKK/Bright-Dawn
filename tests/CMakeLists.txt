@@ -29,6 +29,7 @@ add_executable(bd_tests
   test_sound_hardware.cpp
   test_second_processor.cpp
   test_problem_report.cpp
+  test_workers.cpp
   test_settings.cpp
   test_system_control.cpp
   test_timing.cpp

@@ -169,8 +169,9 @@ const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame&
   const std::size_t pixels = static_cast<std::size_t>(kWidth) * kHeight;
   for (std::vector<Pixel>& layer : layers_) layer.assign(pixels, Pixel{});
   stencil_.assign(pixels, 0);
-  for (int line = 0; line < kHeight; ++line) draw_line(line);
-  for (int line = 0; line < kHeight; ++line) finish_line(line);
+  if (!workers_) workers_ = std::make_unique<core::Workers>();
+  workers_->for_each(kHeight, [this](std::size_t line) { draw_line(static_cast<int>(line)); });
+  workers_->for_each(kHeight, [this](std::size_t line) { finish_line(static_cast<int>(line)); });
 
   image_.resize(pixels);
   for (std::size_t i = 0; i < pixels; ++i) image_[i] = layers_[0][i].colour;
@@ -206,7 +207,7 @@ void PolygonRenderer::draw_polygon(int line, const Shape& shape) {
   const int size = polygon.size;
   const u32 uline = static_cast<u32>(line);
 
-  const Vertex* vertices[10];
+  const Vertex* vertices[10] = {};
   for (int i = 0; i < size; ++i) vertices[i] = &frame_->vertices[polygon.first + static_cast<std::size_t>(i)];
   // An uncut polygon of a strip of four-cornered polygons is stored in the
   // strip's order.

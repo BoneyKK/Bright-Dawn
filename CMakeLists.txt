@@ -67,9 +67,11 @@ add_library(bd_core STATIC
   src/core/log.cpp
   src/core/result.cpp
   src/core/sha256.cpp
+  src/core/workers.cpp
 )
+find_package(Threads REQUIRED)
 target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(bd_core PUBLIC bd_build_flags)
+target_link_libraries(bd_core PUBLIC bd_build_flags Threads::Threads)
 
 add_library(bd_platform STATIC
   src/platform/crash_log.cpp
