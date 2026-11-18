@@ -70,7 +70,7 @@ class GameScreen {
   void prepare_enlarged(int factor);
   void draw();
   void capture();
-  void count_rates(bool new_frame);
+  void count_rates(bool new_frame, bool shown);
   // The pause menu, until it is closed. False if the run is to end.
   bool run_menu();
   void draw_menu();

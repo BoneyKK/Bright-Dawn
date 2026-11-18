@@ -33,6 +33,11 @@ void FrameClock::step_taken() { account_ = account_ >= kStep ? account_ - kStep 
 
 bool FrameClock::frame_done(std::uint64_t now) {
   step_taken();
+  // Behind only if the next step was due before this frame's own run time is
+  // counted. Counting it first hid frames that were on time: with vsync the
+  // run time plus the wait for the screen often makes up one step, so every
+  // second frame went unshown although the game kept the console's speed.
+  const bool behind = step_due();
   tick(now);
   if (drops_ != drops_seen_) {
     drops_seen_ = drops_;
@@ -40,7 +45,7 @@ bool FrameClock::frame_done(std::uint64_t now) {
   } else if (frames_since_drop_ < kSettle) {
     ++frames_since_drop_;
   }
-  if (step_due() && frames_since_drop_ >= kSettle && unshown_ < kMostBehind) {
+  if (behind && frames_since_drop_ >= kSettle && unshown_ < kMostBehind) {
     ++unshown_;
     return false;
   }

@@ -50,8 +50,9 @@ class FrameClock {
 
   // A console frame has been run and real time has reached `now`: takes the
   // step and adds the time. Returns whether to show the frame. Not when
-  // another step is already due: then the game is behind, and showing would
-  // only put it further behind, so the next frame is run first. Unless time
+  // another step was already due before the time of this frame's run is
+  // added: then the game is behind, and showing would only put it further
+  // behind, so the next frame is run first. Unless time
   // was dropped within the last kSettle frames (the computer cannot keep up
   // at all, so every frame is shown, the game running slower), or
   // kMostBehind frames in a row have gone unshown.

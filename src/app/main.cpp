@@ -313,6 +313,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
   log::writef(log::Level::Info, "game", "%zu translated functions in use%s", translated_functions,
               translated_functions == 0 ? ": every instruction is interpreted" : "");
   a.report.code = translated_functions == 0 ? "The interpreter" : "The built game";
+  a.native_code = translated_functions != 0;
   nds::Console console(loaded.value(), translation);
   if (rom) console.insert_cartridge(rom.value().bytes());
   nds::UserSettings user = console.user_settings();

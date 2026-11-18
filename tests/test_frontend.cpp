@@ -275,10 +275,10 @@ TEST(frame_clock_catches_up_after_a_hitch_before_showing_again) {
   bd::platform::FrameClock clock;
   clock.tick(0);
   // Three steps of real time pass during one frame; then frames are run
-  // quickly. The three already due are run unshown, and the one after is
-  // shown.
+  // quickly. The slow frame is shown (nothing was due when it began), the two
+  // steps owed are then run unshown, and the one after is shown.
   std::uint64_t now = 3 * 16715114;
-  CHECK(!clock.frame_done(now));
+  CHECK(clock.frame_done(now));
   CHECK(!clock.frame_done(now += 1000));
   CHECK(!clock.frame_done(now += 1000));
   CHECK(clock.frame_done(now += 1000));
@@ -293,21 +293,44 @@ TEST(frame_clock_shows_every_frame_when_the_computer_cannot_keep_up) {
   clock.tick(0);
   std::uint64_t now = 0, shown = 0;
   for (int frame = 0; frame < 100; ++frame) shown += clock.frame_done(now += 3 * 16715114) ? 1 : 0;
-  CHECK(shown == 99);
+  CHECK(shown == 100);
   CHECK(clock.drops() > 0);
 }
 
 TEST(frame_clock_shows_a_frame_after_four_unshown_in_a_row) {
-  // Each frame takes one and a half steps: the game falls behind by half a
-  // step a frame. Four frames go unshown, then one is shown regardless.
+  // Each frame takes a step and a quarter: the game falls behind by a quarter
+  // step a frame. Once a step is due when a frame begins, four frames go
+  // unshown, then one is shown regardless.
   bd::platform::FrameClock clock;
   clock.tick(0);
   std::uint64_t now = 0;
-  CHECK(!clock.frame_done(now += 25072670));
-  CHECK(!clock.frame_done(now += 25072670));
-  CHECK(!clock.frame_done(now += 25072670));
-  CHECK(!clock.frame_done(now += 25072670));
-  CHECK(clock.frame_done(now += 25072670));
+  for (int frame = 0; frame < 4; ++frame) CHECK(clock.frame_done(now += 20893892));
+  for (int frame = 0; frame < 4; ++frame) CHECK(!clock.frame_done(now += 20893892));
+  CHECK(clock.frame_done(now += 20893892));
+  CHECK(clock.drops() == 0);
+}
+
+TEST(frame_clock_shows_every_frame_with_vsync_at_60_hz) {
+  // A frame is run in 8 ms, then the picture waits for the screen, refreshed
+  // 60 times a second, and is shown again until the next step is due (as
+  // GameScreen::frame does). The console's 59.83 frames a second all fit:
+  // every frame is shown. Counting the run's time before deciding hid every
+  // second one.
+  bd::platform::FrameClock clock;
+  clock.tick(0);
+  std::uint64_t now = 0, refresh = 0, shown = 0;
+  constexpr std::uint64_t kRefresh = 16666667;
+  for (int frame = 0; frame < 600; ++frame) {
+    now += 8'000'000;
+    if (!clock.frame_done(now)) continue;
+    ++shown;
+    do {
+      while (refresh <= now) refresh += kRefresh;
+      now = refresh;
+      clock.tick(now);
+    } while (!clock.step_due());
+  }
+  CHECK(shown == 600);
   CHECK(clock.drops() == 0);
 }
 

@@ -41,6 +41,9 @@ struct App {
   // The translated code linked in (bright-dawn-game), or an empty table.
   const TranslatedEntry* translation = nullptr;
   bool translated_build = false;
+  // Whether the game being played runs translated code (linked in, or the
+  // game built from the player's ROM), not only the interpreter.
+  bool native_code = false;
   // What "Report a problem" fills in; kept up to date as the run goes on.
   ui::ProblemReport report;
 

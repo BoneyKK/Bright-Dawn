@@ -53,8 +53,12 @@ bool GameScreen::open(std::string& error) {
     for (int i = 0; i < count; ++i) add_gamepad(ids[i]);
     SDL_free(ids);
   }
+  // Which code runs: linked in, the game built from the player's ROM, or
+  // every instruction interpreted (play() decides and sets native_code).
   title_ = std::string("Bright Dawn ") + BD_VERSION +
-           (app_.translated_build && !app_.options.interpret_only ? " (translated)" : " (interpreted)");
+           (!app_.native_code          ? " (interpreted)"
+            : app_.translated_build    ? " (translated)"
+                                       : " (built game)");
   SDL_SetWindowTitle(app_.window, title_.c_str());
   apply_settings(true);
   second_started_ = SDL_GetTicksNS();
@@ -135,7 +139,7 @@ bool GameScreen::frame() {
     }
   }
   if (!show && !capture_now) {
-    count_rates(false);
+    count_rates(true, false);
     return true;
   }
   upload_screens();
@@ -143,7 +147,7 @@ bool GameScreen::frame() {
     draw();
     if (first && capture_now) capture();
     SDL_RenderPresent(app_.renderer);
-    count_rates(first);
+    count_rates(first, true);
     if (app_.options.unthrottled) break;
     if (!vsync_) {
       const std::uint64_t wait = clock_.until_due();
@@ -381,12 +385,13 @@ void GameScreen::capture() {
 
 // The window's title shows how many of the game's frames are run a second
 // (59.83 on a console; fewer on a computer too slow for it) and how many
-// pictures are shown. Called once for every picture and once for every frame
-// run unshown; `new_frame` says whether this is the first call for a frame.
+// pictures are shown (presented). Called once for every picture and once for
+// every frame run unshown; `new_frame` says whether this is the first call
+// for a frame, `shown` whether a picture was presented.
 // The log has the same once a minute, and every second in detail.
-void GameScreen::count_rates(bool new_frame) {
+void GameScreen::count_rates(bool new_frame, bool shown) {
   if (new_frame) ++frames_this_second_;
-  ++pictures_this_second_;
+  if (shown) ++pictures_this_second_;
   const std::uint64_t now = SDL_GetTicksNS();
   if (now - second_started_ < 1'000'000'000ull) return;
   const double seconds = static_cast<double>(now - second_started_) / 1e9;
