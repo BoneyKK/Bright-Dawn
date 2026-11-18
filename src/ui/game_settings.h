@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "gfx/screen_layout.h"
@@ -19,6 +20,7 @@ namespace bd::ui {
 namespace key {
 inline constexpr std::string_view kScale = "display.scale";
 inline constexpr std::string_view kArrangement = "display.arrangement";
+inline constexpr std::string_view kPreviousArrangement = "display.previous_arrangement";
 inline constexpr std::string_view kTouchScreenFirst = "display.touch_screen_first";
 inline constexpr std::string_view kGap = "display.gap";
 inline constexpr std::string_view kScaling = "display.scaling";
@@ -42,20 +44,33 @@ std::vector<platform::SettingDef> game_setting_definitions();
 // (app/controls_page.h) rather than from the definitions.
 inline constexpr std::string_view kControlsChapter = "Controls";
 
-// What can be bound on the Controls page: a DS button, to a key and to a
-// controller button. Each binding is a setting of its own, kept in the
-// settings file like the others: the control's name as SDL names it
+// Something the window does, bound like a DS button.
+enum class Hotkey {
+  None,              // A DS button.
+  BottomScreenOnly,  // The touch screen alone, or back to the screens before.
+};
+
+// What can be bound on the Controls page: a DS button or a hotkey, to a key
+// and to a controller button. Each binding is a setting of its own, kept in
+// the settings file like the others: the control's name as SDL names it
 // ("Right Shift", "dpup"), or empty for none.
 struct Control {
   std::string label;
-  std::string keyboard_key;    // "controls.keyboard.<button>"
-  std::string controller_key;  // "controls.controller.<button>"
-  input::DsButton button;
+  std::string keyboard_key;    // "controls.keyboard.<name>"
+  std::string controller_key;  // "controls.controller.<name>"
+  input::DsButton button = input::DsButton::A;  // When hotkey is None.
+  Hotkey hotkey = Hotkey::None;
 };
 const std::vector<Control>& controls();
-// The bindings the settings give: one for each control bound.
+// The bindings of DS buttons the settings give: one for each bound.
 std::vector<input::Binding> keyboard_bindings(const platform::Settings& settings);
 std::vector<input::Binding> controller_bindings(const platform::Settings& settings);
+// The key or controller button bound to a hotkey, as SDL names it; empty
+// for none.
+std::string hotkey_binding(const platform::Settings& settings, Hotkey hotkey, bool keyboard);
+// What the BottomScreenOnly hotkey sets, in order: to the touch screen
+// alone, remembering the arrangement before; or from it, back to that one.
+std::vector<std::pair<std::string, std::string>> bottom_screen_switch(const platform::Settings& settings);
 // The keys of the bindings (keyboard or controller) whose control is also
 // bound to another DS button.
 std::vector<std::string> bound_twice(const platform::Settings& settings, bool keyboard);

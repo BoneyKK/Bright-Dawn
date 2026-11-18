@@ -196,7 +196,7 @@ TEST(control_bindings_default_to_input_defaults) {
   CHECK(same(bd::ui::keyboard_bindings(s), bd::input::default_keyboard_bindings()));
   CHECK(same(bd::ui::controller_bindings(s), bd::input::default_controller_bindings()));
   // Every DS button has a row, and no control is bound twice.
-  CHECK(bd::ui::controls().size() == bd::input::kDsButtonCount);
+  CHECK(bd::ui::controls().size() == bd::input::kDsButtonCount + 1);  // And the Bottom screen only hotkey.
   CHECK(bd::ui::bound_twice(s, true).empty() && bd::ui::bound_twice(s, false).empty());
   // The bindings are not settings of a chapter: the Controls page draws them.
   CHECK(s.find("controls.keyboard.a") != nullptr && s.find("controls.keyboard.a")->chapter.empty());
@@ -229,6 +229,35 @@ TEST(control_bindings_are_read_and_saved_in_the_settings_file) {
   bd::ui::reset_controls(t);
   CHECK(t.value("controls.keyboard.a") == "X" && t.value("controls.controller.b") == "a");
   CHECK(bd::ui::bound_twice(t, true).empty());
+}
+
+TEST(bottom_screen_only_is_an_arrangement_and_a_hotkey) {
+  Settings s(bd::ui::game_setting_definitions());
+  using bd::ui::Hotkey;
+  CHECK(bd::ui::hotkey_binding(s, Hotkey::BottomScreenOnly, true) == "F9");
+  CHECK(bd::ui::hotkey_binding(s, Hotkey::BottomScreenOnly, false) == "rightstick");
+  CHECK(bd::ui::hotkey_binding(s, Hotkey::None, true).empty());
+  // A hotkey is not a DS button's binding.
+  for (const bd::input::Binding& b : bd::ui::keyboard_bindings(s)) CHECK(b.control != "F9");
+  // From side by side to the touch screen alone, and back.
+  CHECK(s.set(bd::ui::key::kArrangement, "side_by_side").ok());
+  const auto apply = [&] {
+    for (const auto& [key, value] : bd::ui::bottom_screen_switch(s)) CHECK(s.set(key, value).ok());
+  };
+  apply();
+  CHECK(s.choice(bd::ui::key::kArrangement) == "bottom_only");
+  CHECK(bd::ui::layout_options(s).arrangement == bd::gfx::Arrangement::BottomOnly);
+  apply();
+  CHECK(s.choice(bd::ui::key::kArrangement) == "side_by_side");
+  // Chosen in the settings instead: back to what was last before.
+  CHECK(s.set(bd::ui::key::kArrangement, "stacked").ok());
+  apply();
+  apply();
+  CHECK(s.choice(bd::ui::key::kArrangement) == "stacked");
+  // Bound to a DS button's key too: shown as bound twice.
+  CHECK(s.set("controls.keyboard.bottom_screen_only", "x").ok());
+  CHECK((bd::ui::bound_twice(s, true) ==
+         std::vector<std::string>{"controls.keyboard.a", "controls.keyboard.bottom_screen_only"}));
 }
 
 TEST(build_progress_follows_the_builder) {

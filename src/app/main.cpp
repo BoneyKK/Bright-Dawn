@@ -91,6 +91,7 @@ constexpr const char* kUsage =
     "the user data directory, and changed in the launcher or the game's menu):\n"
     "  --scale N             start with the screens N times their size (1 to 8)\n"
     "  --side-by-side        the screens side by side instead of one above the other\n"
+    "  --bottom-only         the touch screen alone\n"
     "  --gap N               N DS pixels between the screens (0 to 96)\n"
     "  --touch-screen-first  the touch screen above (or left of) the other\n"
     "  --fit                 fill the window instead of scaling by whole numbers\n"
@@ -128,7 +129,7 @@ constexpr const char* kUsage =
     "position, as on the DS. The left mouse\n"
     "button on the touch screen is the stylus. Escape (or a controller's guide\n"
     "button): the menu. F11 or Alt+Enter: full screen. Tab: stacked or side by side.\n"
-    "F12: whole-number scaling or fill.\n";
+    "F12: whole-number scaling or fill. F9: the touch screen alone, or back.\n";
 
 struct CommandLine {
   app::Options options;
@@ -606,6 +607,8 @@ int main(int argc, char** argv) {
       options.capture = argv[++i];
     } else if (arg == "--side-by-side") {
       cl.overrides.emplace_back(ui::key::kArrangement, "side_by_side");
+    } else if (arg == "--bottom-only") {
+      cl.overrides.emplace_back(ui::key::kArrangement, "bottom_only");
     } else if (arg == "--touch-screen-first") {
       cl.overrides.emplace_back(ui::key::kTouchScreenFirst, "on");
     } else if (arg == "--fit") {

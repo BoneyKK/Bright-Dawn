@@ -62,6 +62,49 @@ TEST(layout_can_put_the_touch_screen_first) {
   CHECK(same(layout.top, 0, 192, 256, 192));
 }
 
+TEST(layout_shows_the_touch_screen_alone) {
+  using namespace bd::gfx;
+  LayoutOptions options;
+  options.arrangement = Arrangement::BottomOnly;
+  options.gap = 40;            // Neither the gap
+  options.bottom_first = true;  // nor which is first matters.
+  // Whole numbers: three times in 800 by 600, centred; the top screen has
+  // no area.
+  const ScreenLayout layout = lay_out(800, 600, options);
+  CHECK(layout.scale == 3);
+  CHECK(same(layout.bottom, 16, 12, 768, 576));
+  CHECK(layout.top.w == 0 && layout.top.h == 0);
+  CHECK(window_size(2, options).x == 512 && window_size(2, options).y == 384);
+  // Filling the window: as large as its shape allows.
+  options.scaling = Scaling::Fit;
+  const ScreenLayout filled = lay_out(1000, 600, options);
+  CHECK(filled.scale == 600.0 / 192);
+  CHECK(same(filled.bottom, 100, 0, 800, 600));
+  // Smaller than the screen: shrunk.
+  options.scaling = Scaling::WholeNumbers;
+  CHECK(lay_out(128, 96, options).scale == 0.5);
+}
+
+TEST(touch_maps_onto_the_touch_screen_alone) {
+  using namespace bd::gfx;
+  LayoutOptions options;
+  options.arrangement = Arrangement::BottomOnly;
+  const ScreenLayout layout = lay_out(800, 600, options);  // At (16, 12), three times the size.
+  const auto at = [&](double x, double y) { return touch_point(layout, x, y); };
+  CHECK(at(16, 12).has_value() && at(16, 12)->x == 0 && at(16, 12)->y == 0);
+  CHECK(at(400, 300)->x == 128 && at(400, 300)->y == 96);
+  CHECK(at(16 + 767.9, 12 + 575.9)->x == 255 && at(16 + 767.9, 12 + 575.9)->y == 191);
+  CHECK(at(16 + 3 * 10 + 1, 12 + 3 * 20 + 2)->x == 10 && at(16 + 3 * 10 + 1, 12 + 3 * 20 + 2)->y == 20);
+  // The border round it is not the touch screen, and neither is where the
+  // top screen would be.
+  CHECK(!at(15, 300).has_value() && !at(400, 11).has_value() && !at(784, 300).has_value() && !at(400, 588).has_value());
+  // Filling a wide window.
+  options.scaling = Scaling::Fit;
+  const ScreenLayout wide = lay_out(1000, 600, options);
+  CHECK(touch_point(wide, 100, 0)->x == 0 && touch_point(wide, 899, 599)->x == 255 && touch_point(wide, 899, 599)->y == 191);
+  CHECK(!touch_point(wide, 99, 300).has_value() && !touch_point(wide, 900, 300).has_value());
+}
+
 TEST(layout_shrinks_the_screens_when_not_even_one_whole_scale_fits) {
   using namespace bd::gfx;
   const ScreenLayout small = lay_out(128, 192, {});

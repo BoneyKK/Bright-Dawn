@@ -10,6 +10,7 @@ namespace {
 // The pair's size in DS pixels.
 Point unscaled_size(const LayoutOptions& options) {
   const int gap = std::max(options.gap, 0);
+  if (options.arrangement == Arrangement::BottomOnly) return {kScreenWidth, kScreenHeight};
   if (options.arrangement == Arrangement::Stacked) return {kScreenWidth, 2 * kScreenHeight + gap};
   return {2 * kScreenWidth + gap, kScreenHeight};
 }
@@ -28,6 +29,11 @@ ScreenLayout lay_out(int width, int height, const LayoutOptions& options) {
   const double w = kScreenWidth * scale, h = kScreenHeight * scale;
   const double gap = std::max(options.gap, 0) * scale;
   const double left = (width - size.x * scale) / 2, top = (height - size.y * scale) / 2;
+  if (options.arrangement == Arrangement::BottomOnly) {
+    layout.top = Rect{left + w / 2, top + h / 2, 0, 0};
+    layout.bottom = Rect{left, top, w, h};
+    return layout;
+  }
   const Rect first{left, top, w, h};
   const Rect second = options.arrangement == Arrangement::Stacked ? Rect{left, top + h + gap, w, h}
                                                                   : Rect{left + w + gap, top, w, h};

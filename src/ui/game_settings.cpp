@@ -49,7 +49,19 @@ std::vector<SettingDef> game_setting_definitions() {
   defs.push_back(number(key::kScale, "Display", "Window size",
                         "How many times the DS's size the window opens at.", 1, 8, 2));
   defs.push_back(choice(key::kArrangement, "Display", "The two screens", "How the DS's two screens are placed.",
-                        {{"stacked", "One above the other"}, {"side_by_side", "Side by side"}}, "stacked"));
+                        {{"stacked", "One above the other"}, {"side_by_side", "Side by side"},
+                         {"bottom_only", "Bottom screen only"}},
+                        "stacked"));
+  // The arrangement to go back to from the touch screen alone (Controls,
+  // Bottom screen only).
+  SettingDef previous;
+  previous.key = std::string(key::kPreviousArrangement);
+  previous.label = "Screens before the bottom screen only";
+  previous.help = "Where the Bottom screen only hotkey goes back to.";
+  previous.kind = SettingKind::Choice;
+  previous.choices = {{"stacked", "One above the other"}, {"side_by_side", "Side by side"}};
+  previous.default_value = "stacked";
+  defs.push_back(previous);
   defs.push_back(toggle(key::kTouchScreenFirst, "Display", "Touch screen first",
                         "The touch screen above (or left of) the other, instead of below (or right of) it.", false));
   defs.push_back(number(key::kGap, "Display", "Gap between the screens", "In DS pixels.", 0, 96, 0));
@@ -126,9 +138,12 @@ std::vector<SettingDef> game_setting_definitions() {
                         "removed.", 1, 100, 10));
   // The bindings: not in a chapter of their own, as the Controls page draws
   // them; their defaults are input's.
-  const auto bound_by_default = [](const std::vector<input::Binding>& bindings, input::DsButton button) {
-    for (const input::Binding& b : bindings)
-      if (b.button == button) return b.control;
+  const auto bound_by_default = [](const Control& c, bool keyboard) {
+    // Hotkeys: F9, and the right stick's button, which the DS has no use for.
+    if (c.hotkey == Hotkey::BottomScreenOnly) return std::string(keyboard ? "F9" : "rightstick");
+    for (const input::Binding& b :
+         keyboard ? input::default_keyboard_bindings() : input::default_controller_bindings())
+      if (b.button == c.button) return b.control;
     return std::string();
   };
   for (const Control& c : controls()) {
@@ -138,8 +153,7 @@ std::vector<SettingDef> game_setting_definitions() {
       d.label = (keyboard ? "Key for " : "Controller button for ") + c.label;
       d.help = "Empty for none.";
       d.kind = SettingKind::Text;
-      d.default_value = bound_by_default(
-          keyboard ? input::default_keyboard_bindings() : input::default_controller_bindings(), c.button);
+      d.default_value = bound_by_default(c, keyboard);
       defs.push_back(d);
     }
   }
@@ -158,6 +172,8 @@ const std::vector<Control>& controls() {
                      [](char ch) { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch; });
       list.push_back({input::name(button), "controls.keyboard." + id, "controls.controller." + id, button});
     }
+    list.push_back({"Bottom screen only", "controls.keyboard.bottom_screen_only",
+                    "controls.controller.bottom_screen_only", input::DsButton::A, Hotkey::BottomScreenOnly});
     return list;
   }();
   return kControls;
@@ -168,6 +184,7 @@ namespace {
 std::vector<input::Binding> bindings(const platform::Settings& settings, bool keyboard) {
   std::vector<input::Binding> list;
   for (const Control& c : controls()) {
+    if (c.hotkey != Hotkey::None) continue;
     const std::string control = settings.value(keyboard ? c.keyboard_key : c.controller_key);
     if (!control.empty()) list.push_back({control, c.button});
   }
@@ -205,6 +222,18 @@ std::vector<std::string> bound_twice(const platform::Settings& settings, bool ke
   return keys;
 }
 
+std::string hotkey_binding(const platform::Settings& settings, Hotkey hotkey, bool keyboard) {
+  for (const Control& c : controls())
+    if (c.hotkey == hotkey && hotkey != Hotkey::None) return settings.value(keyboard ? c.keyboard_key : c.controller_key);
+  return {};
+}
+
+std::vector<std::pair<std::string, std::string>> bottom_screen_switch(const platform::Settings& settings) {
+  const std::string current = settings.choice(key::kArrangement);
+  if (current == "bottom_only") return {{std::string(key::kArrangement), settings.choice(key::kPreviousArrangement)}};
+  return {{std::string(key::kPreviousArrangement), current}, {std::string(key::kArrangement), "bottom_only"}};
+}
+
 void reset_controls(platform::Settings& settings) {
   for (const Control& c : controls()) {
     settings.reset(c.keyboard_key);
@@ -214,8 +243,10 @@ void reset_controls(platform::Settings& settings) {
 
 gfx::LayoutOptions layout_options(const platform::Settings& settings) {
   gfx::LayoutOptions options;
-  options.arrangement = settings.choice(key::kArrangement) == "side_by_side" ? gfx::Arrangement::SideBySide
-                                                                             : gfx::Arrangement::Stacked;
+  const std::string& arrangement = settings.choice(key::kArrangement);
+  options.arrangement = arrangement == "side_by_side"  ? gfx::Arrangement::SideBySide
+                        : arrangement == "bottom_only" ? gfx::Arrangement::BottomOnly
+                                                       : gfx::Arrangement::Stacked;
   options.scaling = settings.choice(key::kScaling) == "fill" ? gfx::Scaling::Fit : gfx::Scaling::WholeNumbers;
   options.gap = static_cast<int>(settings.number(key::kGap));
   options.bottom_first = settings.toggle(key::kTouchScreenFirst);

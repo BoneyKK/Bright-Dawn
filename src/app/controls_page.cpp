@@ -124,7 +124,8 @@ void ControlsPage::draw(platform::Settings& settings, const menu::Look* look, st
   }
   ImGui::Spacing();
 
-  const float label_width = em * 5;
+  float label_width = em * 5;
+  for (const ui::Control& c : controls) label_width = std::max(label_width, ImGui::CalcTextSize(c.label.c_str()).x * 1.15f + em);
   const float column = std::max(em * 8, (ImGui::GetContentRegionAvail().x - label_width) / 2 - em);
   const auto heading = [&](const char* text) {
     if (look != nullptr) menu::label(look, text);

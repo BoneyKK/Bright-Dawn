@@ -62,6 +62,8 @@ class GameScreen {
   void apply_settings(bool first);
   bool handle_events();
   bool handle_window_key(const SDL_KeyboardEvent& key);
+  // The touch screen alone, or back to the arrangement before (a hotkey).
+  void switch_bottom_screen_only();
   void add_gamepad(SDL_JoystickID id);
   void remove_gamepad(SDL_JoystickID id);
   void read_input();
@@ -93,6 +95,8 @@ class GameScreen {
   std::vector<Key> keys_;
   std::vector<PadButton> pad_buttons_;
   std::set<std::string> unknown_controls_;  // Reported in the log already.
+  SDL_Scancode bottom_only_key_ = SDL_SCANCODE_UNKNOWN;
+  SDL_GamepadButton bottom_only_button_ = SDL_GAMEPAD_BUTTON_INVALID;
   std::array<std::uint8_t, gfx::kScreenWidth * gfx::kScreenHeight * 4> pixels_{};
   bool touching_ = false;
   gfx::Point touch_at_;

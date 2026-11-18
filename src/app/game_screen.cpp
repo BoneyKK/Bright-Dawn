@@ -74,6 +74,11 @@ void GameScreen::apply_settings(bool first) {
     else if (unknown_controls_.insert(b.control).second)
       log::warning("input", "no controller button is called \"" + b.control + "\"");
   }
+  const std::string bottom_key = ui::hotkey_binding(s, ui::Hotkey::BottomScreenOnly, true);
+  const std::string bottom_button = ui::hotkey_binding(s, ui::Hotkey::BottomScreenOnly, false);
+  bottom_only_key_ = bottom_key.empty() ? SDL_SCANCODE_UNKNOWN : SDL_GetScancodeFromName(bottom_key.c_str());
+  bottom_only_button_ =
+      bottom_button.empty() ? SDL_GAMEPAD_BUTTON_INVALID : SDL_GetGamepadButtonFromString(bottom_button.c_str());
   layout_ = ui::layout_options(s);
   // Screen filtering (gfx::ScreenFilter). The screens' own textures are
   // scaled nearest, except for Smooth; for SharpSmoothEdges they are first
@@ -114,7 +119,9 @@ void GameScreen::apply_settings(bool first) {
   }
   if (first) {
     log::writef(log::Level::Info, "game", "screens %s%s, %s, filter %s, gap %d; 3D textures %s",
-                layout_.arrangement == gfx::Arrangement::Stacked ? "one above the other" : "side by side",
+                layout_.arrangement == gfx::Arrangement::Stacked      ? "one above the other"
+                : layout_.arrangement == gfx::Arrangement::SideBySide ? "side by side"
+                                                                      : "the touch screen alone",
                 layout_.bottom_first ? ", touch screen first" : "",
                 layout_.scaling == gfx::Scaling::WholeNumbers ? "whole-number scaling" : "filling the window",
                 filter_ == gfx::ScreenFilter::SharpSmoothEdges ? "sharp pixels, smooth edges"
@@ -167,7 +174,15 @@ bool GameScreen::frame() {
   return true;
 }
 
+void GameScreen::switch_bottom_screen_only() {
+  for (const auto& [key, value] : ui::bottom_screen_switch(app_.settings)) app_.set_setting(key, value);
+}
+
 bool GameScreen::handle_window_key(const SDL_KeyboardEvent& k) {
+  if (k.scancode != SDL_SCANCODE_UNKNOWN && k.scancode == bottom_only_key_) {
+    switch_bottom_screen_only();
+    return true;
+  }
   if (k.scancode == SDL_SCANCODE_F11 || (k.scancode == SDL_SCANCODE_RETURN && (k.mod & SDL_KMOD_ALT) != 0)) {
     app_.set_setting(key::kFullscreen, app_.settings.toggle(key::kFullscreen) ? "off" : "on");
     return true;
@@ -202,6 +217,8 @@ bool GameScreen::handle_events() {
         break;
       case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         if (event.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) menu_open_ = true;
+        else if (bottom_only_button_ != SDL_GAMEPAD_BUTTON_INVALID && event.gbutton.button == bottom_only_button_)
+          switch_bottom_screen_only();
         break;
       case SDL_EVENT_GAMEPAD_ADDED:
         add_gamepad(event.gdevice.which);
@@ -362,6 +379,7 @@ void GameScreen::draw() {
   SDL_SetRenderDrawColor(app_.renderer, 0, 0, 0, 255);
   SDL_RenderClear(app_.renderer);
   const auto place = [&](SDL_Texture* texture, const gfx::Rect& r) {
+    if (r.w <= 0 || r.h <= 0) return;  // Not shown (the touch screen alone).
     const SDL_FRect to{static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w),
                        static_cast<float>(r.h)};
     SDL_RenderTexture(app_.renderer, texture, nullptr, &to);

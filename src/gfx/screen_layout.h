@@ -3,8 +3,9 @@
 //
 // The screens are 256 by 192 pixels each. They are shown one above the other
 // (as on the console) or side by side, with an optional gap between them in
-// DS pixels, which is scaled with the screens. Either screen can be put
-// first. The pair is centred in the window and scaled:
+// DS pixels, which is scaled with the screens, or the touch screen alone.
+// Either screen can be put first. What is shown is centred in the window
+// and scaled:
 // - by whole numbers (every DS pixel the same size on screen), the largest
 //   that fits; when not even one fits, as by Fit;
 // - or to fill as much of the window as the screens' shape allows (Fit).
@@ -18,7 +19,9 @@ namespace bd::gfx {
 
 inline constexpr int kScreenWidth = 256, kScreenHeight = 192;
 
-enum class Arrangement { Stacked, SideBySide };
+// BottomOnly: the touch screen alone; the top screen is not shown (its
+// rectangle has no area), and the gap and which is first do not matter.
+enum class Arrangement { Stacked, SideBySide, BottomOnly };
 enum class Scaling { WholeNumbers, Fit };
 
 struct LayoutOptions {

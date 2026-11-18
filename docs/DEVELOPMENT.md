@@ -53,7 +53,8 @@ button to each DS button: click the binding, then press the key or button.
 
 Escape, or a controller's guide button, pauses the game and opens its menu:
 continue, the settings, report a problem, back to the launcher, quit. F11 or Alt+Enter switches
-full screen, Tab puts the screens side by side or one above the other, F12
+full screen, Tab puts the screens side by side or one above the other, F9
+shows the touch screen alone or goes back (a binding of Settings, Controls), F12
 switches between whole-number scaling and filling the window. The title bar
 shows the game's frames a second (the console's rate is 59.83) and the
 pictures shown a second.
