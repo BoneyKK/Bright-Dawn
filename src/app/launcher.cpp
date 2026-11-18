@@ -394,12 +394,9 @@ void Launcher::draw_setup_page() {
   if (built_state_ == BuiltState::Ready) {
     coloured(true, "The game is built: go on to the launcher, below the build's result.");
   } else if (built_state_ == BuiltState::None) {
-    note("Before the launcher opens, the game is built once from your ROM: its code translated to C++ and "
-         "compiled for this computer, so that it runs natively. Choose your ROM, then build. What the build "
-         "needs and this computer does not have is fetched for it and removed afterwards.");
+    note("Choose your ROM, then build the game from it once, before the launcher opens.");
   } else {
-    note("The game built before cannot be used (" + built_detail_ +
-         "): Bright Dawn has changed since, and the game has to be built again for this version.");
+    note("The game built before cannot be used (" + built_detail_ + "): build it again for this version.");
   }
   ImGui::Spacing();
   draw_rom_chooser();
@@ -578,7 +575,7 @@ std::string Launcher::standing_hint() const {
 void Launcher::draw_rom_chooser() {
   heading("Your ROM");
   if (rom_.empty())
-    note("Choose your own copy of Golden Sun: Dark Dawn, a .nds file. Bright Dawn remembers it.");
+    note("Choose your own copy of Golden Sun: Dark Dawn, a .nds file.");
   else
     ImGui::TextWrapped("%s", utf8(rom_).c_str());
   bool dialog_open = false;
@@ -641,12 +638,9 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
   } else if (built_state_ == BuiltState::Ready) {
     note("The game is interpreted: playing the built game is turned off (Settings, Game).");
   } else {
-    note("The game is interpreted, which is slow: about a third of the console's speed. Build the game "
-         "(Build the game, on the left) to run its code natively.");
-    if (built_state_ == BuiltState::OtherVersion)
-      note("The game built before cannot be used: " + built_detail_ + ". Build it again.");
-    else if (built_state_ == BuiltState::Broken)
-      note("The game built before cannot be used: " + built_detail_ + ". Build it again.");
+    note("The game is interpreted, at about a third of the console's speed, until you build it.");
+    if (built_state_ == BuiltState::OtherVersion || built_state_ == BuiltState::Broken)
+      note("The game built before cannot be used (" + built_detail_ + "): build it again.");
   }
   ImGui::BeginDisabled(!rom_check_.ok);
   if (button("Play", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f))) {
@@ -659,17 +653,13 @@ void Launcher::draw_play(LauncherChoice& choice, bool& done) {
   std::string keys;
   for (const input::Binding& b : ui::keyboard_bindings(app_.settings))
     keys += (keys.empty() ? "" : ", ") + b.control + " = " + input::name(b.button);
-  note("Keyboard: " + keys + ". Controllers: by position, as on the DS. Settings, Controls changes them. "
-       "The left mouse button on the touch screen is the stylus. "
-       "Escape (or a controller's guide button) pauses and opens the menu. F11: full screen.");
+  note("Keys: " + keys + "; controllers by position, the mouse as the stylus, Escape for the menu and F11 for "
+       "full screen.");
 }
 
 void Launcher::draw_build() {
   heading("Build the game");
-  note("The builder translates the game's code, from your ROM, to C++ and compiles it for this computer, "
-       "into a library the program loads: the game then runs natively instead of being interpreted. The "
-       "translated code is made from your ROM and stays on this computer. A build takes some minutes on a "
-       "fast computer, longer on a slower one.");
+  note("The builder compiles the game's code from your ROM for this computer, so that the game runs natively.");
   ImGui::Spacing();
   ImGui::TextUnformatted("What it needs:");
   const auto requirement = [this](bool ok, const std::string& what, const std::string& detail) {
@@ -695,15 +685,13 @@ void Launcher::draw_build() {
                 python_.problem + " on this computer.");
   } else {
     requirement(false, python_.problem,
-                "Install Python 3.10 or later (from your system's packages, or python.org), then check again.");
+                "Install Python 3.10 or later, then check again.");
   }
   ImGui::Bullet();
   if (const std::string compiler = app_.settings.value(ui::key::kBuildCompiler); compiler.empty())
-    ImGui::TextWrapped("The compiler: Zig (Clang), about 95 MB, is fetched by the builder for the build and removed "
-                       "after it. It needs an internet connection, and about 2 GB of free space while it builds.");
+    ImGui::TextWrapped("The compiler: Zig, about 95 MB, fetched for the build and removed after it.");
   else
-    ImGui::TextWrapped("The compiler: %s, as chosen in the settings (Builder). The build needs about 2 GB of free "
-                       "space while it runs.", compiler.c_str());
+    ImGui::TextWrapped("The compiler: %s, as chosen in Settings, Builder.", compiler.c_str());
   const bool running = building();
   ImGui::BeginDisabled(running);
   if (button("Check again")) check_tools();
@@ -786,8 +774,7 @@ void Launcher::draw_build() {
 
 void Launcher::draw_log() {
   heading("Log");
-  note("Each run of Bright Dawn writes a log of what happened: when something goes wrong, it says what and "
-       "why. Attach it when you report a problem. How much it records is in the settings (Log).");
+  note("Each run writes a log of what happened; attach it when you report a problem.");
   const std::filesystem::path file = log::file_path();
   if (file.empty()) {
     coloured(false, "This run has no log file.");

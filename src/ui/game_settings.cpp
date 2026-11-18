@@ -47,8 +47,9 @@ std::vector<SettingDef> game_setting_definitions() {
 
   std::vector<SettingDef> defs;
   defs.push_back(number(key::kScale, "Display", "Window size",
-                        "How many times the DS's size the window opens at.", 1, 8, 2));
-  defs.push_back(choice(key::kArrangement, "Display", "The two screens", "How the DS's two screens are placed.",
+                        "Sets the window's size, in times the DS's size.", 1, 8, 2));
+  defs.push_back(choice(key::kArrangement, "Display", "The two screens",
+                        "Sets where the DS's two screens are placed.",
                         {{"stacked", "One above the other"}, {"side_by_side", "Side by side"},
                          {"bottom_only", "Bottom screen only"}},
                         "stacked"));
@@ -57,52 +58,38 @@ std::vector<SettingDef> game_setting_definitions() {
   SettingDef previous;
   previous.key = std::string(key::kPreviousArrangement);
   previous.label = "Screens before the bottom screen only";
-  previous.help = "Where the Bottom screen only hotkey goes back to.";
+  previous.help = "Sets where the Bottom screen only hotkey goes back to.";
   previous.kind = SettingKind::Choice;
   previous.choices = {{"stacked", "One above the other"}, {"side_by_side", "Side by side"}};
   previous.default_value = "stacked";
   defs.push_back(previous);
   defs.push_back(toggle(key::kTouchScreenFirst, "Display", "Touch screen first",
-                        "The touch screen above (or left of) the other, instead of below (or right of) it.", false));
-  defs.push_back(number(key::kGap, "Display", "Gap between the screens", "In DS pixels.", 0, 96, 0));
+                        "Puts the touch screen above or left of the other.", false));
+  defs.push_back(number(key::kGap, "Display", "Gap between the screens",
+                        "Sets the space between the screens, in DS pixels.", 0, 96, 0));
   defs.push_back(choice(key::kScaling, "Display", "Scaling",
-                        "Whole numbers keep every DS pixel the same size, with a border where the window is "
-                        "larger. Filling the window uses all of it; some pixels are then a little larger than "
-                        "others.",
+                        "Scales the screens by whole numbers, or to fill the window.",
                         {{"whole", "Whole numbers"}, {"fill", "Fill the window"}}, "whole"));
   defs.push_back(choice(key::kScreenFilter, "Display", "Screen filtering",
-                        "Sharp pixels with smooth edges keeps each DS pixel a crisp block, every one the same "
-                        "size, with the edges between them softened over one pixel of the window: the look of "
-                        "melonDS's display. Smooth mixes neighbouring pixels (bilinear), softening the whole "
-                        "picture. Sharp shows each DS pixel as a block; at sizes that are not whole numbers "
-                        "some are then a pixel wider than others.",
+                        "Sets how the screens' pixels are smoothed when scaled.",
                         {{"sharp_smooth_edges", "Sharp pixels, smooth edges"},
                          {"smooth", "Smooth (bilinear)"},
                          {"sharp", "Sharp (nearest)"}},
                         "sharp_smooth_edges"));
-  defs.push_back(toggle(key::kFullscreen, "Display", "Full screen", "Start full screen (F11 changes it).", false));
+  defs.push_back(toggle(key::kFullscreen, "Display", "Full screen", "Starts full screen; F11 switches it.", false));
   defs.push_back(toggle(key::kVsync, "Display", "Wait for the screen's refresh",
-                        "Show each picture when the screen refreshes (vsync): no tearing.", true));
+                        "Shows each picture when the screen refreshes, without tearing.", true));
   defs.push_back(choice(key::kRenderer, "Display", "Drawing",
-                        "Vulkan draws the window through the graphics card's Vulkan driver. Where Vulkan cannot be "
-                        "used, the system's own way is used instead, and the log says why. The system's own way "
-                        "is Direct3D on Windows and OpenGL on most others. Takes effect when Bright Dawn next "
-                        "starts.",
+                        "Sets what draws the window, from the next start.",
                         {{"vulkan", "Vulkan"}, {"system", "The system's own"}}, "vulkan"));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
-                        "Sharp shows each texel as a block of pixels, as the DS does. Smooth mixes neighbouring "
-                        "texels, for softer surfaces, before the screen is put together. Only the 3D scenes "
-                        "change: polygons drawn flat, as a HUD in 3D is, keep their texels.",
+                        "Sets whether the textures of 3D scenes are sharp or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));
   defs.push_back(toggle(key::kPlayBuilt, "Game", "Play the built game",
-                        "When the game has been built from your ROM, play that: its code runs natively, much "
-                        "faster than the interpreter.",
+                        "Plays the game built from your ROM, when there is one.",
                         true));
   defs.push_back(choice(key::kLanguage, "Game", "Language",
-                        "The language the console is set to. The game shows its text in it if your copy of the "
-                        "game has it: the European release has English, French, German, Italian and Spanish; "
-                        "the American one English; the Japanese one Japanese. Otherwise the game chooses one "
-                        "itself. Takes effect when the game next starts.",
+                        "Sets the language of the game's text, from the next start of the game.",
                         {{"english", "English"},
                          {"french", "French (Fran\u00e7ais)"},
                          {"german", "German (Deutsch)"},
@@ -113,29 +100,25 @@ std::vector<SettingDef> game_setting_definitions() {
   SettingDef rom;
   rom.key = std::string(key::kRom);
   rom.label = "ROM";
-  rom.help = "The ROM last chosen.";
+  rom.help = "Holds the ROM last chosen.";
   rom.kind = SettingKind::Text;
   defs.push_back(rom);
   defs.push_back(number(key::kBuildJobs, "Builder", "Parallel jobs",
-                        "How many files the builder compiles at once; 0 for as many as there are processors. "
-                        "Fewer needs less memory.",
+                        "Sets how many files the builder compiles at once; 0 for one for each processor.",
                         0, 256, 0));
   SettingDef compiler;
   compiler.key = std::string(key::kBuildCompiler);
   compiler.chapter = "Builder";
   compiler.label = "Compiler";
-  compiler.help =
-      "Empty: the builder fetches Zig (about 95 MB) for each build and removes it after. Or the command of a "
-      "C++ compiler already on this computer that takes GCC's options, such as g++ or clang++, to use instead.";
+  compiler.help = "Names a C++ compiler for the builder to use, such as g++ or clang++; empty for Zig.";
   compiler.kind = SettingKind::Text;
   defs.push_back(compiler);
   defs.push_back(choice(key::kLogLevel, "Log", "Detail",
-                        "How much the log records. Each run writes a log; when reporting a problem, attach it.",
+                        "Sets how much the log records.",
                         {{"error", "Errors"}, {"warning", "Warnings"}, {"info", "What happens (normal)"},
                          {"debug", "In detail"}},
                         "info"));
-  defs.push_back(number(key::kLogsKept, "Log", "Logs kept", "The logs of this many runs are kept; older ones are "
-                        "removed.", 1, 100, 10));
+  defs.push_back(number(key::kLogsKept, "Log", "Logs kept", "Sets how many runs' logs are kept.", 1, 100, 10));
   // The bindings: not in a chapter of their own, as the Controls page draws
   // them; their defaults are input's.
   const auto bound_by_default = [](const Control& c, bool keyboard) {
@@ -151,7 +134,7 @@ std::vector<SettingDef> game_setting_definitions() {
       SettingDef d;
       d.key = keyboard ? c.keyboard_key : c.controller_key;
       d.label = (keyboard ? "Key for " : "Controller button for ") + c.label;
-      d.help = "Empty for none.";
+      d.help = "Binds a control to it; empty for none.";
       d.kind = SettingKind::Text;
       d.default_value = bound_by_default(c, keyboard);
       defs.push_back(d);
