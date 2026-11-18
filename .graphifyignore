@@ -1,0 +1,4 @@
+# What graphify leaves out of the code map (it also follows .gitignore, so
+# build output and anything from a ROM are never read).
+# Dear ImGui is large and only draws the menus; its symbols crowd out ours.
+third_party/imgui/

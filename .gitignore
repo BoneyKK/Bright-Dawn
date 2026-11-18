@@ -29,3 +29,6 @@ overlay7_*.bin
 # Python
 __pycache__/
 *.pyc
+
+# The code map graphify makes (see docs/DEVELOPMENT.md); made again in seconds.
+graphify-out/

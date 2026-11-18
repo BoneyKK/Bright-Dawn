@@ -190,6 +190,36 @@ Build the repository, run `bdtool validate`, `bdtool info`, `bdtool survey` and
 contains file names, sizes, addresses and statistics only, no game content. [docs/ROM_SURVEY.md](ROM_SURVEY.md) lists the questions that
 are still open.
 
+## Code map (graphify)
+
+[graphify](https://github.com/Graphify-Labs/graphify) maps the repository's
+code and docs into a graph that can be asked questions, which is quicker than
+searching the files. Claude Code uses it on this project (see
+[CLAUDE.md](../CLAUDE.md)); anyone can.
+
+```bash
+uv tool install graphifyy==0.9.112
+```
+
+```bash
+graphify update .
+```
+
+The map is made on your computer, without a model, in about 20 seconds, in
+`graphify-out/` (not committed). It holds only files git would keep:
+graphify follows `.gitignore`, so your ROM and anything made from it are never
+read. `.graphifyignore` leaves out Dear ImGui. Then, for example:
+
+```bash
+graphify query "how does translated code fall back to the interpreter"
+```
+
+```bash
+graphify explain "TranslatedEntry"
+```
+
+`graphify-out/graph.html` shows the map in a browser.
+
 ## Repository layout
 
 ```

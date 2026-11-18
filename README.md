@@ -88,6 +88,7 @@ Bright Dawn stands on the work of these projects and people. Thank you.
 | [melonDS](https://melonds.kuribo64.net), by Arisotura and the melonDS team | The model for the default screen filter, sharp pixels with smooth edges; no code taken | GPL-3.0-or-later |
 | [GBATEK](https://problemkaputt.de/gbatek.htm), by Martin Korth | The documentation of the DS hardware that much of the console model is written from | No licence stated; used as documentation only |
 | [DSDecmp](https://github.com/barubary/dsdecmp), by barubary | Its Golden Sun plugin, the only public description of the LZ40 compression, which the first decoder was written from; no code taken | MIT |
+| [graphify](https://github.com/Graphify-Labs/graphify), by Safi Shamsi and the Graphify contributors | Maps the repository's code into a graph for development; not part of the packages | Apache-2.0 |
 | DS Asset Lab, by BoneyKK | The parts of the translator from this earlier project (`tools/translator/dslab`), placed by its author under this project's licence | GPL-3.0 |
 | *Golden Sun: Dark Dawn*, by Camelot Software Planning, published by Nintendo | The game itself, which you supply | Not included |
 
