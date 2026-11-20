@@ -859,6 +859,25 @@ TEST(renderer_scene_for_the_graphics_hardware) {
   CHECK(scene.alpha_threshold == 21.5f / 63.0f);
 }
 
+// With w as the depth, the graphics hardware gets w too: the polygon with
+// the smaller w is in front, whatever z says, as the processor draws it.
+TEST(renderer_scene_depth_is_w_when_the_frame_asks) {
+  Fixture f;
+  f.frame.depth_is_w = true;
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque, 0x100000, 0x100000);
+  f.rectangle(0, 0, 8, 8, kBlue, kOpaque, 0x700000, 0x2000);
+  f.rectangle(0, 0, 8, 8, kGreen, kOpaque, 0x7FFFFF, 0x7FFFFFFF);  // Past 24 bits: as far as can be.
+  const auto& scene = f.r.build_scene(f.frame, f.video);
+  REQUIRE(scene.vertices.size() == 18);
+  const auto depth = [&](std::size_t i) { return scene.vertices[i].position[2] / scene.vertices[i].position[3]; };
+  CHECK(depth(0) == 0x100000 / 16777216.0f && depth(6) == 0x2000 / 16777216.0f && depth(6) < depth(0));
+  CHECK(depth(12) == 0xFFFFFF / 16777216.0f);
+  // With z, z.
+  f.frame.depth_is_w = false;
+  f.r.build_scene(f.frame, f.video);
+  CHECK(depth(0) == 0x100000 / 16777216.0f && depth(6) == 0x700000 / 16777216.0f);
+}
+
 TEST(renderer_scene_can_place_vertices_between_pixels) {
   Fixture f;
   Vertex a = Fixture::vertex(10, 20), b = Fixture::vertex(100, 20), c = Fixture::vertex(10, 80);

@@ -293,7 +293,12 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         const float y = fine_positions_ ? static_cast<float>(v.fine_y) / 16.0f : static_cast<float>(v.y);
         c.position[0] = (x / 128.0f - 1.0f) * w;
         c.position[1] = (1.0f - y / 96.0f) * w;
-        c.position[2] = std::clamp(static_cast<float>(v.z) / 16777216.0f, 0.0f, 1.0f) * w;
+        // The depth the frame asks for: z, or w (as the processor's drawing
+        // has it, 24 bits). Polygons made with other matrices, or whose sums
+        // wrapped, are in a different order by z than by w.
+        const float depth = frame.depth_is_w ? static_cast<float>(std::clamp(v.w, 0, 0xFFFFFF))
+                                             : static_cast<float>(v.z);
+        c.position[2] = std::clamp(depth / 16777216.0f, 0.0f, 1.0f) * w;
         c.position[3] = w;
         c.texel[0] = static_cast<float>(v.s) / 16.0f;
         c.texel[1] = static_cast<float>(v.t) / 16.0f;
