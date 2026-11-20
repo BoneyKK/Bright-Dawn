@@ -53,7 +53,7 @@ at instruction patterns:
 | A jump table the translator did not recognise | The rest of that function is interpreted; its caller continues natively |
 | Untranslated code calls or jumps to a translated function | The function runs natively |
 | A return made through a register (`pop {r3}; bx r3`) | Recognised as a return to the waiting call site; nothing is interpreted |
-| A call made with `mov lr, pc` and a branch | The callee runs natively; the instructions after the branch are interpreted |
+| A call made with `mov lr, pc` (or `add`/`sub lr, pc, #n`) and a branch | The callee runs natively; the address put in lr is a translated entry, so the code after it runs natively too |
 | A callee that returns past data placed after the call | The caller's remaining instructions are interpreted |
 | A helper that jumps into its caller through a table after the call | The caller's remaining instructions are interpreted |
 | A jump out of several nested functions | The functions in between are abandoned; the outer one continues |

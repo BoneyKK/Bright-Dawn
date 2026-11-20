@@ -122,12 +122,13 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   # The same translated code with the interpreter behind it: everything must
   # pass. Only the tests listed may enter the interpreter at all, and each of
   # them must. (retreg is absent: its return through a register is resolved
-  # without interpreting anything.)
+  # without interpreting anything. v4call is absent: the address it puts in
+  # lr before its jump is a translated entry of its own.)
   add_executable(guest_mixed_test mixed_test.cpp)
   target_link_libraries(guest_mixed_test PRIVATE bd_guest_runner bd_guest_translated bd_runtime)
   add_test(NAME guest_mixed
     COMMAND guest_mixed_test ${BD_GUEST_IMAGE}
-            indirect sw handback v4call inltab nonlocal skipdata svc coro hidmodes excret)
+            indirect sw handback inltab nonlocal skipdata svc coro hidmodes excret)
 
   # The same again, with the translated code compiled into a game library of
   # its own (src/runtime/game_library.h) and loaded, as the program loads the
@@ -151,7 +152,7 @@ if(BD_GUEST_IMAGE_OK AND Python3_FOUND)
   add_dependencies(guest_library_test bd_guest_game_library)
   add_test(NAME guest_library
     COMMAND guest_library_test $<TARGET_FILE:bd_guest_game_library> ${BD_GUEST_IMAGE}
-            indirect sw handback v4call inltab nonlocal skipdata svc coro hidmodes excret)
+            indirect sw handback inltab nonlocal skipdata svc coro hidmodes excret)
 
   # --- Overlays: a program in several modules, two of them at one address ---
   # Built, given a manifest and translated exactly as a real game would be,

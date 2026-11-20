@@ -88,6 +88,7 @@ class Function:
     calls: set = field(default_factory=set)          # (target, thumb) called with BL/BLX
     tails: set = field(default_factory=set)          # (target, thumb) jumped to as tail call
     tables: dict = field(default_factory=dict)       # address of a computed jump -> [targets]
+    resumes: set = field(default_factory=set)        # (address, thumb) set into lr before a jump: callees return there
     unresolved: set = field(default_factory=set)     # addresses of computed jumps we could not follow
     bad: str = ""                                    # why the function was cut short
 
@@ -121,6 +122,23 @@ def writes_pc(i: Insn) -> bool:
     if i.kind in ("mul", "clz", "qarith", "mrs"):
         return f.get("rd") == 15
     return False
+
+
+def return_point(i: Insn) -> int | None:
+    """The address "mov lr, pc" or "add/sub lr, pc, #n" puts in lr (ARM), else None.
+
+    Code that calls through a register the ARMv4 way, or a dispatch loop that
+    sets its own address as the return of every handler it jumps to, does
+    this; the callee then returns there, where no BL waits.
+    """
+    f = i.f
+    if i.thumb or i.kind != "dp" or f["rd"] != 14 or f["s"]:
+        return None
+    if f["op"] == 13 and f["op2"] == ("sh", 15, 0, 0):
+        return i.pc_value
+    if f["rn"] == 15 and f["op"] in (2, 4) and f["op2"][0] == "imm":
+        return (i.pc_value - f["op2"][1] if f["op"] == 2 else i.pc_value + f["op2"][1]) & 0xFFFFFFFF
+    return None
 
 
 def _jump_table(img: Image, i: Insn) -> list | None:
@@ -223,6 +241,9 @@ def explore(img: Image, addr: int, thumb: bool, known: set) -> Function:
                     a = i.end
                     continue
                 break
+            point = return_point(i)
+            if point is not None and img.contains(point):
+                fn.resumes.add((point, False))
             a = i.end
     return fn
 
@@ -254,7 +275,7 @@ def find_functions(img: Image, entries: list, extra_known: set | None = None,
                 continue
             fn = explore(img, key[0], key[1], known)
             funcs[key] = fn
-            for c in fn.calls | fn.tails:
+            for c in fn.calls | fn.tails | fn.resumes:
                 if c not in known and img.contains(c[0]):
                     known.add(c)
                     todo.append(c)
