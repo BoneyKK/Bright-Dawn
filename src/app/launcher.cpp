@@ -32,6 +32,50 @@ const ImVec4 kBadOnPaper(0.66f, 0.12f, 0.06f, 1.0f);
 constexpr ImGuiWindowFlags kWholeWindow = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                           ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
+// Bright Dawn's own gear, the way to the settings: '#' is its edge, 'o' its
+// body, and the rest is left clear.
+constexpr int kGearSize = 15;
+constexpr const char* kGear[kGearSize] = {
+    "......###......",
+    "..##..#o#..##..",
+    ".#oo##ooo##oo#.",
+    ".#ooooooooooo#.",
+    "..#ooo###ooo#..",
+    "###oo#...#oo###",
+    "#ooo#.....#ooo#",
+    "#ooo#.....#ooo#",
+    "#ooo#.....#ooo#",
+    "###oo#...#oo###",
+    "..#ooo###ooo#..",
+    ".#ooooooooooo#.",
+    ".#oo##ooo##oo#.",
+    "..##..#o#..##..",
+    "......###......",
+};
+
+// The gear as a button centred on `centre`, each of its pixels `pixel`
+// across (cut to a whole number, so that it stays sharp). Yellow while
+// pointed at, as a choice in the menus. True when clicked.
+bool gear_button(ImDrawList* list, ImVec2 centre, float pixel) {
+  pixel = std::max(1.0f, std::floor(pixel));
+  const float side = pixel * kGearSize;
+  const ImVec2 min(std::floor(centre.x - side / 2), std::floor(centre.y - side / 2));
+  ImGui::SetCursorScreenPos(min);
+  const bool clicked = ImGui::InvisibleButton("settings gear", ImVec2(side, side));
+  const bool hovered = ImGui::IsItemHovered();
+  if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  const ImU32 edge = ImGui::GetColorU32(skin::kEdge);
+  const ImU32 body = ImGui::GetColorU32(hovered ? skin::kChosen : skin::kButton);
+  for (int y = 0; y < kGearSize; ++y)
+    for (int x = 0; x < kGearSize; ++x) {
+      const char c = kGear[y][x];
+      if (c != '#' && c != 'o') continue;
+      const ImVec2 at(min.x + pixel * static_cast<float>(x), min.y + pixel * static_cast<float>(y));
+      list->AddRectFilled(at, ImVec2(at.x + pixel, at.y + pixel), c == '#' ? edge : body);
+    }
+  return clicked;
+}
+
 
 }  // namespace
 
@@ -516,9 +560,16 @@ void Launcher::draw_start_dressed(LauncherChoice& choice, bool& done) {
                   ImGui::GetColorU32(skin::kInk), lines[i].c_str());
   }
 
-  // The message bar below the page: what to do, and the way to the other
-  // pages, which a click on it also takes.
-  const ImRect bar = skin_.area(renderer, skin::kSaveLineLeft, skin::kSaveBelowTop, skin::kSaveLineRight,
+  // In the lower right corner, where the game has its round button: the
+  // gear, the way to the other pages.
+  const ImRect corner = skin_.area(renderer, skin::kSaveGearLeft, skin::kSaveBelowTop, skin::kSaveLineRight,
+                                   skin::kSaveBelowBottom);
+  if (gear_button(list, corner.GetCenter(), skin_.picture_scale(renderer))) page_ = Page::Settings;
+  if (ImGui::IsItemHovered()) hint_ = "Settings, the build and the log.";
+
+  // The message bar beside it: what to do. A click on it goes to the other
+  // pages too.
+  const ImRect bar = skin_.area(renderer, skin::kSaveLineLeft, skin::kSaveBelowTop, skin::kSaveGearLeft - 2,
                                 skin::kSaveBelowBottom);
   ImGui::SetCursorScreenPos(bar.Min);
   if (ImGui::InvisibleButton("other pages", bar.GetSize())) page_ = Page::Settings;
@@ -620,7 +671,7 @@ std::string Launcher::standing_hint() const {
   const std::string name = std::string("Bright Dawn ") + BD_VERSION;
   if (building()) return "The game is being built from your ROM. This takes some minutes.";
   switch (page_) {
-    case Page::Play: return "Settings, the build and the log: press Escape, or click here.";
+    case Page::Play: return "Settings, the build and the log: the gear, or Escape.";
     case Page::Build: return "The game is built from your ROM, and its code then runs natively.";
     case Page::Settings: return "Point at a setting to see what it does.";
     case Page::Log: return "Attach the log when you report a problem.";
@@ -686,7 +737,7 @@ bool Launcher::play_button(LauncherChoice& choice, bool& done, ImVec2 size) {
   ImGui::BeginDisabled(!rom_check_.ok);
   const bool pressed = button("Play", size);
   ImGui::EndDisabled();
-  explain(rom_check_.ok ? "Play Golden Sun: Dark Dawn from your ROM." : "Choose your ROM first: press Escape, then Build.");
+  explain(rom_check_.ok ? "Play Golden Sun: Dark Dawn from your ROM." : "Choose your ROM first: click the gear, then Build.");
   if (pressed) {
     play(choice);
     done = true;
@@ -722,6 +773,12 @@ void Launcher::draw_start(LauncherChoice& choice, bool& done) {
   ImGui::SetCursorPos(ImVec2((area.x - ImGui::CalcTextSize(hint.c_str()).x) / 2, area.y - em * 1.5f));
   ImGui::TextDisabled("%s", hint.c_str());
   if (ImGui::IsItemClicked()) page_ = Page::Settings;
+  // The gear in the lower right corner, as on the dressed page.
+  const float pixel = std::max(2.0f, std::floor(em / 6));
+  const ImVec2 corner(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x - ImGui::GetStyle().WindowPadding.x,
+                      ImGui::GetWindowPos().y + ImGui::GetWindowSize().y - ImGui::GetStyle().WindowPadding.y);
+  const float half = pixel * kGearSize / 2;
+  if (gear_button(ImGui::GetWindowDrawList(), ImVec2(corner.x - half, corner.y - half), pixel)) page_ = Page::Settings;
 }
 
 void Launcher::draw_build() {

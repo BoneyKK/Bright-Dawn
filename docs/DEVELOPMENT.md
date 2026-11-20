@@ -31,8 +31,8 @@ update, it opens the setup, in the program's own look: choose your ROM (it is
 remembered), and build the game from it (next section), following the build's
 log. Then it opens its launcher, in a 4 by 3 window that is not resized: its
 first page has only Play, and below it what your save holds (name, level,
-time played, coins), on the page of the game's own list of saves. Escape, or
-a click on the message bar, opens the other pages: the settings, building the
+time played, coins), on the page of the game's own list of saves. The gear
+in its lower right corner, or Escape, opens the other pages: the settings, building the
 game again, and where the log is, on the game's settings menu (its wooden
 board, title ribbon, parchment strips and message bar, the travel journal's
 parchment). The pictures and the game's font are read from your ROM; nothing

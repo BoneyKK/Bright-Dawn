@@ -45,6 +45,8 @@ inline constexpr int kSaveLineLeft = 16, kSaveLineRight = 250;
 inline constexpr int kSaveFirstTop = 25, kSaveFirstBottom = 59, kSaveSecondBottom = 97, kSaveThirdBottom = 135;
 inline constexpr int kSaveStripTop = 141, kSaveStripBottom = 166;
 inline constexpr int kSaveBelowTop = 168, kSaveBelowBottom = 190;
+// The launcher's gear goes in the corner below, right of this.
+inline constexpr int kSaveGearLeft = 226;
 }  // namespace skin
 
 // A picture as a texture, enlarged to a whole multiple of its size once and
