@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "3D on both screens (as on the title screen) drawn by the graphics hardware at the higher resolution; automatic 3D resolution costs less",
+    "what": "Launcher: a 4 by 3 window; Play and your save on the game's page of saves; the setup in the program's own look. Music and sound effects play. The game's busiest loop runs translated",
     "date": "2026-11-20"
   },
   "statuses": {
@@ -370,7 +370,7 @@
     {
       "part": "translator",
       "status": "done",
-      "now": "Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts."
+      "now": "Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts. Where code puts its own return address in lr before a jump, that address is translated too."
     },
     {
       "part": "game builder",
@@ -390,7 +390,7 @@
     {
       "part": "nds",
       "status": "part",
-      "now": "The console model runs the game to its name entry. The game's save is kept between runs; the console's language is a setting. No music, beyond the name entry not yet tried."
+      "now": "The console model runs the game from the title screen to battles, with a save from about two thirds through the game. The game's save is kept between runs; the console's language is a setting. The second processor's music player is written natively."
     },
     {
       "part": "gfx",
@@ -399,8 +399,8 @@
     },
     {
       "part": "audio",
-      "status": "none",
-      "now": "The sound hardware is modelled, but nothing plays it to your speakers."
+      "status": "done",
+      "now": "Music and sound effects play through your audio device (SDL 3), kept in step with the frames. Settings, Sound: on or off, and the volume."
     },
     {
       "part": "input",
@@ -410,7 +410,7 @@
     {
       "part": "ui, app",
       "status": "done",
-      "now": "Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub."
+      "now": "The launcher's first page is Play and your save, on the game's page of saves; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub."
     },
     {
       "part": "platform, core",
@@ -424,8 +424,9 @@
     }
   ],
   "next": [
-    "Play on from the name entry, by hand and with scripted input, and fix what stops the game.",
-    "Music: the second processor's sequence player, and sound out of your speakers.",
+    "Play on from the save, by hand and with scripted input, and fix what stops the game.",
+    "Speed: the game's thread switch (0x02054124) and the interrupt entry still run in the interpreter.",
+    "In-game saving: not yet tried.",
     "Widescreen and mods."
   ]
 }

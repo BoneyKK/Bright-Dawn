@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (20 November 2026): 3D on both screens (as on the title screen) drawn by the graphics hardware at the higher resolution; automatic 3D resolution costs less
+**Last change** (20 November 2026): Launcher: a 4 by 3 window; Play and your save on the game's page of saves; the setup in the program's own look. Music and sound effects play. The game's busiest loop runs translated
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -55,23 +55,24 @@ the state of each, and what comes next.
 | `rom` | 🟢 Works | Checks the ROM, reads its file system, archives and every kind of compression the game uses. |
 | `assets` | 🟡 Partly works | Decodes the menus' pictures and the game's font (NFTR) for the launcher. Textures, models and sounds: not yet. |
 | `mods` | ⚪ Not started | Planned: replace game files without changing the ROM. |
-| `translator` | 🟢 Works | Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts. |
+| `translator` | 🟢 Works | Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts. Where code puts its own return address in lr before a jump, that address is translated too. |
 | `game builder` | 🟢 Works | Downloads its compiler (and Python on Windows) for the build and deletes it after. The downloaded compiler is not yet tried on a real build. |
 | `game library` | 🟢 Works | Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24). |
 | `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). |
-| `nds` | 🟡 Partly works | The console model runs the game to its name entry. The game's save is kept between runs; the console's language is a setting. No music, beyond the name entry not yet tried. |
+| `nds` | 🟡 Partly works | The console model runs the game from the title screen to battles, with a save from about two thirds through the game. The game's save is kept between runs; the console's language is a setting. The second processor's music player is written natively. |
 | `gfx` | 🟢 Works | Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, on one screen or both, or by the processor. Widescreen: not yet. |
-| `audio` | ⚪ Not started | The sound hardware is modelled, but nothing plays it to your speakers. |
+| `audio` | 🟢 Works | Music and sound effects play through your audio device (SDL 3), kept in step with the frames. Settings, Sound: on or off, and the volume. |
 | `input` | 🟢 Works | Keyboard, any number of controllers, the mouse as the stylus. Keys and buttons can be bound in Settings, Controls. |
-| `ui, app` | 🟢 Works | Setup and launcher look like the game's settings menu: its board, ribbon, parchment, buttons, message bar and font, from your ROM. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. |
+| `ui, app` | 🟢 Works | The launcher's first page is Play and your save, on the game's page of saves; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. |
 | `platform, core` | 🟢 Works | Window, files, settings, frame timing, log, checksums. A crash is noted with where it happened; a game that stops finishing frames too. |
 | `CI and releases` | 🟢 Works | Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one. Issue forms for bugs, a stuck game or wrong graphics, and wishes. |
 
 **Next:**
 
-1. Play on from the name entry, by hand and with scripted input, and fix what stops the game.
-2. Music: the second processor's sequence player, and sound out of your speakers.
-3. Widescreen and mods.
+1. Play on from the save, by hand and with scripted input, and fix what stops the game.
+2. Speed: the game's thread switch (0x02054124) and the interrupt entry still run in the interpreter.
+3. In-game saving: not yet tried.
+4. Widescreen and mods.
 
 The same, as a page of its own: [the project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8).
 <!-- project-map:end -->
