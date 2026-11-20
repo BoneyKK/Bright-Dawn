@@ -292,3 +292,40 @@ TEST(display_keeps_hardware_captures_and_finds_where_they_are_shown) {
   CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kMark3D) != 0);
   CHECK(f.display.frame_fill(0).fill == Display::Fill::kNone && f.display.frame_capture() == 0);
 }
+
+// 3D on both screens, the screens swapped in every frame, as the game's
+// title does: each frame's scene is captured, and an engine shows a capture
+// made before. Captures of the same picture are the same where the
+// graphics hardware puts the 3D, but for the bits that tell them apart. A
+// capture is written while its frame is drawn, so it is not what that frame
+// shows.
+TEST(display_a_screen_shows_the_capture_it_reads_when_the_screens_swap_every_frame) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  const u32 picture = kPicture | DisplayEngine::kBackground0Is3D | 1u << 8;
+  f.io.write(0x04000000, 4, picture);
+  const u32 capture = Display::kCaptureOn | 3u << 20;
+  const auto frame = [&](bool main_on_top, u32 into_bank) {
+    f.io.write(Display::kPowerControl, 2, main_on_top ? Display::kMainOnTop : 0);
+    f.io.write(Display::kCaptureControl, 4, capture | into_bank << 16);
+    f.frame();
+    return f.display.frame_capture();
+  };
+  frame(false, 0);  // The first has none before it: not kept.
+  const std::uint64_t into_b = frame(true, 1);
+  const std::uint64_t into_a = frame(false, 0);
+  REQUIRE(into_b != 0 && into_a != 0 && into_a != into_b);
+  // Captured into bank A again, while the main engine shows bank B: the
+  // capture two frames back, not the one now in bank A, nor this frame's.
+  f.io.write(0x04000000, 4, (picture & ~kPicture) | 2u << 16 | 1u << 18);
+  const std::uint64_t now = frame(true, 0);
+  CHECK(now != 0 && now != into_a);
+  const Display::ScreenFill& fill = f.display.frame_fill(0);
+  CHECK(fill.fill == Display::Fill::kCapture && fill.capture == into_b);
+  CHECK((f.display.top_screen()[191 * 256] & DisplayEngine::kMark3D) != 0);
+  // Then bank A, with this frame's capture in bank B: the last frame's.
+  f.io.write(0x04000000, 4, (picture & ~kPicture) | 2u << 16);
+  frame(false, 1);
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kCapture && f.display.frame_fill(1).capture == now);
+}

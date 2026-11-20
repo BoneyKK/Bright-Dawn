@@ -125,10 +125,18 @@ void Display::capture_line(unsigned line) {
   } else {
     const u32 weight_first = std::min<u32>(capture_control_ & 0x1F, 16);
     const u32 weight_second = std::min<u32>((capture_control_ >> 8) & 0x1F, 16);
+    // Where the graphics hardware puts the 3D scene, the processor has no
+    // colour for it, and a picture all 3D is the same in every capture. The
+    // lowest bits there tell this capture from the ones made before it, to
+    // find which one an engine shows.
+    const auto* marks = hardware_capture_ ? main_.line_marks() : nullptr;
+    const u32 sign = (statistics_.frames + 1) & 7;
+    const u32 signature = (sign & 1) | ((sign >> 1) & 1) << 5 | ((sign >> 2) & 1) << 10;
     for (unsigned x = 0; x < width; ++x) {
       u32 pixel;
       if (source == 0) {
         pixel = first(x);
+        if (marks != nullptr && ((*marks)[x] & DisplayEngine::kMark3D) != 0) pixel ^= signature;
       } else if (source == 1) {
         pixel = second(x);
       } else {
@@ -139,15 +147,12 @@ void Display::capture_line(unsigned line) {
           pixel |= std::min<u32>((((a >> shift) & 0x1F) * weight_first + ((b >> shift) & 0x1F) * weight_second) / 16, 31) << shift;
       }
       video_.poke(into + ((write_at + x * 2) & 0x1FFFF), 2, pixel);
-    }
-    if (hardware_capture_) {
-      // What the graphics hardware's capture takes, and what this one put
-      // in video memory, to find where it is shown.
-      const std::size_t at = static_cast<std::size_t>(line) * kWidth;
-      const auto* marks = main_.line_marks();
-      for (unsigned x = 0; x < width; ++x) {
-        capture_source_[at + x] = main_.mixed_line()[x] | (marks != nullptr ? (*marks)[x] : 0);
-        kept_[kept_at_].pixels[at + x] = six_bits_each(first(x));
+      if (hardware_capture_) {
+        // What the graphics hardware's capture takes, and what this one put
+        // in video memory, to find where it is shown.
+        const std::size_t at = static_cast<std::size_t>(line) * kWidth + x;
+        capture_source_[at] = main_.mixed_line()[x] | (marks != nullptr ? (*marks)[x] : 0);
+        kept_[kept_at_].pixels[at] = six_bits_each(pixel);
       }
     }
   }
@@ -183,7 +188,9 @@ void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_
   const Kept* best = nullptr;
   unsigned best_count = 0, samples = 0;
   for (const Kept& kept : kept_) {
-    if (kept.number == 0 || statistics_.frames + 1 - kept.number > 3) continue;
+    // A capture made in this frame is not complete until the frame is: what
+    // the engines show now can only be an earlier one.
+    if (kept.number == 0 || kept.number > statistics_.frames || statistics_.frames + 1 - kept.number > 3) continue;
     unsigned count = 0;
     samples = 0;
     for (std::size_t i = 0; i < shown.size(); i += 61, ++samples) count += shown[i] == kept.pixels[i] ? 1 : 0;
