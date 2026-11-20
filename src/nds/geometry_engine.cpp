@@ -748,6 +748,8 @@ void GeometryEngine::place_vertices() {
     if (v.w == 0) continue;
     const i64 w = v.w;
     // x is 9 bits and y 8, and they wrap; y runs down the screen.
+    v.fine_x = static_cast<i32>(((v.x + w) * width * 16 / (w * 2) + left * 16) & 0x1FFF);
+    v.fine_y = static_cast<i32>(((w - v.y) * height * 16 / (w * 2) + top * 16) & 0xFFF);
     v.x = static_cast<i32>(((v.x + w) * width / (w * 2) + left) & 0x1FF);
     v.y = static_cast<i32>(((w - v.y) * height / (w * 2) + top) & 0xFF);
     v.z = static_cast<i32>(((static_cast<i64>(v.z) * (1 << 14)) / w + 0x3FFF) * (1 << 9));

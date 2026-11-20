@@ -97,6 +97,8 @@ std::vector<SettingDef> game_setting_definitions() {
                          {"7", "7x"},
                          {"8", "8x (2048 by 1536)"}},
                         "auto"));
+  defs.push_back(toggle(key::kFineCoordinates, "Graphics", "High-resolution coordinates",
+                        "Above 1x, places 3D models between the DS's pixels, so that they move smoothly.", true));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
                         "Sets whether the processor draws 3D textures sharp or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));

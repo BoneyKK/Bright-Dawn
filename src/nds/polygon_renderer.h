@@ -110,6 +110,11 @@ class PolygonRenderer {
 
   void set_texture_filter(TextureFilter filter) { texture_filter_ = filter; }
   TextureFilter texture_filter() const { return texture_filter_; }
+  // For the graphics hardware: places vertices at the geometry engine's
+  // sixteenths of a pixel, not at whole pixels. Only worth it when the 3D
+  // picture is drawn larger than the DS's; off by default.
+  void set_fine_positions(bool on) { fine_positions_ = on; }
+  bool fine_positions() const { return fine_positions_; }
 
   std::uint32_t control() const { return control_; }
   void write_control(std::uint32_t value, std::uint32_t mask);
@@ -175,6 +180,7 @@ class PolygonRenderer {
   Pixel& at(int layer, int line, int x) { return layers_[layer][static_cast<std::size_t>(line * kWidth + x)]; }
 
   TextureFilter texture_filter_ = TextureFilter::Nearest;
+  bool fine_positions_ = false;
   std::uint32_t control_ = 0;
   std::array<std::uint16_t, 8> edge_colours_{};
   std::uint32_t alpha_reference_ = 0;

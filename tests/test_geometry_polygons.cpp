@@ -647,3 +647,19 @@ TEST(polygons_without_perspective_are_flat) {
   REQUIRE(f.polygons() == 4);
   CHECK(f.polygon(3).flat);
 }
+
+TEST(polygons_placed_vertices_keep_sixteenths_of_a_pixel) {
+  Fixture f;
+  f.send(GeometryEngine::kViewport, {kWholeScreen});
+  f.begin(GeometryEngine::kTriangles, kBoth);
+  // 10.5 pixels from the left and 20.25 from the top.
+  f.v(336 - W, W - 864);
+  f.v(W, -W);
+  f.v(-W, -W);
+  f.swap();
+  const GeometryEngine::Frame& frame = f.g.finished();
+  REQUIRE(frame.vertices.size() == 3);
+  CHECK(at(frame.vertices[0], 10, 20) && frame.vertices[0].fine_x == 168 && frame.vertices[0].fine_y == 324);
+  // On whole pixels the two agree.
+  CHECK(at(frame.vertices[1], 256, 192) && frame.vertices[1].fine_x == 256 * 16 && frame.vertices[1].fine_y == 192 * 16);
+}

@@ -162,6 +162,8 @@ bool GameScreen::frame() {
   if (menu_open_ && !run_menu()) return false;
   if (app_.settings.revision() != settings_seen_) apply_settings(false);
   read_input();
+  // The scene is made during the frame, for the resolution it is drawn at.
+  console_.polygon_renderer().set_fine_positions(app_.settings.toggle(key::kFineCoordinates) && scale_3d() > 1);
   const bool capture_last = app_.options.frames != 0 && frames_run_ == app_.options.frames && !app_.options.capture.empty();
   const bool capture_now = capture_last || (app_.options.capture_every != 0 && !app_.options.capture.empty() &&
                                             frames_run_ % app_.options.capture_every == 0);

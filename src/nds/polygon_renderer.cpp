@@ -289,8 +289,10 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         const Vertex& v = frame.vertices[polygon.first + std::size_t{i}];
         HardwareScene::Vertex& c = corners[i];
         const float w = v.w > 0 ? static_cast<float>(v.w) / 4096.0f : 1.0f / 4096.0f;
-        c.position[0] = (static_cast<float>(v.x) / 128.0f - 1.0f) * w;
-        c.position[1] = (1.0f - static_cast<float>(v.y) / 96.0f) * w;
+        const float x = fine_positions_ ? static_cast<float>(v.fine_x) / 16.0f : static_cast<float>(v.x);
+        const float y = fine_positions_ ? static_cast<float>(v.fine_y) / 16.0f : static_cast<float>(v.y);
+        c.position[0] = (x / 128.0f - 1.0f) * w;
+        c.position[1] = (1.0f - y / 96.0f) * w;
         c.position[2] = std::clamp(static_cast<float>(v.z) / 16777216.0f, 0.0f, 1.0f) * w;
         c.position[3] = w;
         c.texel[0] = static_cast<float>(v.s) / 16.0f;

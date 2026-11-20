@@ -93,7 +93,10 @@ The log says which one is used. With Vulkan, the graphics hardware also draws
 the 3D scenes, at *3D resolution* (Settings, Graphics; `--3d-resolution`)
 times the DS's, by default the least that fills the screen as shown; *3D
 drawing* or `--3d processor` has the processor draw them as the DS does,
-256 by 192, and it does where the graphics hardware cannot. The shaders are
+256 by 192, and it does where the graphics hardware cannot. Above 1x,
+*High-resolution coordinates* (Settings, Graphics; on by default) places
+vertices between the DS's pixels, as the geometry engine computes them, so
+that slowly moving models do not jump from pixel to pixel. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 

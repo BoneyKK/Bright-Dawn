@@ -98,6 +98,11 @@ class GeometryEngine {
     std::int32_t x = 0, y = 0, z = 0, w = 0;
     std::int16_t s = 0, t = 0;   // Texture coordinates, in sixteenths of a texel.
     std::uint32_t colour = 0;    // Six bits each of red, green and blue, red lowest.
+    // Once placed, x and y in sixteenths of a pixel, from the same sums
+    // before they are cut to whole pixels (x is then fine_x / 16). The DS
+    // draws at whole pixels; a renderer that draws larger can use these, so
+    // that slowly moving models do not jump from pixel to pixel.
+    std::int32_t fine_x = 0, fine_y = 0;
 
     bool operator==(const Vertex&) const = default;
   };

@@ -858,3 +858,23 @@ TEST(renderer_scene_for_the_graphics_hardware) {
   f.r.build_scene(f.frame, f.video);
   CHECK(scene.alpha_threshold == 21.5f / 63.0f);
 }
+
+TEST(renderer_scene_can_place_vertices_between_pixels) {
+  Fixture f;
+  Vertex a = Fixture::vertex(10, 20), b = Fixture::vertex(100, 20), c = Fixture::vertex(10, 80);
+  a.fine_x = 10 * 16 + 8, a.fine_y = 20 * 16 + 4;  // 10.5 and 20.25.
+  b.fine_x = 100 * 16, b.fine_y = 20 * 16;
+  c.fine_x = 10 * 16, c.fine_y = 80 * 16;
+  f.polygon({a, b, c}, kOpaque);
+  // As the DS draws: at whole pixels. This is the default.
+  CHECK(!f.r.fine_positions());
+  const auto& scene = f.r.build_scene(f.frame, f.video);
+  REQUIRE(scene.vertices.size() == 3);
+  CHECK(scene.vertices[0].position[0] == 10.0f / 128.0f - 1.0f && scene.vertices[0].position[1] == 1.0f - 20.0f / 96.0f);
+  // With the geometry engine's sixteenths, for a larger picture.
+  f.r.set_fine_positions(true);
+  f.r.build_scene(f.frame, f.video);
+  REQUIRE(scene.vertices.size() == 3);
+  CHECK(scene.vertices[0].position[0] == 10.5f / 128.0f - 1.0f && scene.vertices[0].position[1] == 1.0f - 20.25f / 96.0f);
+  CHECK(scene.vertices[1].position[0] == 100.0f / 128.0f - 1.0f && scene.vertices[2].position[1] == 1.0f - 80.0f / 96.0f);
+}
