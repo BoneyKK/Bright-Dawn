@@ -38,6 +38,7 @@
 #include "game_library_host.h"
 #include "gfx/screen_layout.h"
 #include "input/bindings.h"
+#include "nds/bios_rom.h"
 #include "nds/console.h"
 #include "nds/keypad.h"
 #include "nds/program.h"
@@ -604,11 +605,12 @@ int extract_code(const char* rom_path, const char* folder) {
   std::printf("Golden Sun: Dark Dawn (%s, %.*s)\n", rom::to_string(title->region),
               static_cast<int>(title->game_code.size()), title->game_code.data());
   Result<std::size_t> written = rom::write_program_code(rom.value(), app::from_utf8(folder));
-  if (!written) {
-    std::fprintf(stderr, "error: %s\n", written.error().message.c_str());
+  Result<std::size_t> bios = written ? nds::add_bios_code(app::from_utf8(folder)) : written;
+  if (!written || !bios) {
+    std::fprintf(stderr, "error: %s\n", (written ? bios : written).error().message.c_str());
     return 1;
   }
-  std::printf("Wrote %zu file(s) to %s\n", written.value(), folder);
+  std::printf("Wrote %zu file(s) to %s\n", written.value() + bios.value(), folder);
   return 0;
 }
 

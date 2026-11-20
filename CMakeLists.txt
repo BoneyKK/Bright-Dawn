@@ -134,6 +134,7 @@ add_library(bd_nds STATIC
   src/nds/arm9_bus.cpp
   src/nds/arm9_io.cpp
   src/nds/bios.cpp
+  src/nds/bios_code.cpp
   src/nds/bios_rom.cpp
   src/nds/cartridge.cpp
   src/nds/console.cpp

@@ -46,8 +46,8 @@ class ManifestError(ValueError):
 
 
 def read_manifest(path: Path) -> dict:
-    """{'arm9': {...}, 'overlays': [{...}]} with integer fields."""
-    out = {"arm9": None, "overlays": []}
+    """{'arm9': {...}, 'overlays': [{...}], 'bios9': {...} or None} with integer fields."""
+    out = {"arm9": None, "overlays": [], "bios9": None}
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = line.strip()
         if not line or line.startswith("#"):
@@ -65,6 +65,8 @@ def read_manifest(path: Path) -> dict:
             elif kind == "overlay9":
                 out["overlays"].append({k: fields[k] for k in
                                         ("id", "load", "size", "bss", "init_start", "init_end", "file")})
+            elif kind == "bios9":
+                out["bios9"] = {k: fields[k] for k in ("load", "entry", "file")}
             elif kind != "arm7":
                 raise ManifestError(f"{path}:{number}: unknown entry {kind!r}")
         except KeyError as exc:
@@ -129,6 +131,13 @@ def plan_modules(code_dir: Path) -> list:
                     entries.append((pointer & ~1, bool(pointer & 1)))
         modules.append({"name": f"overlay9_{ov['id']:04d}", "prefix": f"o9_{ov['id']:03d}",
                         "overlay": ov["id"], "regions": [("main", ov["load"], data)], "entries": entries})
+    # Bright Dawn's own BIOS code (src/nds/bios_rom.S), when the code folder
+    # has it: its interrupt entry then runs natively too.
+    bios = manifest["bios9"]
+    if bios is not None:
+        modules.append({"name": "bios9", "prefix": "b9", "overlay": -1,
+                        "regions": [("main", bios["load"], (code_dir / bios["file"]).read_bytes())],
+                        "entries": [(bios["entry"] & ~1, bool(bios["entry"] & 1))]})
     for m in modules:
         m["ranges"] = [(start, start + len(data)) for _, start, data in m["regions"]]
     return modules

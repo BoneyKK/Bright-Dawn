@@ -17,6 +17,7 @@
 
 #include "core/checksum.h"
 #include "core/version.h"
+#include "nds/bios_rom.h"
 #include "platform/paths.h"
 #include "rom/export_path.h"
 #include "rom/file_format.h"
@@ -484,6 +485,9 @@ int cmd_extract(const std::filesystem::path& path, std::filesystem::path out_dir
     auto code = bd::rom::write_program_code(rom, out_dir / "code");
     if (!code) return report(code.error());
     written += code.value();
+    auto bios = bd::nds::add_bios_code(out_dir / "code");
+    if (!bios) return report(bios.error());
+    written += bios.value();
   }
 
   std::printf("Wrote %zu file(s) to %s\n", written, out_dir.string().c_str());

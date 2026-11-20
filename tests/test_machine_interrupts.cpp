@@ -334,3 +334,30 @@ TEST(the_places_run_in_the_interpreter_are_listed_with_why) {
   CHECK(report.find("0x00004000\tARM\t2\t4\t0xE3A00005\tfast code memory\tno translated code starts here\n") !=
         std::string::npos);
 }
+
+// Interpreted code at 0x4100 waits for the handler's flag:
+//   4100 ldr r0, [r1]
+//   4104 cmp r0, #0
+//   4108 beq 4100
+//   410c bx lr
+// The interrupt comes after two instructions, in the interpreter, which
+// hands it to the translated vector instead of interpreting what is there.
+TEST(the_interpreter_takes_an_interrupt_through_the_translated_vector) {
+  Rig rig;
+  rig.memory.write32(0x4100, 0xE5910000);
+  rig.memory.write32(0x4104, 0xE3500000);
+  rig.memory.write32(0x4108, 0x0AFFFFFC);
+  rig.memory.write32(0x410C, 0xE12FFF1E);
+  rig.machine.cpu().r[1] = kFlag;
+  rig.machine.set_alarm(2);
+  rig.machine.call_function(0x4100, kReturn);
+  const ds::Cpu& c = rig.machine.cpu();
+  CHECK(rig.hardware.unhandled_count == 0 && !rig.machine.stopped());
+  CHECK(rig.machine.statistics().interrupts_taken == 1);
+  CHECK(c.r[0] == 0x410C);  // The flag: the handler's link register, "beq" + 4.
+  CHECK((c.cpsr_ctrl & 0x1Fu) == 0x1F && c.r[13] == 0x7000);
+  // Only the loop was interpreted: two instructions, the handler, then
+  // "beq" and once round.
+  CHECK(rig.machine.statistics().interpreted_instructions == 7);
+  CHECK(rig.machine.statistics().native_jumps_from_interpreter == 1);  // To the vector.
+}

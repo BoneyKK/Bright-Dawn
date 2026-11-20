@@ -188,7 +188,9 @@ does what those parts of a BIOS are known to do:
   for.
 
 Its numbers are embedded in the program, and a test assembles the source and
-fails if they differ.
+fails if they differ. The program also writes them beside the game's code
+for the game builder (`bios9.bin`, a `bios9` line in the code manifest), so
+the game library holds the interrupt entry as native code too.
 
 What this rests on: the source of NooDS, which does the same natively, and
 recollection of GBATEK, which could not be reached from the development

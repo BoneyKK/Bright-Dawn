@@ -125,7 +125,7 @@ set_tests_properties(cli_extract_code_only_takes_no_names PROPERTIES PASS_REGULA
 add_test(NAME cli_extract_manifest
   COMMAND ${CMAKE_COMMAND} -E cat ${BD_TEST_DIR}/out/code/manifest.txt)
 set_tests_properties(cli_extract_manifest PROPERTIES FIXTURES_REQUIRED extracted_code
-  PASS_REGULAR_EXPRESSION "arm9 load=0x02000000 entry=0x02000800 file=arm9.bin.*arm7 load=0x02380000 entry=0x02380000.*overlay9 id=2 load=0x02180000 size=1792 bss=256 init_start=0x02180000 init_end=0x02180004 file=overlay9_0002.bin")
+  PASS_REGULAR_EXPRESSION "arm9 load=0x02000000 entry=0x02000800 file=arm9.bin.*arm7 load=0x02380000 entry=0x02380000.*overlay9 id=2 load=0x02180000 size=1792 bss=256 init_start=0x02180000 init_end=0x02180004 file=overlay9_0002.bin.*bios9 load=0xffff0000 entry=0xffff0018 file=bios9.bin")
 
 bd_cli_test(cli_extract_missing_path extract ${BD_TEST_DIR}/dark_dawn_like.nds
   --out ${BD_TEST_DIR}/out no/such/file.bin)

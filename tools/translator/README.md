@@ -65,7 +65,8 @@ the fallback interpreter (`src/runtime`), and each covered by `tests/guest`:
 
 `translate_game.py <code directory> <output directory> [--jobs N]` translates
 a whole game from what `bdtool extract --code` writes: the main program, the
-overlay files and `manifest.txt`. Its header comment explains the two rules
+overlay files, Bright Dawn's own BIOS code (`bios9.bin`, for its interrupt
+entry) and `manifest.txt`. Its header comment explains the two rules
 that matter when code is spread over modules that share addresses. It writes
 `report.txt` with what it found, module by module. The output is derived from
 the game: keep it out of any repository.

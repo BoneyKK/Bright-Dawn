@@ -249,9 +249,10 @@ What the numbers say:
 - Comparing an overlay translation with memory reads the bytes one at a time
   through the memory interface. Correct, and not repeated while memory is
   unchanged, but slow for large functions on first use.
-- Interrupts are taken in interpreted code only. Translated code is not yet
-  interrupted: the plan is to take them at call sites and at the back edges
-  of loops, where the address to come back to is known.
+- Interrupts are taken in interpreted code before any instruction, and in
+  translated code where it polls for them (calls, loops' back edges). Either
+  way the interrupt entry, Bright Dawn's own BIOS code, runs translated when
+  the game library holds it (the builder translates it with the game).
 - An exception return in translated code leaves translated code: what follows
   it is interpreted until the next call into translated code, unless it lands
   on a translated entry (a saved context's resume address). Correct, and

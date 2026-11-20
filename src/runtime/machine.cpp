@@ -501,7 +501,12 @@ bool Machine::interpret(u32 start, u32* continue_at) {
       store_from_interpreter(current());
       enter_exception(0x12, pc + 4, thumb);
       ++statistics_.interrupts_taken;
-      restart_at(system_.exception_vectors() + 0x18);
+      const u32 vector = system_.exception_vectors() + 0x18;
+      if (lookup(vector) != nullptr) {  // The interrupt entry is translated: a jump there.
+        *continue_at = vector;
+        return false;
+      }
+      restart_at(vector);
       continue;
     }
 
