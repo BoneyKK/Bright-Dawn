@@ -6,6 +6,8 @@
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 
 #include "core/log.h"
 #include "core/version.h"
@@ -42,6 +44,8 @@ Launcher::Launcher(App& app) : app_(app) {
   builder_ = find_builder();
   check_built_game();
   setup_ = needs_setup();
+  // Without a ROM there is nothing to play: the page where it is chosen.
+  if (!setup_ && !rom_check_.ok) page_ = Page::Build;
   if (setup_) {
     log::info("launcher", built_state_ == BuiltState::None ? "the setup: the game is not built yet"
                                                            : "the setup: the game built before cannot be used");
@@ -68,6 +72,7 @@ Launcher::~Launcher() {
 void Launcher::choose_rom(const std::filesystem::path& path) {
   rom_ = path;
   rom_check_ = {};
+  save_.reset();
   rom_typed_ = utf8(path);
   Result<rom::Rom> rom = rom::Rom::open(path);
   if (!rom) {
@@ -78,6 +83,7 @@ void Launcher::choose_rom(const std::filesystem::path& path) {
     const rom::KnownTitle* title = rom::identify_title(rom.value().header());
     rom_check_.ok = true;
     app_.report.game_code = title->game_code;
+    read_save(title->game_code);
     rom_check_.text = std::string("Golden Sun: Dark Dawn (") + rom::to_string(title->region) + ", " +
                       std::string(title->game_code) + ")";
   }
@@ -85,6 +91,20 @@ void Launcher::choose_rom(const std::filesystem::path& path) {
   log::writef(rom_check_.ok ? log::Level::Info : log::Level::Warning, "launcher", "ROM %s: %s", utf8(path).c_str(),
               rom_check_.text.c_str());
   if (rom_check_.ok && app_.settings.value(ui::key::kRom) != utf8(path)) app_.set_setting(ui::key::kRom, utf8(path));
+}
+
+void Launcher::read_save(std::string_view game_code) {
+  save_.reset();
+  if (app_.user_data.empty()) return;
+  // Where the game's save is kept between runs (as main.cpp keeps it).
+  const std::filesystem::path file = app_.user_data / "saves" / (std::string(game_code) + ".sav");
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return;
+  const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  save_ = ui::read_save_summary(bytes);
+  log::info("launcher", save_ ? "the save: " + save_->name + ", level " + std::to_string(save_->level) + ", " +
+                                    ui::play_time(save_->frames_played) + " played"
+                              : "the save file holds no saved game yet");
 }
 
 void Launcher::read_menu_art(const rom::Rom& rom) {
@@ -285,16 +305,22 @@ LauncherChoice Launcher::run() {
     }
     poll_build();
     if (done) break;
-    // The game's menus, read from a ROM just chosen: their font from now on.
-    if (skin_changed_) {
+    // The game's menus, read from a ROM just chosen: their font from now on,
+    // once the setup is done (the setup shows nothing of the game).
+    const bool dressed = skin_.ready() && !setup_;
+    if (skin_changed_ || dressed != font_dressed_) {
       skin_changed_ = false;
-      app_.gui.set_game_font(skin_.ready() ? skin_.font() : nullptr);
+      font_dressed_ = dressed;
+      app_.gui.set_game_font(dressed ? skin_.font() : nullptr);
     }
     app_.gui.set_game_look(look() != nullptr);
     book_.set_look(look());
     SDL_SetRenderDrawColor(app_.renderer, 0, 0, 0, 255);
     SDL_RenderClear(app_.renderer);
-    if (look() != nullptr) skin_.draw_background(app_.renderer);
+    if (look() != nullptr) {
+      if (page_ == Page::Play) skin_.draw_save_page(app_.renderer);
+      else skin_.draw_background(app_.renderer);
+    }
     app_.gui.begin_frame();
     draw(choice, done);
     app_.gui.end_frame();
@@ -311,18 +337,27 @@ LauncherChoice Launcher::run() {
 
 void Launcher::draw(LauncherChoice& choice, bool& done) {
   hint_.clear();
-  if (look() != nullptr) {
-    draw_dressed(choice, done);
+  if (setup_) {
+    draw_setup();
     return;
   }
-  if (setup_) {
-    draw_setup(choice, done);
+  // Escape goes between the first page and the others, unless the settings
+  // wait for a key to bind.
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput && !book_.waiting_for_input())
+    page_ = page_ == Page::Play ? Page::Settings : Page::Play;
+  if (look() != nullptr) {
+    draw_dressed(choice, done);
     return;
   }
   const ImGuiViewport* view = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(view->Pos);
   ImGui::SetNextWindowSize(view->Size);
   ImGui::Begin("Bright Dawn", nullptr, kWholeWindow);
+  if (page_ == Page::Play) {
+    draw_start(choice, done);
+    ImGui::End();
+    return;
+  }
   // The title on a panel of its own.
   ImGui::BeginChild("title", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
   ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.8f);
@@ -352,7 +387,7 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
   ImGui::SameLine();
   ImGui::BeginChild("page", ImVec2(0, 0), page_ == Page::Settings ? ImGuiChildFlags_None : ImGuiChildFlags_Borders);
   switch (page_) {
-    case Page::Play: draw_play(choice, done); break;
+    case Page::Play: break;
     case Page::Build: draw_build(); break;
     case Page::Settings: app_.settings_changed(book_.draw(app_.settings)); break;
     case Page::Log: draw_log(); break;
@@ -361,51 +396,41 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
   ImGui::End();
 }
 
-void Launcher::draw_setup(LauncherChoice& choice, bool& done) {
+void Launcher::draw_setup() {
+  // In the program's own look: nothing of the game is shown before it is built.
   const ImGuiViewport* view = ImGui::GetMainViewport();
   const float em = ImGui::GetFontSize();
-  const float margin = std::min(view->Size.x, view->Size.y) * 0.05f;
-  const float width = std::min(view->Size.x - 2 * margin, em * 50);
-  ImGui::SetNextWindowPos(ImVec2(view->Pos.x + (view->Size.x - width) / 2, view->Pos.y + margin));
-  ImGui::SetNextWindowSize(ImVec2(width, view->Size.y - 2 * margin));
+  ImGui::SetNextWindowPos(view->Pos);
+  ImGui::SetNextWindowSize(view->Size);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 1.5f, em * 1.2f));
   ImGui::Begin("Setup", nullptr, kWholeWindow);
-  ImGui::BeginChild("setup page", ImVec2(0, 0), ImGuiChildFlags_Borders);
-  ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.8f);
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_CheckMark));
-  ImGui::TextUnformatted("Bright Dawn");
-  ImGui::PopStyleColor();
+  ImGui::PopStyleVar();
+  ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.25f);
+  ImGui::TextWrapped("Before you start playing, you need to build the game once.");
   ImGui::PopFont();
-  ImGui::SameLine();
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextDisabled("%s, setting up", BD_VERSION);
-  ImGui::SameLine(ImGui::GetContentRegionMax().x - em * 5);
-  if (ImGui::Button("Quit", ImVec2(em * 5, 0))) {
-    log::info("launcher", "quit from the setup");
-    choice.kind = LauncherChoice::Quit;
-    done = true;
-  }
-  ImGui::Separator();
-  draw_setup_page();
-  ImGui::EndChild();
-  ImGui::End();
-}
-
-void Launcher::draw_setup_page() {
-  if (built_state_ == BuiltState::Ready) {
-    coloured(true, "The game is built: go on to the launcher, below the build's result.");
-  } else if (built_state_ == BuiltState::None) {
-    note("Choose your ROM, then build the game from it once, before the launcher opens.");
-  } else {
+  if (built_state_ == BuiltState::OtherVersion || built_state_ == BuiltState::Broken)
     note("The game built before cannot be used (" + built_detail_ + "): build it again for this version.");
-  }
   ImGui::Spacing();
   draw_rom_chooser();
   ImGui::Spacing();
-  ImGui::Separator();
-  draw_build();
+  draw_build_controls();
+  if (!building() && built_state_ == BuiltState::Ready) {
+    const bool go_on = button("Go on to the launcher", ImVec2(em * 14, em * 2.2f));
+    if (go_on) {
+      log::info("launcher", "the setup is done");
+      setup_ = false;
+      page_ = rom_check_.ok ? Page::Play : Page::Build;
+    }
+  }
+  draw_build_output();
+  ImGui::End();
 }
 
 void Launcher::draw_dressed(LauncherChoice& choice, bool& done) {
+  if (page_ == Page::Play) {
+    draw_start_dressed(choice, done);
+    return;
+  }
   SDL_Renderer* renderer = app_.renderer;
   const ImGuiViewport* view = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(view->Pos);
@@ -438,8 +463,7 @@ void Launcher::draw_dressed(LauncherChoice& choice, bool& done) {
   ImGui::SetCursorScreenPos(ImVec2(board.Min.x + inset, board.Min.y + inset));
   ImGui::BeginChild("board", ImVec2(std::max(1.0f, board.GetWidth() - 2 * inset), std::max(1.0f, board.GetHeight() - 2 * inset)),
                     ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
-  if (setup_) draw_setup_dressed(choice, done);
-  else draw_pages_dressed(choice, done);
+  draw_pages_dressed();
   ImGui::EndChild();
 
   // What is under the pointer, or what to do, in the message bar.
@@ -450,14 +474,67 @@ void Launcher::draw_dressed(LauncherChoice& choice, bool& done) {
   ImGui::End();
 }
 
-void Launcher::draw_pages_dressed(LauncherChoice& choice, bool& done) {
+void Launcher::draw_start_dressed(LauncherChoice& choice, bool& done) {
+  SDL_Renderer* renderer = app_.renderer;
+  const ImGuiViewport* view = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(view->Pos);
+  ImGui::SetNextWindowSize(view->Size);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::Begin("Bright Dawn", nullptr,
+               kWholeWindow | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+                   ImGuiWindowFlags_NoScrollWithMouse);
+  ImGui::PopStyleVar();
+  ImDrawList* list = ImGui::GetWindowDrawList();
+  const float em = ImGui::GetFontSize();
+
+  // The Play button on the page's first line.
+  const ImRect first = skin_.area(renderer, skin::kSaveLineLeft, skin::kSaveFirstTop, skin::kSaveLineRight,
+                                  skin::kSaveFirstBottom);
+  const ImVec2 size(std::max(em * 9, first.GetWidth() * 0.45f), std::max(em * 2.2f, first.GetHeight() * 0.7f));
+  ImGui::SetCursorScreenPos(ImVec2(std::floor(first.GetCenter().x - size.x / 2), std::floor(first.GetCenter().y - size.y / 2)));
+  play_button(choice, done, size);
+
+  // Below it, the save: one line on each of the page's next two lines, in
+  // its ink, at the size of the game's own text (12 of its pixels), smaller
+  // if a line would not fit.
+  const std::string text = save_text();
+  const std::size_t split = text.find('\n');
+  const std::string lines[2] = {text.substr(0, split), split == std::string::npos ? "" : text.substr(split + 1)};
+  const ImRect bands[2] = {
+      skin_.area(renderer, skin::kSaveLineLeft, skin::kSaveFirstBottom, skin::kSaveLineRight, skin::kSaveSecondBottom),
+      skin_.area(renderer, skin::kSaveLineLeft, skin::kSaveSecondBottom, skin::kSaveLineRight, skin::kSaveThirdBottom)};
+  ImFont* font = ImGui::GetFont();
+  float text_size = app_.gui.sharp_size(12.0f * skin_.picture_scale(renderer));
+  for (const std::string& line : lines) {
+    const float width = font->CalcTextSizeA(text_size, FLT_MAX, 0.0f, line.c_str()).x;
+    if (width > bands[0].GetWidth() * 0.9f) text_size = app_.gui.sharp_size(text_size * bands[0].GetWidth() * 0.9f / width);
+  }
+  for (int i = 0; i < 2; ++i) {
+    const ImVec2 extent = font->CalcTextSizeA(text_size, FLT_MAX, 0.0f, lines[i].c_str());
+    list->AddText(font, text_size,
+                  ImVec2(std::floor(bands[i].GetCenter().x - extent.x / 2), std::floor(bands[i].GetCenter().y - extent.y / 2)),
+                  ImGui::GetColorU32(skin::kInk), lines[i].c_str());
+  }
+
+  // The message bar below the page: what to do, and the way to the other
+  // pages, which a click on it also takes.
+  const ImRect bar = skin_.area(renderer, skin::kSaveLineLeft, skin::kSaveBelowTop, skin::kSaveLineRight,
+                                skin::kSaveBelowBottom);
+  ImGui::SetCursorScreenPos(bar.Min);
+  if (ImGui::InvisibleButton("other pages", bar.GetSize())) page_ = Page::Settings;
+  if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  menu::message_bar(look(), list, bar, hint_.empty() ? standing_hint() : hint_);
+  ImGui::End();
+}
+
+void Launcher::draw_pages_dressed() {
   const float em = ImGui::GetFontSize();
   ImGui::BeginChild("pages", ImVec2(em * 8, 0));
   const struct {
     Page page;
     const char* name;
     const char* hint;
-  } pages[] = {{Page::Play, "Play", "Choose your ROM, and play."},
+  } pages[] = {{Page::Play, "Play", "Back to the first page, to play."},
                {Page::Build, "Build", "Build the game from your ROM, so that its code runs natively."},
                {Page::Settings, "Settings", "How the game is shown and played, and how it is built."},
                {Page::Log, "Log", "Where this run's log is, for when something goes wrong."}};
@@ -481,28 +558,11 @@ void Launcher::draw_pages_dressed(LauncherChoice& choice, bool& done) {
   }
   begin_paper("page");
   switch (page_) {
-    case Page::Play: draw_play(choice, done); break;
+    case Page::Play: break;
     case Page::Build: draw_build(); break;
     case Page::Settings: break;
     case Page::Log: draw_log(); break;
   }
-  end_paper();
-}
-
-void Launcher::draw_setup_dressed(LauncherChoice& choice, bool& done) {
-  begin_paper("setup page");
-  const float em = ImGui::GetFontSize();
-  heading("Setting up");
-  const float quit_width = em * 4.5f;
-  ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionMax().x - quit_width));
-  if (button("Quit", ImVec2(quit_width, 0))) {
-    log::info("launcher", "quit from the setup");
-    choice.kind = LauncherChoice::Quit;
-    done = true;
-  }
-  explain("Close Bright Dawn. The setup goes on where it was the next time.");
-  ImGui::Separator();
-  draw_setup_page();
   end_paper();
 }
 
@@ -559,12 +619,8 @@ void Launcher::explain(const char* text) {
 std::string Launcher::standing_hint() const {
   const std::string name = std::string("Bright Dawn ") + BD_VERSION;
   if (building()) return "The game is being built from your ROM. This takes some minutes.";
-  if (setup_) {
-    if (built_state_ == BuiltState::Ready) return "The game is built. Go on to the launcher.";
-    return name + ": the game is built once from your ROM, then the launcher opens.";
-  }
   switch (page_) {
-    case Page::Play: return rom_check_.ok ? name + ": ready to play." : name + ": choose your ROM.";
+    case Page::Play: return "Settings, the build and the log: press Escape, or click here.";
     case Page::Build: return "The game is built from your ROM, and its code then runs natively.";
     case Page::Settings: return "Point at a setting to see what it does.";
     case Page::Log: return "Attach the log when you report a problem.";
@@ -574,17 +630,30 @@ std::string Launcher::standing_hint() const {
 
 void Launcher::draw_rom_chooser() {
   heading("Your ROM");
-  if (rom_.empty())
-    note("Choose your own copy of Golden Sun: Dark Dawn, a .nds file.");
-  else
-    ImGui::TextWrapped("%s", utf8(rom_).c_str());
+  note("Your own copy of Golden Sun: Dark Dawn, a .nds file.");
   bool dialog_open = false;
   {
     std::lock_guard lock(dialog_->mutex);
     dialog_open = dialog_->open;
   }
+  // The path: typed or pasted (Enter or "Use this"), or chosen in a dialog.
+  const float em = ImGui::GetFontSize();
+  char buffer[2048];
+  std::snprintf(buffer, sizeof buffer, "%s", rom_typed_.c_str());
+  ImGui::SetNextItemWidth(-em * 13);
+  if (ImGui::InputTextWithHint("##path", "the path of your ROM", buffer, sizeof buffer,
+                               ImGuiInputTextFlags_EnterReturnsTrue)) {
+    rom_typed_ = buffer;
+    rom_asked_ = from_utf8(rom_typed_);
+  } else {
+    rom_typed_ = buffer;
+  }
+  ImGui::SameLine();
+  if (button("Use this")) rom_asked_ = from_utf8(rom_typed_);
+  explain("Use the ROM at the path typed beside this.");
+  ImGui::SameLine();
   ImGui::BeginDisabled(dialog_open);
-  const bool choose = button("Choose your ROM...");
+  const bool choose = button("Choose...");
   explain("Choose your own copy of Golden Sun: Dark Dawn: a .nds file.");
   if (choose) {
     static const SDL_DialogFileFilter filters[] = {{"Nintendo DS ROM", "nds"}, {"All files", "*"}};
@@ -610,54 +679,54 @@ void Launcher::draw_rom_chooser() {
         holder, app_.window, filters, 2, folder.empty() ? nullptr : folder.c_str(), false);
   }
   ImGui::EndDisabled();
-  // Where no file dialog is to be had, or for pasting a path.
-  char buffer[2048];
-  std::snprintf(buffer, sizeof buffer, "%s", rom_typed_.c_str());
-  ImGui::SetNextItemWidth(-ImGui::GetFontSize() * 6);
-  if (ImGui::InputTextWithHint("##path", "or type or paste its path here", buffer, sizeof buffer,
-                               ImGuiInputTextFlags_EnterReturnsTrue)) {
-    rom_typed_ = buffer;
-    rom_asked_ = from_utf8(rom_typed_);
-  } else {
-    rom_typed_ = buffer;
-  }
-  ImGui::SameLine();
-  if (button("Use this")) rom_asked_ = from_utf8(rom_typed_);
-  explain("Use the ROM at the path typed beside this.");
   if (!rom_.empty()) coloured(rom_check_.ok, rom_check_.text);
 }
 
-void Launcher::draw_play(LauncherChoice& choice, bool& done) {
-  draw_rom_chooser();
-  ImGui::Spacing();
-  heading("Play");
-  if (app_.translated_build) {
-    note("This is a build with the game's code linked in: it runs natively.");
-  } else if (built_state_ == BuiltState::Ready && app_.settings.toggle(ui::key::kPlayBuilt)) {
-    note("The built game is played: its code runs natively.");
-  } else if (built_state_ == BuiltState::Ready) {
-    note("The game is interpreted: playing the built game is turned off (Settings, Game).");
-  } else {
-    note("The game is interpreted, at about a third of the console's speed, until you build it.");
-    if (built_state_ == BuiltState::OtherVersion || built_state_ == BuiltState::Broken)
-      note("The game built before cannot be used (" + built_detail_ + "): build it again.");
-  }
+bool Launcher::play_button(LauncherChoice& choice, bool& done, ImVec2 size) {
   ImGui::BeginDisabled(!rom_check_.ok);
-  if (button("Play", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f))) {
+  const bool pressed = button("Play", size);
+  ImGui::EndDisabled();
+  explain(rom_check_.ok ? "Play Golden Sun: Dark Dawn from your ROM." : "Choose your ROM first: press Escape, then Build.");
+  if (pressed) {
     play(choice);
     done = true;
   }
-  ImGui::EndDisabled();
-  explain(rom_check_.ok ? "Play Golden Sun: Dark Dawn from your ROM." : "Choose your ROM first.");
+  return pressed;
+}
+
+std::string Launcher::save_text() const {
+  if (!rom_check_.ok) return "No ROM chosen";
+  if (!save_) return "No saved game yet";
+  return save_->name + "    Lv. " + std::to_string(save_->level) + "\n" + ui::play_time(save_->frames_played) +
+         " played    " + std::to_string(save_->coins) + " coins";
+}
+
+void Launcher::draw_start(LauncherChoice& choice, bool& done) {
+  // Only the Play button, and the save below it, in the middle of the window.
+  const float em = ImGui::GetFontSize();
+  const ImVec2 size(em * 12, em * 3);
+  const ImVec2 area = ImGui::GetContentRegionAvail();
+  ImGui::SetCursorPos(ImVec2((area.x - size.x) / 2, area.y * 0.35f));
+  play_button(choice, done, size);
   ImGui::Spacing();
-  std::string keys;
-  for (const input::Binding& b : ui::keyboard_bindings(app_.settings))
-    keys += (keys.empty() ? "" : ", ") + b.control + " = " + input::name(b.button);
-  note("Keys: " + keys + "; controllers by position, the mouse as the stylus, Escape for the menu and F11 for "
-       "full screen.");
+  const std::string text = save_text();
+  std::size_t from = 0;
+  while (from <= text.size()) {
+    const std::size_t end = std::min(text.find('\n', from), text.size());
+    const std::string line = text.substr(from, end - from);
+    ImGui::SetCursorPosX((area.x - ImGui::CalcTextSize(line.c_str()).x) / 2);
+    ImGui::TextUnformatted(line.c_str());
+    from = end + 1;
+  }
+  const std::string hint = standing_hint();
+  ImGui::SetCursorPos(ImVec2((area.x - ImGui::CalcTextSize(hint.c_str()).x) / 2, area.y - em * 1.5f));
+  ImGui::TextDisabled("%s", hint.c_str());
+  if (ImGui::IsItemClicked()) page_ = Page::Settings;
 }
 
 void Launcher::draw_build() {
+  draw_rom_chooser();
+  ImGui::Spacing();
   heading("Build the game");
   note("The builder compiles the game's code from your ROM for this computer, so that the game runs natively.");
   ImGui::Spacing();
@@ -673,7 +742,7 @@ void Launcher::draw_build() {
       ImGui::Unindent();
     }
   };
-  requirement(rom_check_.ok, rom_check_.ok ? "Your ROM" : setup_ ? "Your ROM: choose it above" : "Your ROM: choose it on the Play page", "");
+  requirement(rom_check_.ok, rom_check_.ok ? "Your ROM" : "Your ROM: choose it above", "");
   requirement(builder_.has_value(), builder_ ? "The builder's files" : "The builder's files were not found",
               builder_ ? utf8(*builder_)
                        : "They come with Bright Dawn, in the folder \"builder\" next to the program.");
@@ -710,16 +779,32 @@ void Launcher::draw_build() {
   else if (built_state_ != BuiltState::None) coloured(false, "Built, but it cannot be used: " + built_detail_);
 
   ImGui::Spacing();
-  const bool can_build =
-      rom_check_.ok && builder_ && (python_.found || python) && !library_.empty() && !program_.empty();
+  draw_build_controls();
+  draw_build_output();
+}
+
+bool Launcher::can_build() const {
+  return rom_check_.ok && builder_ && (python_.found || python_download()) && !library_.empty() && !program_.empty();
+}
+
+void Launcher::draw_build_controls() {
+  const bool running = building();
+  const bool can = can_build();
   if (!running) {
-    ImGui::BeginDisabled(!can_build);
+    ImGui::BeginDisabled(!can);
     if (button(built_state_ != BuiltState::None ? "Build it again" : "Build the game",
                ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f)))
       start_build();
     ImGui::EndDisabled();
-    explain(can_build ? "Translate the game's code to C++ and compile it for this computer: some minutes."
-                      : "What the build needs is not all here yet: see above.");
+    explain(can ? "Translate the game's code to C++ and compile it for this computer: some minutes."
+                : "What the build needs is not all here yet.");
+    // What is missing, when it is not the ROM (that is said above).
+    if (rom_check_.ok && !can) {
+      if (!builder_) coloured(false, "The builder's files were not found: they come with Bright Dawn, in the folder "
+                                     "\"builder\" next to the program.");
+      else if (!python_.found && !python_download()) coloured(false, python_.problem + ": install Python 3.10 or later.");
+      else coloured(false, "There is no folder for the built game on this computer.");
+    }
   } else {
     ImGui::BeginDisabled(stopping_);
     if (button(stopping_ ? "Stopping..." : "Stop", ImVec2(ImGui::GetFontSize() * 10, ImGui::GetFontSize() * 2.2f)))
@@ -743,22 +828,18 @@ void Launcher::draw_build() {
     if (!library_.empty())
       note("Everything the build printed is in " + utf8(library_.parent_path() / "build.log") + ".");
   }
-  if (setup_ && !running && built_state_ == BuiltState::Ready) {
-    const bool go_on = button("Go on to the launcher", ImVec2(ImGui::GetFontSize() * 14, ImGui::GetFontSize() * 2.2f));
-    explain("The setup is done: open the launcher.");
-    if (go_on) {
-      log::info("launcher", "the setup is done");
-      setup_ = false;
-      page_ = Page::Play;
-    }
-  }
+}
 
-  if (!output_.empty()) {
+void Launcher::draw_build_output() {
+  // The setup always has its place for the log; the Build page once there is one.
+  if (setup_ || !output_.empty()) {
     ImGui::Spacing();
+    heading("Build log");
     // What is left of the page, but at least a dozen lines: the page scrolls.
-    const float least = ImGui::GetTextLineHeightWithSpacing() * 12;
+    const float least = ImGui::GetTextLineHeightWithSpacing() * (setup_ ? 6 : 12);
     const float height = std::max(ImGui::GetContentRegionAvail().y, least);
     ImGui::BeginChild("output", ImVec2(0, height), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
+    if (output_.empty()) ImGui::TextDisabled("What the builder does is shown here.");
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(output_.size()));
     while (clipper.Step())

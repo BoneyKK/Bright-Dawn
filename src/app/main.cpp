@@ -257,16 +257,18 @@ bool open_window(App& a, gfx::Point size, bool vulkan) {
   return true;
 }
 
-// The launcher's size: generous, within the display.
+// The launcher's window: 4 by 3, as the game's menu pictures are, and a
+// whole multiple of their size (256 by 192) that fits the display, at most
+// four times. It cannot be resized; the game's window can.
 void size_for_launcher(SDL_Window* window) {
   if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0) SDL_SetWindowFullscreen(window, false);
-  int w = 1100, h = 720;
+  if ((SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED) != 0) SDL_RestoreWindow(window);
+  int times = 4;
   SDL_Rect usable;
-  if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable)) {
-    w = std::min(w, usable.w * 9 / 10);
-    h = std::min(h, usable.h * 9 / 10);
-  }
-  SDL_SetWindowSize(window, w, h);
+  if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable))
+    times = std::clamp(std::min(usable.w * 9 / 10 / gfx::kScreenWidth, usable.h * 9 / 10 / gfx::kScreenHeight), 2, 4);
+  SDL_SetWindowResizable(window, false);
+  SDL_SetWindowSize(window, gfx::kScreenWidth * times, gfx::kScreenHeight * times);
   SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 }
 
@@ -504,7 +506,7 @@ int run(CommandLine& cl, int argc, char** argv) {
   {
     const gfx::Point size = cl.have_source ? gfx::window_size(static_cast<int>(a.settings.number(ui::key::kScale)),
                                                              ui::layout_options(a.settings))
-                                           : gfx::Point{1100, 720};
+                                           : gfx::Point{gfx::kScreenWidth * 4, gfx::kScreenHeight * 4};
     if (!open_window(a, size, a.settings.choice(ui::key::kRenderer) == "vulkan")) {
       complain(nullptr, std::string("Cannot open a window: ") + SDL_GetError());
       SDL_Quit();
@@ -532,6 +534,7 @@ int run(CommandLine& cl, int argc, char** argv) {
           }
           if (choice.kind == app::LauncherChoice::Quit) break;
           source = choice.rom;
+          SDL_SetWindowResizable(a.window, true);
         }
         const Played played = play(a, source, from_launcher);
         status = played.status;

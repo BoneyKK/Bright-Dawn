@@ -27,13 +27,17 @@ checks shows the description that `main` would get in its summary.
 ## Using bright-dawn
 
 Start `bright-dawn` without anything else. The first time, and again after an
-update, it opens the setup: choose your ROM (it is remembered), and build the
-game from it (next section). Then it opens its launcher: Play, the settings,
-building the game again, and where the log is. Once your ROM is chosen, both
-look like the game's own settings menu: its wooden board, title ribbon,
-parchment strips and message bar, the travel journal's parchment, and the
-game's font, all read from your ROM; nothing of the game comes with Bright
-Dawn. Started with a ROM, it plays it at once, built or not:
+update, it opens the setup, in the program's own look: choose your ROM (it is
+remembered), and build the game from it (next section), following the build's
+log. Then it opens its launcher, in a 4 by 3 window that is not resized: its
+first page has only Play, and below it what your save holds (name, level,
+time played, coins), on the page of the game's own list of saves. Escape, or
+a click on the message bar, opens the other pages: the settings, building the
+game again, and where the log is, on the game's settings menu (its wooden
+board, title ribbon, parchment strips and message bar, the travel journal's
+parchment). The pictures and the game's font are read from your ROM; nothing
+of the game comes with Bright Dawn. Started with a ROM, it plays it at once,
+built or not:
 
 ```bash
 build/bright-dawn path/to/your-rom.nds

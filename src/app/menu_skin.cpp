@@ -81,6 +81,7 @@ void MenuSkin::read(const rom::Rom& rom) {
   picture(ribbon_middle_, skin::kRibbonMiddle, 16, 20, true);
   picture(ribbon_right_, skin::kRibbonRight, 40, 20, true);
   picture(paper_, skin::kJournal, 256, 192, false);
+  picture(save_page_, skin::kSavePage, 256, 192, false);
   Result<assets::Font> font = assets::read_font(rom, skin::kFont);
   if (font) font_ = std::make_shared<const assets::Font>(std::move(font).value());
   else missing.push_back(font.error().message);
@@ -96,12 +97,12 @@ void MenuSkin::read(const rom::Rom& rom) {
 
 void MenuSkin::clear() {
   ready_ = false;
-  for (SkinPicture* p : {&background_, &strip_, &ribbon_left_, &ribbon_middle_, &ribbon_right_, &paper_}) p->clear();
+  for (SkinPicture* p : {&background_, &strip_, &ribbon_left_, &ribbon_middle_, &ribbon_right_, &paper_, &save_page_}) p->clear();
   font_.reset();
 }
 
 void MenuSkin::release() {
-  for (SkinPicture* p : {&background_, &strip_, &ribbon_left_, &ribbon_middle_, &ribbon_right_, &paper_}) p->release();
+  for (SkinPicture* p : {&background_, &strip_, &ribbon_left_, &ribbon_middle_, &ribbon_right_, &paper_, &save_page_}) p->release();
 }
 
 namespace {
@@ -144,10 +145,10 @@ ImVec2 MenuSkin::place(const Fit& fit, float x, float y) {
                 stretched(y, kTallParts, fit.scale, fit.extra_height));
 }
 
-void MenuSkin::draw_background(SDL_Renderer* renderer) {
+void MenuSkin::draw_whole(SDL_Renderer* renderer, SkinPicture& picture) {
   Fit f;
   if (!fit(renderer, f)) return;
-  SDL_Texture* texture = background_.texture(renderer);
+  SDL_Texture* texture = picture.texture(renderer);
   if (texture == nullptr) return;
   const float e = static_cast<float>(kEnlarge);
   for (std::size_t row = 0; row + 1 < std::size(kRowCuts); ++row) {

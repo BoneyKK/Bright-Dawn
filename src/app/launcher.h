@@ -2,18 +2,22 @@
 // ROM, so that a player never needs the command line.
 //
 // Until the game has been built for this version of Bright Dawn, it is the
-// setup instead: one page, on which the player chooses their ROM and builds
-// the game, and only then goes on to the launcher. Once the ROM is chosen,
-// both are dressed in the game's own menus, read from that ROM: the settings
-// menu's wooden board, its title ribbon and message bar, the travel journal's
-// parchment, and the game's font (app/menu_skin.h).
+// setup instead: one page, in the program's own look (nothing of the game is
+// shown before the game is built), on which the player chooses their ROM and
+// builds the game, and only then goes on to the launcher. The launcher is
+// dressed in the game's own menus, read from that ROM: the page of its list
+// of saves, the settings menu's wooden board, its title ribbon and message
+// bar, the travel journal's parchment, and the game's font (app/menu_skin.h).
+// Its window is 4 by 3, as those pictures are, and is not resized.
 //
 // The launcher's pages:
-//   Play      choose the ROM (remembered), and play it;
-//   Build     build the game library from the ROM, its code translated to
-//             C++ and compiled for this computer, following the builder as
-//             it goes; what it needs and the computer lacks is fetched for
-//             the build and removed after it;
+//   Play      the first page: only the Play button, and what the save holds
+//             (whose game, how far, how long played); Escape, or a click on
+//             the message bar, opens the other pages;
+//   Build     choose the ROM (remembered), and build the game library from
+//             it, its code translated to C++ and compiled for this computer,
+//             following the builder as it goes; what it needs and the
+//             computer lacks is fetched for the build and removed after it;
 //   Settings  the settings book;
 //   Log       where this run's log is.
 #pragma once
@@ -34,6 +38,7 @@
 #include "app/settings_book.h"
 #include "rom/rom.h"
 #include "ui/build_progress.h"
+#include "ui/save_summary.h"
 
 namespace bd::app {
 
@@ -61,9 +66,13 @@ class Launcher {
   void choose_rom(const std::filesystem::path& path);
   // The game's menus from the ROM, now open, for the launcher's look.
   void read_menu_art(const rom::Rom& rom);
-  // In the game's look when its menus could be read from the ROM; null for
-  // ImGui's own.
-  const menu::Look* look() const { return skin_.ready() && app_.gui.has_game_font() ? &look_ : nullptr; }
+  // In the game's look when its menus could be read from the ROM, and the
+  // setup is done; null for ImGui's own.
+  const menu::Look* look() const {
+    return !setup_ && skin_.ready() && app_.gui.has_game_font() ? &look_ : nullptr;
+  }
+  // What the save of the game in the ROM holds, if there is one.
+  void read_save(std::string_view game_code);
   // Whether the setup has to be gone through first: the game is not built
   // for this version (the build of the developers' own, with the game linked
   // in, needs none).
@@ -81,19 +90,28 @@ class Launcher {
   void play(LauncherChoice& choice);
 
   void draw(LauncherChoice& choice, bool& done);
-  void draw_setup(LauncherChoice& choice, bool& done);
-  void draw_setup_page();
-  // In the game's look: the title on its ribbon, the pages on the wooden
-  // board, and the message bar below it.
+  void draw_setup();
+  // In the game's look: the first page on the page of the list of saves;
+  // the others with the title on its ribbon, the pages on the wooden board,
+  // and the message bar below it.
   void draw_dressed(LauncherChoice& choice, bool& done);
-  void draw_pages_dressed(LauncherChoice& choice, bool& done);
-  void draw_setup_dressed(LauncherChoice& choice, bool& done);
+  void draw_start_dressed(LauncherChoice& choice, bool& done);
+  void draw_pages_dressed();
+  // The first page in the program's own look.
+  void draw_start(LauncherChoice& choice, bool& done);
   // A page on parchment, filling what is left of the current window.
   void begin_paper(const char* id);
   void end_paper();
   void draw_rom_chooser();
-  void draw_play(LauncherChoice& choice, bool& done);
+  bool play_button(LauncherChoice& choice, bool& done, ImVec2 size);
+  // The save, in a line or two.
+  std::string save_text() const;
   void draw_build();
+  bool can_build() const;
+  // The build's button (or Stop, and how far it is), and its result.
+  void draw_build_controls();
+  // Everything the build printed, in what is left of the page.
+  void draw_build_output();
   void draw_log();
 
   // Pieces of the pages, in either look.
@@ -120,6 +138,8 @@ class Launcher {
   // Typed by the player during a frame: chosen before the next.
   std::optional<std::filesystem::path> rom_asked_;
   RomCheck rom_check_;
+  std::optional<ui::SaveSummary> save_;
+  bool font_dressed_ = false;  // The game's font is the program's now.
   std::string rom_typed_;
   // The file dialog answers from another thread.
   struct DialogAnswer {
