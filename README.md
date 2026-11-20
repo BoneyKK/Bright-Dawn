@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (20 November 2026): The game's thread switch runs translated, not in the interpreter. 3D models move smoothly above 1x. A gear on the launcher's first page opens the settings
+**Last change** (20 November 2026): A log lists the places not run natively, and the interrupt entry now runs translated. With the graphics hardware, the title no longer flickers between the two screens, and polygons are put in front of each other by w, as the game asks
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -55,10 +55,10 @@ the state of each, and what comes next.
 | `rom` | 🟢 Works | Checks the ROM, reads its file system, archives and every kind of compression the game uses. |
 | `assets` | 🟡 Partly works | Decodes the menus' pictures and the game's font (NFTR) for the launcher. Textures, models and sounds: not yet. |
 | `mods` | ⚪ Not started | Planned: replace game files without changing the ROM. |
-| `translator` | 🟢 Works | Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts. Where code puts its own return address in lr before a jump, that address is translated too, and so is the place a saved thread context is resumed at. |
+| `translator` | 🟢 Works | Translates 17,076 functions of the game's code, and the interrupt entry of Bright Dawn's own BIOS, to C++, on your computer, with interrupt polls and instruction counts. Where code puts its own return address in lr before a jump, that address is translated too, and so is the place a saved thread context is resumed at. |
 | `game builder` | 🟢 Works | Downloads its compiler (and Python on Windows) for the build and deletes it after. The downloaded compiler is not yet tried on a real build. |
 | `game library` | 🟢 Works | Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24). |
-| `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). |
+| `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). Each run writes a log of the places run in the interpreter, with why. |
 | `nds` | 🟡 Partly works | The console model runs the game from the title screen to battles, with a save from about two thirds through the game. The game's save is kept between runs; the console's language is a setting. The second processor's music player is written natively. |
 | `gfx` | 🟢 Works | Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Widescreen: not yet. |
 | `audio` | 🟢 Works | Music and sound effects play through your audio device (SDL 3), kept in step with the frames. Settings, Sound: on or off, and the volume. |
@@ -69,8 +69,8 @@ the state of each, and what comes next.
 
 **Next:**
 
-1. Play on from the save, by hand and with scripted input, and fix what stops the game.
-2. Speed: the interrupt entry (the BIOS vector 0xFFFF0018) still runs in the interpreter.
+1. First cave: not reached yet. The save starts in Saha Town, and scripted walks meet random battles. In Saha Town, black polygons that the game sends (vertex colour 0) cover the party with both 3D paths: the cause is still open.
+2. Speed: the game's interrupt handler (0x01FFA900) still runs in the interpreter; it is reached only through a pointer set at run time.
 3. In-game saving: not yet tried.
 4. Widescreen and mods.
 
