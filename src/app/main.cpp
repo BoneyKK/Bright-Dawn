@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <optional>
 #include <string>
@@ -176,6 +177,7 @@ void start_log(const App& a, const CommandLine& cl, int argc, char** argv,
       log_problem = opened.error().message;
     } else {
       log::remove_old_files(folder, "bright-dawn-", static_cast<std::size_t>(a.settings.number(ui::key::kLogsKept)));
+      log::remove_old_files(folder, "not-native-", static_cast<std::size_t>(a.settings.number(ui::key::kLogsKept)));
       platform::log_crashes();
     }
   }
@@ -260,6 +262,27 @@ bool open_window(App& a, gfx::Point size, bool vulkan) {
 // The launcher's window: 4 by 3, as the game's menu pictures are, and a
 // whole multiple of their size (256 by 192) that fits the display, at most
 // four times. It cannot be resized; the game's window can.
+// The places the game's code ran in the interpreter, not natively, go to a
+// file of their own beside the run's log, with the same time in its name
+// (logs/not-native-YYYYMMDD-HHMMSS.log), for the list of work to do.
+constexpr std::uint64_t kNotNativeEvery = 3600;  // Frames: written again about once a minute.
+
+std::filesystem::path not_native_path() {
+  const std::filesystem::path log_file = log::file_path();
+  if (log_file.empty()) return {};
+  std::u8string name = log_file.filename().u8string();
+  const std::u8string prefix = u8"bright-dawn-";
+  if (name.rfind(prefix, 0) != 0) return {};
+  return log_file.parent_path() / (u8"not-native-" + name.substr(prefix.size()));
+}
+
+void write_not_native(runtime::Machine& machine, const std::filesystem::path& path) {
+  if (path.empty() || !machine.has_translations()) return;
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out << runtime::not_native_report(machine.gaps());
+  if (!out) log::warning("game", "the report of places not run natively could not be written");
+}
+
 void size_for_launcher(SDL_Window* window) {
   if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0) SDL_SetWindowFullscreen(window, false);
   if ((SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED) != 0) SDL_RestoreWindow(window);
@@ -381,10 +404,16 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     // A crash or a hang from here on names where the game's code was.
     platform::set_crash_guest_address(&console.machine().last_entered());
     app::HangWatch hang_watch(console.machine().last_entered(), std::chrono::seconds(10));
-    console.on_frame = [&screen, &hang_watch, &keeper] {
+    const std::filesystem::path not_native = not_native_path();
+    std::uint64_t frames_to_report = kNotNativeEvery;
+    console.on_frame = [&screen, &hang_watch, &keeper, &console, &not_native, &frames_to_report] {
       hang_watch.pause();
       if (keeper)
         if (Status status = keeper->frame(); !status) log::warning("game", status.error().message);
+      if (--frames_to_report == 0) {
+        frames_to_report = kNotNativeEvery;
+        write_not_native(console.machine(), not_native);
+      }
       const bool go_on = screen.frame();
       hang_watch.resume();
       return go_on;
@@ -394,6 +423,9 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     hang_watch.pause();
     console.on_frame = nullptr;
     platform::set_crash_guest_address(nullptr);
+    write_not_native(console.machine(), not_native);
+    if (!not_native.empty() && console.machine().has_translations())
+      log::info("game", "the places not run natively are listed in " + app::utf8(not_native));
   }
   if (keeper) {
     if (Status status = keeper->flush(); !status) {

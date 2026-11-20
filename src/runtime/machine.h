@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "ds_cpu.h"
@@ -80,6 +81,9 @@ struct Statistics {
   // How often the interpreter was entered, by the address it started at (bit
   // 0 set = Thumb). Each address is a gap in the translation.
   std::map<std::uint32_t, std::uint64_t> interpreter_entries;
+  // The instructions interpreted from each of those addresses, until the
+  // interpreter handed control back.
+  std::map<std::uint32_t, std::uint64_t> interpreted_from;
   std::uint64_t interpreted_instructions = 0;
   // Instructions run by translated code, as it counts them (ds::Cpu::executed).
   std::uint64_t translated_instructions = 0;
@@ -105,6 +109,28 @@ struct Statistics {
   // call sites waiting in them were nested too deep (see Machine).
   std::uint64_t nesting_dropped = 0;
 };
+
+// A place where guest code ran in the interpreter rather than natively: what
+// the run log's "not native" report lists (Machine::gaps).
+struct Gap {
+  enum class Why {
+    kNoTranslation,  // No translated function starts at this address.
+    kOverlayOther,   // One does, for an overlay that was not in memory then.
+    kTranslatedNow,  // One does and is usable now (it was not when entered).
+  };
+  std::uint32_t address = 0;  // Bit 0 set = Thumb.
+  std::uint64_t entries = 0;
+  std::uint64_t instructions = 0;
+  Why why = Why::kNoTranslation;
+  bool readable = false;      // Whether there is code memory at the address now,
+  std::uint32_t word = 0;     // and the instruction there (16 bits for Thumb).
+};
+const char* gap_reason(Gap::Why why);
+// Where in the console's memory `address` is, in words.
+const char* memory_area(std::uint32_t address);
+// The "not native" report: a line for each gap, tab-separated, after a
+// heading that says what the columns are. For the list of work to do.
+std::string not_native_report(const std::vector<Gap>& gaps);
 
 // Call sites that are never returned to. Some code uses a call instruction
 // as a long jump (Thumb's "bl" reaches further than "b"), going round a loop
@@ -199,6 +225,11 @@ class Machine {
   const std::atomic<std::uint32_t>& last_entered() const { return last_entered_; }
 
   const Statistics& statistics() const { return statistics_; }
+  // Every place the interpreter was entered at, the most instructions
+  // interpreted first, with why it was not native.
+  std::vector<Gap> gaps();
+  // Whether any translated code was given (a game library is in use).
+  bool has_translations() const { return table_.size() > 1; }
   void clear_statistics() { statistics_ = Statistics(); }
 
   // Stops interpretation, as unhandled, after this many instructions within

@@ -1,6 +1,7 @@
 #include "machine.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "interp/arm_core.h"
 
@@ -445,6 +446,15 @@ void Machine::store_from_interpreter(const bd_arm_state& state) {
 bool Machine::interpret(u32 start, u32* continue_at) {
   last_entered_.store(start, std::memory_order_relaxed);
   ++statistics_.interpreter_entries[start];
+  // However it ends, what was interpreted counts for `start`.
+  struct Counting {
+    Statistics& s;
+    u32 start;
+    std::uint64_t before;
+    ~Counting() {
+      if (s.interpreted_instructions != before) s.interpreted_from[start] += s.interpreted_instructions - before;
+    }
+  } counting{statistics_, start, statistics_.interpreted_instructions};
   if (core_ == nullptr) {
     give_up(start, "the interpreter could not be created");
     return true;
@@ -581,6 +591,77 @@ bool Machine::interpret(u32 start, u32* continue_at) {
       return true;
     }
   }
+}
+
+std::vector<Gap> Machine::gaps() {
+  std::vector<Gap> out;
+  for (const auto& [address, entries] : statistics_.interpreter_entries) {
+    Gap g;
+    g.address = address;
+    g.entries = entries;
+    const auto counted = statistics_.interpreted_from.find(address);
+    g.instructions = counted == statistics_.interpreted_from.end() ? 0 : counted->second;
+    const auto first = std::lower_bound(table_.begin(), table_.end(), address,
+                                        [](const TranslatedEntry& e, u32 a) { return e.address < a; });
+    if (lookup(address) != nullptr) {
+      g.why = Gap::Why::kTranslatedNow;
+    } else if (first != table_.end() && first->address == address && first->function != nullptr) {
+      g.why = Gap::Why::kOverlayOther;
+    }
+    const u32 at = address & ~1u;
+    g.readable = bus_.has_code_memory(at);
+    if (g.readable) g.word = (address & 1u) ? bus_.read16(at) : bus_.read32(at);
+    out.push_back(g);
+  }
+  std::stable_sort(out.begin(), out.end(), [](const Gap& a, const Gap& b) {
+    return a.instructions != b.instructions ? a.instructions > b.instructions : a.entries > b.entries;
+  });
+  return out;
+}
+
+const char* gap_reason(Gap::Why why) {
+  switch (why) {
+    case Gap::Why::kNoTranslation: return "no translated code starts here";
+    case Gap::Why::kOverlayOther: return "translated for an overlay that was not in memory";
+    case Gap::Why::kTranslatedNow: return "translated, but not usable when entered";
+  }
+  return "";
+}
+
+std::string not_native_report(const std::vector<Gap>& gaps) {
+  std::uint64_t entries = 0, instructions = 0;
+  for (const Gap& g : gaps) {
+    entries += g.entries;
+    instructions += g.instructions;
+  }
+  std::string out =
+      "# Bright Dawn: where the game's code ran in the interpreter, not natively.\n"
+      "# Each line is a place to look at: the most instructions interpreted first.\n"
+      "# The instruction is what memory holds there as this is written.\n";
+  char line[256];
+  std::snprintf(line, sizeof line, "# %zu places, entered %llu times, %llu instructions interpreted.\n", gaps.size(),
+                static_cast<unsigned long long>(entries), static_cast<unsigned long long>(instructions));
+  out += line;
+  out += "address\tset\tentries\tinstructions\tinstruction\tmemory\twhy\n";
+  for (const Gap& g : gaps) {
+    const bool thumb = (g.address & 1u) != 0;
+    char word[16] = "-";
+    if (g.readable) std::snprintf(word, sizeof word, thumb ? "0x%04X" : "0x%08X", static_cast<unsigned>(g.word));
+    std::snprintf(line, sizeof line, "0x%08X\t%s\t%llu\t%llu\t%s\t%s\t%s\n", static_cast<unsigned>(g.address & ~1u),
+                  thumb ? "Thumb" : "ARM", static_cast<unsigned long long>(g.entries),
+                  static_cast<unsigned long long>(g.instructions), word, memory_area(g.address), gap_reason(g.why));
+    out += line;
+  }
+  return out;
+}
+
+const char* memory_area(u32 address) {
+  address &= ~1u;
+  if (address >= 0xFFFF0000u) return "BIOS (Bright Dawn's own)";
+  if (address >= 0x02000000u && address < 0x03000000u) return "main memory";
+  if (address < 0x02000000u) return "fast code memory";
+  if (address >= 0x03000000u && address < 0x04000000u) return "shared memory";
+  return "elsewhere";
 }
 
 }  // namespace bd::runtime

@@ -314,3 +314,23 @@ TEST(an_interrupt_in_deep_nesting_is_still_taken) {
   CHECK(g_deepest <= bd::runtime::Machine::kDeepestNesting + 2);
   CHECK(rig.machine.cpu().depth == 0);
 }
+
+// Code with no translation, at 0x4000: "mov r0, #5; bx lr".
+TEST(the_places_run_in_the_interpreter_are_listed_with_why) {
+  Rig rig;
+  rig.memory.write32(0x4000, 0xE3A00005);
+  rig.memory.write32(0x4004, 0xE12FFF1E);
+  rig.machine.call_function(0x4000, kReturn);
+  rig.machine.call_function(0x4000, kReturn);
+  CHECK(rig.machine.cpu().r[0] == 5 && rig.hardware.unhandled_count == 0);
+  CHECK(rig.machine.has_translations());
+  const std::vector<bd::runtime::Gap> gaps = rig.machine.gaps();
+  REQUIRE(gaps.size() == 1);
+  CHECK(gaps[0].address == 0x4000 && gaps[0].entries == 2 && gaps[0].instructions == 4);
+  CHECK(gaps[0].why == bd::runtime::Gap::Why::kNoTranslation);
+  CHECK(gaps[0].readable && gaps[0].word == 0xE3A00005);
+  const std::string report = bd::runtime::not_native_report(gaps);
+  CHECK(report.find("# 1 places, entered 2 times, 4 instructions interpreted.") != std::string::npos);
+  CHECK(report.find("0x00004000\tARM\t2\t4\t0xE3A00005\tfast code memory\tno translated code starts here\n") !=
+        std::string::npos);
+}
