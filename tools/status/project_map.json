@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "Launcher: a 4 by 3 window; Play and your save on the game's page of saves; the setup in the program's own look. Music and sound effects play. The game's busiest loop runs translated",
+    "what": "The game's thread switch runs translated, not in the interpreter. 3D models move smoothly above 1x. A gear on the launcher's first page opens the settings",
     "date": "2026-11-20"
   },
   "statuses": {
@@ -370,7 +370,7 @@
     {
       "part": "translator",
       "status": "done",
-      "now": "Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts. Where code puts its own return address in lr before a jump, that address is translated too."
+      "now": "Translates 17,076 functions of the game's code to C++, on your computer, with interrupt polls and instruction counts. Where code puts its own return address in lr before a jump, that address is translated too, and so is the place a saved thread context is resumed at."
     },
     {
       "part": "game builder",
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, on one screen or both, or by the processor. Widescreen: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Widescreen: not yet."
     },
     {
       "part": "audio",
@@ -410,7 +410,7 @@
     {
       "part": "ui, app",
       "status": "done",
-      "now": "The launcher's first page is Play and your save, on the game's page of saves; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub."
+      "now": "The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub."
     },
     {
       "part": "platform, core",
@@ -425,7 +425,7 @@
   ],
   "next": [
     "Play on from the save, by hand and with scripted input, and fix what stops the game.",
-    "Speed: the game's thread switch (0x02054124) and the interrupt entry still run in the interpreter.",
+    "Speed: the interrupt entry (the BIOS vector 0xFFFF0018) still runs in the interpreter.",
     "In-game saving: not yet tried.",
     "Widescreen and mods."
   ]
