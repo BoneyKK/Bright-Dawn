@@ -2,8 +2,8 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "3D scenes drawn by the graphics hardware, sharper, at up to 8 times the DS's resolution",
-    "date": "2026-11-18"
+    "what": "3D on both screens (as on the title screen) drawn by the graphics hardware at the higher resolution; automatic 3D resolution costs less",
+    "date": "2026-11-20"
   },
   "statuses": {
     "done": "Works",
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, or by the processor. Widescreen: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, on one screen or both, or by the processor. Widescreen: not yet."
     },
     {
       "part": "audio",
