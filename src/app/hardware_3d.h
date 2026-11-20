@@ -12,6 +12,11 @@
 // The result is a texture of the renderer, drawn in place of the main
 // engine's screen.
 //
+// A display capture of the main engine's picture (nds::Display::
+// frame_capture()) is made the same way, without the master brightness,
+// and kept: the last three are. A screen marked where it shows one is
+// drawn with it put in, as with the scene.
+//
 // Made for speed, not to be exact: see nds/hardware_scene.h for what is
 // left out. The program's own drawing (nds::PolygonRenderer) stays for
 // where this cannot be used.
@@ -19,6 +24,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -42,18 +48,35 @@ class Hardware3D {
   bool open(SDL_Renderer* renderer, std::string& error);
   bool is_open() const { return device_ != nullptr; }
 
-  // The main engine's screen (`screen`: 256 * 192 colours with marks) with
-  // `scene` put in, `scale` times as large, and `brightness` (the master
-  // brightness register) on the scene. The texture to show, or null if it
-  // could not be made.
-  SDL_Texture* draw(const nds::HardwareScene& scene, const std::vector<std::uint32_t>& screen,
-                    std::uint16_t brightness, int scale);
+  // The capture numbered `number`: `source` (256 * 192 colours with marks)
+  // with `scene` put in, `scale` times as large. False if it could not be
+  // made.
+  bool capture(const nds::HardwareScene& scene, const std::vector<std::uint32_t>& source, std::uint64_t number,
+               int scale);
+  // A screen (`which`: 0 the top, 1 the bottom; `screen`: 256 * 192
+  // colours with marks) with `scene` put in, or the kept capture numbered
+  // `capture` if `scene` is null, `scale` times as large, and `brightness`
+  // (the master brightness register) on what is put in. The texture to
+  // show; null if it could not be made (`failed`) or that capture is not
+  // kept.
+  SDL_Texture* draw(int which, const std::vector<std::uint32_t>& screen, const nds::HardwareScene* scene,
+                    std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed);
 
  private:
   struct Place {
     std::uint16_t x = 0, y = 0;
   };
 
+  struct Kept {
+    SDL_GPUTexture* texture = nullptr;
+    std::uint64_t number = 0;  // 0 for none.
+  };
+
+  bool ready(int scale);
+  // Puts the scene (drawn first if it is new) or `source` into `screen`
+  // where it is marked, into `target`.
+  bool run(const nds::HardwareScene* scene, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
+           SDL_GPUTexture* target, std::uint16_t brightness);
   bool make_targets(int scale);
   void release_targets();
   // A place in the atlas for a texture, or false when it is full.
@@ -80,8 +103,9 @@ class Hardware3D {
   int scale_ = 0;
   SDL_GPUTexture* scene_target_ = nullptr;
   SDL_GPUTexture* depth_ = nullptr;
-  SDL_GPUTexture* output_ = nullptr;
-  SDL_Texture* shown_ = nullptr;
+  std::array<SDL_GPUTexture*, 2> outputs_{};  // For the top and the bottom screen,
+  std::array<SDL_Texture*, 2> shown_{};       // as textures of the renderer.
+  std::array<Kept, 3> kept_{};
 
   // The atlas: textures by key, placed on shelves from the top down.
   std::unordered_map<std::uint64_t, Place> placed_;

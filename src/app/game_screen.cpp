@@ -1,7 +1,9 @@
 #include "app/game_screen.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <string>
 
 #include "core/log.h"
 #include "core/version.h"
@@ -98,7 +100,7 @@ void GameScreen::apply_settings(bool first) {
   }
   hardware = hardware && hardware_.is_open() && !hardware_failed_;
   console_.display().set_hardware_3d(hardware);
-  if (!hardware) main_3d_ = nullptr;
+  if (!hardware) shown_3d_ = {};
   const bool smooth = ui::smooth_textures(s);
   console_.polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
                                                         : nds::PolygonRenderer::TextureFilter::Nearest);
@@ -144,6 +146,7 @@ void GameScreen::apply_settings(bool first) {
 
 bool GameScreen::frame() {
   ++frames_run_;
+  keep_capture();
   if (!handle_events()) return false;
   if (menu_open_ && !run_menu()) return false;
   if (app_.settings.revision() != settings_seen_) apply_settings(false);
@@ -341,26 +344,50 @@ void GameScreen::upload_screens() {
     SDL_UpdateTexture(texture, nullptr, pixels_.data(), gfx::kScreenWidth * 4);
   };
   const nds::Display& display = console_.display();
-  const bool main_on_top = display.frame_main_on_top();
-  // The main engine's screen with the scene the graphics hardware drew, at
-  // the resolution for the screen as it was last laid out.
-  main_3d_ = nullptr;
-  const gfx::Rect& main_place = main_on_top ? screens_.top : screens_.bottom;
-  if (display.frame_has_scene() && hardware_.is_open() && main_place.h > 0) {
-    main_3d_ = hardware_.draw(console_.polygon_renderer().scene(), main_on_top ? display.top_screen() : display.bottom_screen(),
-                              display.frame_brightness(), ui::resolution_3d(app_.settings, static_cast<int>(main_place.h)));
-    if (main_3d_ == nullptr) {
-      // Not again: the processor draws the 3D scenes from the next frame.
-      log::warning("3d", "the graphics hardware failed to draw a 3D scene, so the processor draws them from now on");
-      hardware_failed_ = true;
-      console_.display().set_hardware_3d(false);
-    } else {
-      SDL_SetTextureScaleMode(main_3d_, filter_ == gfx::ScreenFilter::Sharp ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+  // Each screen with what the graphics hardware puts in where it is marked
+  // (the frame's scene, or a capture it made), at the resolution for the
+  // screens as they were last laid out.
+  for (int i = 0; i < 2; ++i) {
+    shown_3d_[static_cast<std::size_t>(i)] = nullptr;
+    const nds::Display::ScreenFill& fill = display.frame_fill(i);
+    const gfx::Rect& place = i == 0 ? screens_.top : screens_.bottom;
+    if (fill.fill == nds::Display::Fill::kNone || !hardware_.is_open() || hardware_failed_ || place.h <= 0) continue;
+    bool failed = false;
+    SDL_Texture* t = hardware_.draw(i, i == 0 ? display.top_screen() : display.bottom_screen(),
+                                    fill.fill == nds::Display::Fill::kScene ? &console_.polygon_renderer().scene() : nullptr,
+                                    fill.capture, fill.brightness, scale_3d(), failed);
+    if (failed) {
+      give_up_hardware("draw a 3D scene");
+      break;
     }
+    if (t != nullptr)
+      SDL_SetTextureScaleMode(t, filter_ == gfx::ScreenFilter::Sharp ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
+    shown_3d_[static_cast<std::size_t>(i)] = t;
   }
-  if (main_3d_ == nullptr || !main_on_top) upload(top_, display.top_screen());
-  if (main_3d_ == nullptr || main_on_top) upload(bottom_, display.bottom_screen());
+  if (shown_3d_[0] == nullptr) upload(top_, display.top_screen());
+  if (shown_3d_[1] == nullptr) upload(bottom_, display.bottom_screen());
   enlarged_stale_ = true;
+}
+
+void GameScreen::keep_capture() {
+  const nds::Display& display = console_.display();
+  const std::uint64_t number = display.frame_capture();
+  if (number == 0 || number == capture_kept_ || !hardware_.is_open() || hardware_failed_) return;
+  capture_kept_ = number;
+  if (!hardware_.capture(console_.polygon_renderer().scene(), display.capture_source(), number, scale_3d()))
+    give_up_hardware("make a display capture");
+}
+
+int GameScreen::scale_3d() const {
+  return ui::resolution_3d(app_.settings, static_cast<int>(std::max(screens_.top.h, screens_.bottom.h)));
+}
+
+void GameScreen::give_up_hardware(const char* why) {
+  log::warning("3d", std::string("the graphics hardware failed to ") + why +
+                         ", so the processor draws the 3D pictures from now on");
+  hardware_failed_ = true;
+  shown_3d_ = {};
+  console_.display().set_hardware_3d(false);
 }
 
 void GameScreen::prepare_enlarged(int factor) {
@@ -415,7 +442,8 @@ void GameScreen::draw() {
   };
   // The graphics hardware's picture is already enlarged a whole number of
   // times, so it is only smoothed (unless sharp) the rest of the way.
-  if (main_3d_ != nullptr) (console_.display().frame_main_on_top() ? top : bottom) = main_3d_;
+  if (shown_3d_[0] != nullptr) top = shown_3d_[0];
+  if (shown_3d_[1] != nullptr) bottom = shown_3d_[1];
   place(top, screens_.top);
   place(bottom, screens_.bottom);
 }

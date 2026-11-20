@@ -265,7 +265,8 @@ bool hardware_3d(const platform::Settings& settings) { return settings.choice(ke
 int resolution_3d(const platform::Settings& settings, int shown_height) {
   const std::string chosen = settings.choice(key::k3DResolution);
   if (chosen.size() == 1 && chosen[0] >= '1' && chosen[0] <= '8') return chosen[0] - '0';
-  return std::clamp((shown_height + 191) / 192, 1, 8);
+  // No more pixels than are shown: the rest of the way is smoothed.
+  return std::clamp(shown_height / 192, 1, 8);
 }
 
 nds::UserSettings::Language game_language(const platform::Settings& settings) {

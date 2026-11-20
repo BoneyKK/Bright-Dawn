@@ -233,7 +233,7 @@ TEST(display_marks_where_the_graphics_hardware_puts_the_3d_scene) {
   f.frame();
   // A scene was made in place of the picture; the screen is the backdrop,
   // marked everywhere, to be blended by the 3D pixel's alpha.
-  CHECK(f.display.frame_has_scene() && f.display.statistics().pictures_3d == 1);
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kScene && f.display.statistics().pictures_3d == 1);
   CHECK(f.renderer.scene().serial == 1 && f.renderer.scene().vertices.size() == 3);
   const u32 pixel = f.display.bottom_screen()[191 * 256];
   CHECK((pixel & 0x3FFFF) == kGreen && (pixel & DisplayEngine::kMark3D) != 0);
@@ -258,5 +258,37 @@ TEST(display_marks_where_the_graphics_hardware_puts_the_3d_scene) {
   f.io.write(0x04000050, 2, 0);
   f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20);
   f.frame();
-  CHECK(!f.display.frame_has_scene() && f.display.bottom_screen()[191 * 256] == rgb(63, 0, 0));
+  CHECK(f.display.frame_fill(1).fill != Display::Fill::kScene && f.display.bottom_screen()[191 * 256] == rgb(63, 0, 0));
+}
+
+TEST(display_keeps_hardware_captures_and_finds_where_they_are_shown) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  // 3D on both screens: the main engine's picture captured into bank B in
+  // every frame, the main engine on the other screen each time. The first
+  // capture has none before it, so the processor draws it.
+  const u32 capture = Display::kCaptureOn | 3u << 20 | 1u << 16;
+  f.io.write(Display::kCaptureControl, 4, capture);
+  f.frame();
+  CHECK(f.display.frame_capture() == 0);
+  f.io.write(Display::kPowerControl, 2, Display::kMainOnTop);
+  f.io.write(Display::kCaptureControl, 4, capture);
+  f.frame();
+  // The second is the graphics hardware's: a scene, and what the capture
+  // takes, marked where the scene can go.
+  const std::uint64_t kept = f.display.frame_capture();
+  CHECK(kept != 0 && f.display.frame_fill(0).fill == Display::Fill::kScene);
+  CHECK((f.display.capture_source()[191 * 256] & DisplayEngine::kMark3D) != 0);
+  // The main engine shows bank B on the bottom screen: that capture, marked
+  // everywhere it is the same, with the engine's master brightness.
+  f.io.write(Display::kPowerControl, 2, 0);
+  f.io.write(0x04000000, 4, 2u << 16 | 1u << 18);
+  f.io.write(0x0400006C, 2, 0x4008);
+  f.frame();
+  const Display::ScreenFill& fill = f.display.frame_fill(1);
+  CHECK(fill.fill == Display::Fill::kCapture && fill.capture == kept && fill.brightness == 0x4008);
+  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kMark3D) != 0);
+  CHECK(f.display.frame_fill(0).fill == Display::Fill::kNone && f.display.frame_capture() == 0);
 }

@@ -29,6 +29,7 @@
 //   the one that swaps the screens is acted on.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -83,15 +84,32 @@ class Display {
 
   // The 3D picture drawn by the graphics hardware where it can be: the
   // polygon renderer then makes a scene (PolygonRenderer::build_scene) in
-  // place of the picture, and the main engine marks where it goes. A frame
-  // with a display capture is still drawn here, as the capture needs it.
+  // place of the picture, and the main engine marks where it goes.
+  //
+  // A frame with a display capture is drawn here, as the capture needs the
+  // picture, except in the pattern of 3D on both screens: a capture of all
+  // of the main engine's picture in each frame while it changes screens.
+  // That capture is made by the graphics hardware too (frame_capture()); in
+  // video memory it has the 2D pictures only. A screen that then shows it
+  // (the main engine in display mode 2, or the second engine with a copy of
+  // it) is marked where it does, for the graphics hardware's capture.
   void set_hardware_3d(bool on) { hardware_3d_ = on; }
-  // Of the frame last completed: whether its main engine's screen has
-  // marks for the scene, the main engine's master brightness, and whether
-  // the main engine was on the top screen.
-  bool frame_has_scene() const { return frame_has_scene_; }
-  std::uint16_t frame_brightness() const { return frame_brightness_; }
-  bool frame_main_on_top() const { return frame_main_on_top_; }
+
+  // What the graphics hardware puts in where a screen is marked.
+  enum class Fill : std::uint8_t { kNone, kScene, kCapture };
+  struct ScreenFill {
+    Fill fill = Fill::kNone;
+    std::uint64_t capture = 0;      // For kCapture: its number (frame_capture()).
+    std::uint16_t brightness = 0;   // The master brightness of the engine shown.
+  };
+  // Of the frame last completed: 0 the top screen, 1 the bottom screen.
+  const ScreenFill& frame_fill(int screen) const { return frame_fills_[screen & 1]; }
+  // The capture the graphics hardware makes, of the frame last completed:
+  // its number (0 for none, each larger than the last), and what it takes:
+  // the main engine's picture before the display mode and the master
+  // brightness, marked for the scene.
+  std::uint64_t frame_capture() const { return frame_capture_; }
+  const std::vector<std::uint32_t>& capture_source() const { return capture_source_; }
 
   DisplayEngine& main_engine() { return main_; }
   DisplayEngine& second_engine() { return second_; }
@@ -102,6 +120,16 @@ class Display {
 
  private:
   void capture_line(unsigned line);
+  // Marks `screen` where `engine` shows a recent capture of the graphics
+  // hardware, and says so in `fill`.
+  void find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const;
+
+  // A capture made by the graphics hardware: what it put in video memory,
+  // six bits a part.
+  struct Kept {
+    std::uint64_t number = 0;  // 0 while it is made.
+    std::vector<std::uint32_t> pixels;
+  };
 
   VideoMemory& video_;
   const GeometryEngine& geometry_;
@@ -113,8 +141,17 @@ class Display {
   std::uint64_t swaps_built_ = 0;   // and when the scene was last made.
   bool have_3d_ = false, have_scene_ = false;
   bool hardware_3d_ = false, scene_this_frame_ = false;
-  bool frame_has_scene_ = false, frame_main_on_top_ = true;
-  std::uint16_t frame_brightness_ = 0;
+  // Captures by the graphics hardware: this frame's, its place in kept_,
+  // and the pattern that allows them (the last frame with a capture and
+  // where the main engine was).
+  bool hardware_capture_ = false;
+  std::size_t kept_at_ = 0;
+  std::array<Kept, 3> kept_;
+  std::uint64_t last_capture_frame_ = 0;
+  bool last_main_on_top_ = false;
+  std::vector<std::uint32_t> capture_source_;
+  std::uint64_t frame_capture_ = 0;
+  std::array<ScreenFill, 2> frame_fills_{};
   std::vector<std::uint32_t> top_, bottom_;
   Statistics statistics_;
   std::map<std::string, std::uint64_t> notes_;

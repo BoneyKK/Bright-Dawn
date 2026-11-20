@@ -69,6 +69,12 @@ class GameScreen {
   void remove_gamepad(SDL_JoystickID id);
   void read_input();
   void upload_screens();
+  // The graphics hardware's capture of the frame just run, if it made one.
+  void keep_capture();
+  // The scale of the graphics hardware's 3D for the screens as laid out.
+  int scale_3d() const;
+  // The processor draws the 3D pictures from the next frame on.
+  void give_up_hardware(const char* why);
   // The screens, enlarged to a whole multiple for SharpSmoothEdges, made
   // again when the multiple changes or the screens do.
   void prepare_enlarged(int factor);
@@ -97,7 +103,10 @@ class GameScreen {
   // frame last shown, or null when the frame was drawn here.
   Hardware3D hardware_;
   bool hardware_tried_ = false, hardware_failed_ = false;
-  SDL_Texture* main_3d_ = nullptr;
+  // The screens as the graphics hardware drew them (top, bottom), where it
+  // did, and the last capture it made.
+  std::array<SDL_Texture*, 2> shown_3d_{};
+  std::uint64_t capture_kept_ = 0;
   std::vector<SDL_Gamepad*> gamepads_;
   std::vector<Key> keys_;
   std::vector<PadButton> pad_buttons_;

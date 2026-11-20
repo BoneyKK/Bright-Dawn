@@ -214,11 +214,21 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
 }
 
 void Hardware3D::release_targets() {
-  if (shown_ != nullptr) SDL_DestroyTexture(shown_);
-  for (SDL_GPUTexture* t : {scene_target_, depth_, output_})
+  for (SDL_Texture*& t : shown_) {
+    if (t != nullptr) SDL_DestroyTexture(t);
+    t = nullptr;
+  }
+  for (SDL_GPUTexture*& t : outputs_) {
     if (t != nullptr) SDL_ReleaseGPUTexture(device_, t);
-  shown_ = nullptr;
-  scene_target_ = depth_ = output_ = nullptr;
+    t = nullptr;
+  }
+  for (Kept& k : kept_) {
+    if (k.texture != nullptr) SDL_ReleaseGPUTexture(device_, k.texture);
+    k = Kept{};
+  }
+  for (SDL_GPUTexture* t : {scene_target_, depth_})
+    if (t != nullptr) SDL_ReleaseGPUTexture(device_, t);
+  scene_target_ = depth_ = nullptr;
   scale_ = 0;
   scene_drawn_ = 0;
 }
@@ -227,25 +237,34 @@ bool Hardware3D::make_targets(int scale) {
   release_targets();
   const int width = kScreenWidth * scale, height = kScreenHeight * scale;
   const SDL_GPUTextureUsageFlags colour = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-  scene_target_ = make_texture(device_, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour, width, height);
-  depth_ = make_texture(device_, depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET, width, height);
-  output_ = make_texture(device_, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour, width, height);
-  if (scene_target_ != nullptr && depth_ != nullptr && output_ != nullptr) {
+  bool made = true;
+  const auto make = [&](SDL_GPUTextureFormat format, SDL_GPUTextureUsageFlags usage) {
+    SDL_GPUTexture* t = make_texture(device_, format, usage, width, height);
+    made = made && t != nullptr;
+    return t;
+  };
+  scene_target_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+  depth_ = make(depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+  for (Kept& k : kept_) k.texture = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+  for (std::size_t i = 0; i < outputs_.size() && made; ++i) {
+    outputs_[i] = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+    if (!made) break;
     const SDL_PropertiesID props = SDL_CreateProperties();
-    SDL_SetPointerProperty(props, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, output_);
+    SDL_SetPointerProperty(props, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, outputs_[i]);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_RGBA32);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, width);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, height);
-    shown_ = SDL_CreateTextureWithProperties(renderer_, props);
+    shown_[i] = SDL_CreateTextureWithProperties(renderer_, props);
     SDL_DestroyProperties(props);
+    if (shown_[i] == nullptr) made = false;
+    else SDL_SetTextureBlendMode(shown_[i], SDL_BLENDMODE_NONE);
   }
-  if (shown_ == nullptr) {
+  if (!made) {
     log::warning("3d", std::string("cannot make the 3D targets at ") + std::to_string(scale) + " times: " + SDL_GetError());
     release_targets();
     return false;
   }
-  SDL_SetTextureBlendMode(shown_, SDL_BLENDMODE_NONE);
   scale_ = scale;
   log::writef(log::Level::Info, "3d", "3D scenes drawn at %d times the DS's resolution (%d by %d)", scale, width, height);
   return true;
@@ -286,12 +305,49 @@ bool Hardware3D::ensure_vertex_buffer(std::uint32_t bytes) {
   return vertices_ != nullptr;
 }
 
-SDL_Texture* Hardware3D::draw(const nds::HardwareScene& scene, const std::vector<std::uint32_t>& screen,
-                              std::uint16_t brightness, int scale) {
-  if (device_ == nullptr || screen.size() != std::size_t{kScreenWidth} * kScreenHeight) return nullptr;
+bool Hardware3D::ready(int scale) {
+  if (device_ == nullptr) return false;
   scale = std::clamp(scale, 1, kLargestScale);
-  if (scale != scale_ && !make_targets(scale)) return nullptr;
-  const bool new_scene = scene.serial != scene_drawn_;
+  return scale == scale_ || make_targets(scale);
+}
+
+bool Hardware3D::capture(const nds::HardwareScene& scene, const std::vector<std::uint32_t>& source,
+                         std::uint64_t number, int scale) {
+  if (!ready(scale)) return false;
+  // In place of the oldest.
+  Kept* oldest = &kept_[0];
+  for (Kept& k : kept_)
+    if (k.number < oldest->number) oldest = &k;
+  oldest->number = 0;
+  if (!run(&scene, source, nullptr, oldest->texture, 0)) return false;
+  oldest->number = number;
+  return true;
+}
+
+SDL_Texture* Hardware3D::draw(int which, const std::vector<std::uint32_t>& screen, const nds::HardwareScene* scene,
+                              std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed) {
+  failed = true;
+  if (!ready(scale)) return nullptr;
+  SDL_GPUTexture* source = nullptr;
+  if (scene == nullptr) {
+    for (const Kept& k : kept_)
+      if (k.number == capture && capture != 0) source = k.texture;
+    if (source == nullptr) {
+      failed = false;
+      return nullptr;
+    }
+  }
+  if (!run(scene, screen, source, outputs_[static_cast<std::size_t>(which & 1)], brightness)) return nullptr;
+  failed = false;
+  return shown_[static_cast<std::size_t>(which & 1)];
+}
+
+bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
+                     SDL_GPUTexture* target, std::uint16_t brightness) {
+  if (screen.size() != std::size_t{kScreenWidth} * kScreenHeight) return false;
+  static const nds::HardwareScene kNoScene;
+  const nds::HardwareScene& scene = given != nullptr ? *given : kNoScene;
+  const bool new_scene = given != nullptr && scene.serial != scene_drawn_;
 
   // The textures the scene needs that the atlas does not have. When it is
   // full it starts again, empty, with this scene's.
@@ -336,10 +392,10 @@ SDL_Texture* Hardware3D::draw(const nds::HardwareScene& scene, const std::vector
     bytes += aligned(static_cast<std::uint32_t>(scene.textures[i].width * scene.textures[i].height * 4));
   if (!ensure_transfer(bytes) || (vertex_bytes != 0 && !ensure_vertex_buffer(vertex_bytes))) {
     log::warning("3d", std::string("cannot make the buffers for a 3D scene: ") + SDL_GetError());
-    return nullptr;
+    return false;
   }
   auto* mapped = static_cast<std::uint8_t*>(SDL_MapGPUTransferBuffer(device_, transfer_, true));
-  if (mapped == nullptr) return nullptr;
+  if (mapped == nullptr) return false;
   // The screen: colours, with the marks (bits 24 to 31) as the alpha.
   for (std::size_t i = 0; i < screen.size(); ++i) {
     const std::uint32_t p = screen[i];
@@ -374,7 +430,7 @@ SDL_Texture* Hardware3D::draw(const nds::HardwareScene& scene, const std::vector
   SDL_UnmapGPUTransferBuffer(device_, transfer_);
 
   SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(device_);
-  if (commands == nullptr) return nullptr;
+  if (commands == nullptr) return false;
   SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
   SDL_GPUTextureTransferInfo from{};
   from.transfer_buffer = transfer_;
@@ -385,9 +441,9 @@ SDL_Texture* Hardware3D::draw(const nds::HardwareScene& scene, const std::vector
   to.d = 1;
   SDL_UploadToGPUTexture(copy, &from, &to, true);
   if (vertex_bytes != 0) {
-    const SDL_GPUTransferBufferLocation source{transfer_, vertices_at};
+    const SDL_GPUTransferBufferLocation upload{transfer_, vertices_at};
     const SDL_GPUBufferRegion region{vertices_, 0, vertex_bytes};
-    SDL_UploadToGPUBuffer(copy, &source, &region, true);
+    SDL_UploadToGPUBuffer(copy, &upload, &region, true);
   }
   for (std::size_t n = 0; n < pending_.size(); ++n) {
     const Scene::Texture& t = scene.textures[pending_[n]];
@@ -441,15 +497,15 @@ SDL_Texture* Hardware3D::draw(const nds::HardwareScene& scene, const std::vector
     scene_drawn_ = scene.serial;
   }
 
-  // 2. The screen with the scene put in.
+  // 2. The screen with the scene (or the kept capture) put in.
   SDL_GPUColorTargetInfo colour{};
-  colour.texture = output_;
+  colour.texture = target;
   colour.load_op = SDL_GPU_LOADOP_DONT_CARE;
   colour.store_op = SDL_GPU_STOREOP_STORE;
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 2> sources{{{screen_, nearest_}, {scene_target_, nearest_}}};
+  const std::array<SDL_GPUTextureSamplerBinding, 2> sources{{{screen_, nearest_}, {source != nullptr ? source : scene_target_, nearest_}}};
   SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), 2);
   ComposeUniforms uniforms{};
   const unsigned direction = brightness >> 14;
@@ -460,9 +516,9 @@ SDL_Texture* Hardware3D::draw(const nds::HardwareScene& scene, const std::vector
   SDL_EndGPURenderPass(pass);
   if (!SDL_SubmitGPUCommandBuffer(commands)) {
     log::warning("3d", std::string("cannot hand a 3D scene to the graphics hardware: ") + SDL_GetError());
-    return nullptr;
+    return false;
   }
-  return shown_;
+  return true;
 }
 
 }  // namespace bd::app

@@ -29,7 +29,8 @@ DisplayEngine::DisplayEngine(Which which, const VideoMemory& video, const std::u
       palette_(palette),
       sprites_(sprites),
       vram_(which == kMain ? 0x06000000 : 0x06200000),
-      screen_(static_cast<std::size_t>(kWidth) * kHeight, kWhite) {}
+      screen_(static_cast<std::size_t>(kWidth) * kHeight, kWhite),
+      unlit_(screen_) {}
 
 void DisplayEngine::attach(Arm9Io& io) {
   const u32 base = kBases[which_];
@@ -225,6 +226,7 @@ void DisplayEngine::draw_line(int line) {
       break;
   }
 
+  std::copy_n(shown_line, kWidth, &unlit_[static_cast<std::size_t>(line) * kWidth]);
   // The master brightness: every part a number of sixteenths of the way to
   // white (1) or to black (2).
   const unsigned direction = master_brightness_ >> 14;

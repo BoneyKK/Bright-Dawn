@@ -13,6 +13,9 @@ u32 five_bits_each(u32 colour) {
   return 0x8000 | ((colour >> 1) & 0x1F) | (((colour >> 7) & 0x1F) << 5) | (((colour >> 13) & 0x1F) << 10);
 }
 
+// Five bits a part made six, as the display engines read video memory.
+u32 six_bits_each(u32 colour) { return ((colour & 0x1F) << 1) | ((colour & 0x3E0) << 2) | ((colour & 0x7C00) << 3); }
+
 // The sizes a capture can have, across and down.
 constexpr unsigned kCaptureSizes[4][2] = {{128, 128}, {256, 64}, {256, 128}, {256, 192}};
 
@@ -48,7 +51,25 @@ void Display::line_begins(unsigned line) {
     // The polygons handed over at the last vertical blank, if there are new
     // ones, make this frame's 3D picture (or scene).
     const std::uint64_t swaps = geometry_.statistics().swaps;
-    scene_this_frame_ = hardware_3d_ && (capture_control_ & kCaptureOn) == 0;
+    const bool capture = (capture_control_ & kCaptureOn) != 0;
+    const bool main_on_top = (power_control_ & kMainOnTop) != 0;
+    // 3D on both screens: all of the main engine's picture (source A, 256
+    // by 192) captured in this frame and the last, the main engine on the
+    // other screen now.
+    hardware_capture_ = hardware_3d_ && capture && (capture_control_ & (3u << 29 | kCapture3DOnly)) == 0 &&
+                        ((capture_control_ >> 20) & 3) == 3 && last_capture_frame_ == statistics_.frames &&
+                        main_on_top != last_main_on_top_;
+    if (capture) {
+      last_capture_frame_ = statistics_.frames + 1;
+      last_main_on_top_ = main_on_top;
+    }
+    if (hardware_capture_) {
+      kept_at_ = (kept_at_ + 1) % kept_.size();
+      kept_[kept_at_].number = 0;
+      kept_[kept_at_].pixels.resize(static_cast<std::size_t>(kWidth) * kHeight);
+      capture_source_.resize(static_cast<std::size_t>(kWidth) * kHeight);
+    }
+    scene_this_frame_ = hardware_3d_ && (!capture || hardware_capture_);
     main_.set_hardware_3d(scene_this_frame_);
     if (scene_this_frame_) {
       if (swaps != swaps_built_) {
@@ -119,11 +140,22 @@ void Display::capture_line(unsigned line) {
       }
       video_.poke(into + ((write_at + x * 2) & 0x1FFFF), 2, pixel);
     }
+    if (hardware_capture_) {
+      // What the graphics hardware's capture takes, and what this one put
+      // in video memory, to find where it is shown.
+      const std::size_t at = static_cast<std::size_t>(line) * kWidth;
+      const auto* marks = main_.line_marks();
+      for (unsigned x = 0; x < width; ++x) {
+        capture_source_[at + x] = main_.mixed_line()[x] | (marks != nullptr ? (*marks)[x] : 0);
+        kept_[kept_at_].pixels[at + x] = six_bits_each(first(x));
+      }
+    }
   }
   if (line + 1 == height) {
     capturing_ = false;
     capture_control_ &= ~kCaptureOn;
     ++statistics_.captures;
+    if (hardware_capture_) kept_[kept_at_].number = statistics_.frames + 1;
   }
 }
 
@@ -132,10 +164,38 @@ void Display::vertical_blank() {
   const bool main_on_top = (power_control_ & kMainOnTop) != 0;
   top_ = main_on_top ? main_.screen() : second_.screen();
   bottom_ = main_on_top ? second_.screen() : main_.screen();
-  frame_has_scene_ = scene_this_frame_ && have_scene_;
-  frame_brightness_ = main_.master_brightness();
-  frame_main_on_top_ = main_on_top;
+  frame_capture_ = hardware_capture_ ? kept_[kept_at_].number : 0;
+  ScreenFill& main_fill = frame_fills_[main_on_top ? 0 : 1];
+  ScreenFill& second_fill = frame_fills_[main_on_top ? 1 : 0];
+  main_fill = second_fill = ScreenFill{};
+  if (scene_this_frame_ && have_scene_ && ((main_.control() >> 16) & 3) == 1)
+    main_fill = {Fill::kScene, 0, main_.master_brightness()};
+  else
+    find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
+  find_capture(second_, main_on_top ? bottom_ : top_, second_fill);
   ++statistics_.frames;
+}
+
+void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const {
+  // The recent capture the engine shows most of, at one pixel in 61; it
+  // counts if three quarters of those are the same.
+  const std::vector<std::uint32_t>& shown = engine.unlit_screen();
+  const Kept* best = nullptr;
+  unsigned best_count = 0, samples = 0;
+  for (const Kept& kept : kept_) {
+    if (kept.number == 0 || statistics_.frames + 1 - kept.number > 3) continue;
+    unsigned count = 0;
+    samples = 0;
+    for (std::size_t i = 0; i < shown.size(); i += 61, ++samples) count += shown[i] == kept.pixels[i] ? 1 : 0;
+    if (count > best_count || (best != nullptr && count == best_count && kept.number > best->number)) {
+      best_count = count;
+      best = &kept;
+    }
+  }
+  if (best == nullptr || best_count * 4 < samples * 3) return;
+  for (std::size_t i = 0; i < shown.size(); ++i)
+    if (shown[i] == best->pixels[i]) screen[i] |= DisplayEngine::kMark3D;
+  fill = {Fill::kCapture, best->number, engine.master_brightness()};
 }
 
 }  // namespace bd::nds

@@ -116,6 +116,11 @@ class DisplayEngine {
   // The line last drawn before the display mode and the master brightness:
   // what the display capture takes.
   const std::array<std::uint32_t, kWidth>& mixed_line() const { return mixed_; }
+  // The marks of the line last drawn (see set_hardware_3d), or null if it
+  // has none.
+  const std::array<std::uint32_t, kWidth>* line_marks() const { return marked_ ? &marks_ : nullptr; }
+  // The screen as shown, before the master brightness.
+  const std::vector<std::uint32_t>& unlit_screen() const { return unlit_; }
 
   std::uint32_t control() const { return control_; }
   // What was asked for that is not carried out, with how many lines.
@@ -176,6 +181,7 @@ class DisplayEngine {
   std::array<bool, kWidth> sprite_window_{};
   std::array<std::uint32_t, kWidth> mixed_{};
   std::vector<std::uint32_t> screen_;
+  std::vector<std::uint32_t> unlit_;
   std::map<std::string, std::uint64_t> notes_;
 };
 
