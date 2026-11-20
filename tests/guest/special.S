@@ -669,6 +669,110 @@ t_excret:
         pop     {r4, r5, r6, r7, pc}
 
 @ ---------------------------------------------------------------------------
+@ ctxret: a thread's context saved and loaded, the way the game's threads
+@ switch. ctxret_save keeps the registers and, as where to resume, an
+@ address in its own code ("add r0, pc, #8"), and returns 0. ctxret_load
+@ puts them back and resumes with an exception return ("subs pc, lr, #4"),
+@ which lands on ctxret_save's last instruction: it returns a second time,
+@ now 1, to the place it was called from, where no call waits any more.
+@ It is reached through two more functions, as in the game: one calls the
+@ next, which jumps on with "ldr r12, =ctxret_save; bx r12". Each of them
+@ returns a second time as well. Computes ((a ^ b) + 7) + b.
+@ ---------------------------------------------------------------------------
+        .arm
+        .global a_ctxret
+        .type a_ctxret, %function
+a_ctxret:
+        push    {r4, r5, r6, r7, lr}
+        mov     r5, r1
+        ldr     r6, =ctxret_shared
+        str     r0, [r6]                @ the value being worked on
+        ldr     r0, =ctxret_context
+        bl      ctxret_yield            @ 0 now; 1 when resumed
+        cmp     r0, #0
+        bne     1f
+        ldr     r2, [r6]
+        eor     r2, r2, r5
+        add     r2, r2, #7
+        str     r2, [r6]
+        ldr     r0, =ctxret_context
+        sub     sp, sp, #32             @ keeps the stack that the context still uses
+        bl      ctxret_load             @ does not return here
+1:      ldr     r0, [r6]
+        add     r0, r0, r5
+        pop     {r4, r5, r6, r7, pc}
+        .ltorg
+
+        .section .rodata
+        .align  2
+        .word   ctxret_load             @ pointers to them, so that the translator finds them
+        .word   ctxret_save
+        .text
+
+        .type ctxret_yield, %function
+ctxret_yield:
+        push    {r4, lr}
+        bl      ctxret_far
+        pop     {r4, pc}
+
+        .type ctxret_far, %function
+ctxret_far:
+        ldr     r12, =ctxret_save
+        bx      r12
+        .ltorg
+
+        .type ctxret_save, %function
+ctxret_save:                            @ r0: the context
+        push    {r0, lr}                @ begins the way a function does
+        pop     {r0, lr}
+        add     r1, r0, #0
+        mrs     r2, cpsr
+        str     r2, [r1], #4            @ the status first
+        mov     r0, #1                  @ what the call gives when resumed
+        stmia   r1, {r0-r12, sp, lr}
+        add     r0, pc, #8              @ where to resume: the word after "bx lr"
+        str     r0, [r1, #0x3c]
+        mov     r0, #0
+        bx      lr                      @ an exception return to the word after lands here
+        .word   0
+
+        .type ctxret_load, %function
+ctxret_load:                            @ r0: the context; System mode
+        push    {r0, lr}
+        pop     {r0, lr}
+        ldr     r1, [r0], #4            @ the status
+        ldr     r2, [r0, #0x3c]         @ where to resume
+        add     r3, r0, #16
+        ldmia   r3, {r4-r12}
+        ldr     sp, [r0, #0x34]
+        ldr     lr, [r0, #0x38]
+        mrs     r3, cpsr
+        bic     r3, r3, #0x1F
+        orr     r3, r3, #0xD3           @ Supervisor mode, interrupts masked
+        msr     cpsr_c, r3
+        msr     spsr_cxsf, r1
+        mov     lr, r2
+        ldr     r0, [r0]                @ the saved r0: 1
+        subs    pc, lr, #4
+
+        .thumb
+        .global t_ctxret
+        .thumb_func
+        .type t_ctxret, %function
+t_ctxret:
+        push    {r4, lr}
+        blx     a_ctxret
+        pop     {r4, pc}
+
+        .bss
+        .align  2
+ctxret_shared:
+        .space  4
+ctxret_context:
+        .space  68
+        .text
+
+@ ---------------------------------------------------------------------------
 @ lowentry: a function whose entry point is not its lowest address: its loop
 @ lies before the entry and is reached by a branch back, the way hand-written
 @ routines are sometimes laid out. Code is written out in address order, so

@@ -80,5 +80,9 @@ u32 a_excret(u32 a, u32 b) {
 }
 u32 t_excret(u32 a, u32 b) { return a_excret(a, b); }
 
+// The work done before the context is loaded again, kept in memory.
+u32 a_ctxret(u32 a, u32 b) { return ((a ^ b) + 7u) + b; }
+u32 t_ctxret(u32 a, u32 b) { return a_ctxret(a, b); }
+
 u32 a_lowentry(u32 a, u32 b) { return (a ^ 0x55u) + 3u * b; }
 u32 t_lowentry(u32 a, u32 b) { return a_lowentry(a, b); }

@@ -89,7 +89,9 @@ class Function:
     tails: set = field(default_factory=set)          # (target, thumb) jumped to as tail call
     tables: dict = field(default_factory=dict)       # address of a computed jump -> [targets]
     resumes: set = field(default_factory=set)        # (address, thumb) set into lr before a jump: callees return there
+    returns_twice: bool = False                      # saves a place inside itself to be resumed at (setjmp)
     unresolved: set = field(default_factory=set)     # addresses of computed jumps we could not follow
+    far_tails: set = field(default_factory=set)      # (target, thumb) of computed jumps to a constant just loaded
     bad: str = ""                                    # why the function was cut short
 
     @property
@@ -138,6 +140,39 @@ def return_point(i: Insn) -> int | None:
         return i.pc_value
     if f["rn"] == 15 and f["op"] in (2, 4) and f["op2"][0] == "imm":
         return (i.pc_value - f["op2"][1] if f["op"] == 2 else i.pc_value + f["op2"][1]) & 0xFFFFFFFF
+    return None
+
+
+def code_address(i: Insn) -> int | None:
+    """The address "add/sub rX, pc, #n" computes (ARM; rX not pc), else None."""
+    f = i.f
+    if i.thumb or i.kind != "dp" or f["rn"] != 15 or f["rd"] == 15 or f["s"]:
+        return None
+    if f["op"] in (2, 4) and f["op2"][0] == "imm":
+        return (i.pc_value - f["op2"][1] if f["op"] == 2 else i.pc_value + f["op2"][1]) & 0xFFFFFFFF
+    return None
+
+
+def constant_jump(img: Image, insns: dict, i: Insn) -> tuple | None:
+    """Where "ldr rX, =address" ... "bx rX" goes, when nothing between changes rX, else None."""
+    if i.kind != "bx" or i.f["link"] or i.f["rm"] == 15:
+        return None
+    rm, step = i.f["rm"], 2 if i.thumb else 4
+    a = i.addr
+    for _ in range(8):
+        a -= step
+        n = insns.get(a)
+        if n is None or n.cond != 14 or n.kind in ("b", "bx", "undef") or writes_pc(n):
+            return None
+        f = n.f
+        if n.kind == "mem" and f["load"] and f["size"] == "w" and f["rd"] == rm and f["rn"] == 15 \
+                and f.get("pre", True) and not f.get("wb") and f["off"][0] == "imm":
+            base = n.pc_value & ~3
+            w = img.word((base + f["off"][1]) if f.get("up", True) else (base - f["off"][1]))
+            return None if w is None else (w & ~1, bool(w & 1))
+        if rm in (f.get("rd"), f.get("rdhi"), f.get("rdlo")) or (f.get("wb") and f.get("rn") == rm) \
+                or rm in f.get("regs", ()):
+            return None
     return None
 
 
@@ -190,6 +225,7 @@ def explore(img: Image, addr: int, thumb: bool, known: set) -> Function:
     fn = Function(addr, thumb)
     todo = [addr]
     seen: set = set()
+    kept: list = []  # Addresses "add rX, pc, #n" computes.
     while todo:
         a = todo.pop()
         while True:
@@ -237,6 +273,9 @@ def explore(img: Image, addr: int, thumb: bool, known: set) -> Function:
                         todo.append(t)
                 elif not is_return(i):
                     fn.unresolved.add(a)
+                    far = constant_jump(img, fn.insns, i)
+                    if far is not None:
+                        fn.far_tails.add(far)
                 if i.cond != 14:                  # not taken: the next instruction runs
                     a = i.end
                     continue
@@ -244,7 +283,22 @@ def explore(img: Image, addr: int, thumb: bool, known: set) -> Function:
             point = return_point(i)
             if point is not None and img.contains(point):
                 fn.resumes.add((point, False))
+            target = code_address(i)
+            if target is not None:
+                kept.append((target, i.f["rd"] == 14))
             a = i.end
+    # A function that keeps the address of a place in its own code (to be
+    # stored; it is not a jump table, as those are data) saves where it is to
+    # be resumed: a thread's context is saved this way. Resuming it goes
+    # there, or 4 before when it is resumed by an exception return
+    # ("subs pc, lr, #4"), and from there it returns to its caller a second
+    # time (find_functions). Each is a place translated code must start at.
+    # Put in lr, the address is for the jump that follows, in this function.
+    for target, in_lr in kept:
+        for p in (target, target - 4):
+            if p in fn.insns and p != fn.addr:
+                fn.resumes.add((p, thumb))
+                fn.returns_twice = fn.returns_twice or not in_lr
     return fn
 
 
@@ -298,6 +352,29 @@ def find_functions(img: Image, entries: list, extra_known: set | None = None,
                 if (w & 3) in (0, 1) and _looks_like_start(img, key[0], key[1]):
                     known.add(key)
                     todo.append(key)
+        run()
+    # A function that returns twice returns the second time to where it was
+    # called from, where no call waits any more: there too translated code
+    # must start, after every call to it. Its callers then return twice as
+    # well (the calls that waited for them were left with the saved
+    # context), and so on up to the thread's first function.
+    while True:
+        twice = {k for k, fn in funcs.items() if fn.returns_twice}
+        more = False
+        for fn in funcs.values():
+            if not fn.returns_twice and fn.far_tails & twice:
+                fn.returns_twice = more = True
+            for i in fn.insns.values():
+                if i.kind != "b" or (i.f["target"], fn.thumb != i.f["exchange"]) not in twice:
+                    continue
+                if not fn.returns_twice:
+                    fn.returns_twice = more = True
+                if i.f["link"] and (i.end, fn.thumb) not in known:
+                    fn.resumes.add((i.end, fn.thumb))
+                    known.add((i.end, fn.thumb))
+                    todo.append((i.end, fn.thumb))
+        if not todo and not more:
+            break
         run()
     # a later found function start inside an earlier function becomes a tail call target there
     return funcs

@@ -85,6 +85,11 @@ class MixedExecutor : public guest::Executor {
         // other than its caller. The second function was called from interpreted
         // code, and that call site is abandoned when the test finally returns.
         {"excret", 1, 0, 0, 2, 1},
+        // The exception return that resumes the saved context, the second
+        // return from saving it and the second return of the function that
+        // called for it each go where no call waits; the call that loaded the
+        // context is abandoned.
+        {"ctxret", 0, 0, 0, 3, 1},
     };
     for (const Expected& e : kExpected) {
       if (test != e.test) continue;

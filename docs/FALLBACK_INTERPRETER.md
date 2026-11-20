@@ -58,12 +58,14 @@ at instruction patterns:
 | A helper that jumps into its caller through a table after the call | The caller's remaining instructions are interpreted |
 | A jump out of several nested functions | The functions in between are abandoned; the outer one continues |
 | A switch to another stack, as a thread scheduler does | The flow switched to runs; when control returns to a waiting call site, native execution resumes there |
+| A thread's context saved with an address in the saving function's own code (`add rX, pc, #n`) and resumed there by an exception return (`subs pc, lr, #4`) | The resume address, the word before it, and the places after every call to the saving function and to its callers (also through `ldr rX, =function; bx rX`) are translated entries: the resumed thread runs natively |
 
 About the last row. When one flow of control switches to another and back,
 the native frames of the flow that was left are abandoned. When that flow is
-resumed later, the interpreter picks it up and runs it until its next call
-into translated code. That is correct, and the coroutine test checks it, but
-its cost on a real game with several threads has not been measured. Giving
+resumed later, it continues natively where the translator made an entry (the
+row before: the game's own thread switch), else the interpreter picks it up
+and runs it until its next call into translated code. Both are correct; the
+coroutine and ctxret tests check them. Giving
 each game thread its own native stack remains possible as an optimisation; it
 is no longer needed for correctness.
 
@@ -251,7 +253,8 @@ What the numbers say:
   interrupted: the plan is to take them at call sites and at the back edges
   of loops, where the address to come back to is known.
 - An exception return in translated code leaves translated code: what follows
-  it is interpreted until the next call into translated code. Correct, and
+  it is interpreted until the next call into translated code, unless it lands
+  on a translated entry (a saved context's resume address). Correct, and
   the test checks it; what it costs depends on how interrupts are delivered,
   which is not built.
 - At most 4,096 nested call sites are recorded; beyond that the runtime
