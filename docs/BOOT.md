@@ -128,8 +128,8 @@ not run but is the reference for what the main program expects:
   reserving channels; variables kept in the shared block. Of the other 14,
   13 concern sequences: the sound program is also a music player, which
   reads sequence and instrument data the main program points it to and
-  plays notes on channels it picks itself. That player is not there. The
-  last one copies the player's internal state out, and is not there either. A list is
+  plays notes on channels it picks itself (now `sequence_player`). The
+  last one copies the player's internal state out, and is not there. A list is
   counted as finished all the same, since the main program otherwise waits
   for ever; each command not carried out is reported by `bdtool boot`.
 - Alarms. Eight timers the main program can set up through commands. When

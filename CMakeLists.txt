@@ -74,6 +74,7 @@ target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(bd_core PUBLIC bd_build_flags Threads::Threads)
 
 add_library(bd_platform STATIC
+  src/platform/audio_feed.cpp
   src/platform/crash_log.cpp
   src/platform/frame_clock.cpp
   src/platform/paths.cpp
@@ -149,6 +150,7 @@ add_library(bd_nds STATIC
   src/nds/save_keeper.cpp
   src/nds/save_memory.cpp
   src/nds/second_processor.cpp
+  src/nds/sequence_player.cpp
   src/nds/sound_driver.cpp
   src/nds/sound_hardware.cpp
   src/nds/system_control.cpp
@@ -220,6 +222,7 @@ if(BD_BUILD_APP)
   # bright-dawn-game each compile for themselves.
   add_library(bd_app STATIC
     src/app/app.cpp
+    src/app/audio_out.cpp
     src/app/build_tools.cpp
     src/app/child_process.cpp
     src/app/game_font.cpp

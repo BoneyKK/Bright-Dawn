@@ -20,10 +20,12 @@
 #include <vector>
 
 #include "app/app.h"
+#include "app/audio_out.h"
 #include "app/hardware_3d.h"
 #include "app/settings_book.h"
 #include "gfx/screen_layout.h"
 #include "nds/console.h"
+#include "platform/audio_feed.h"
 #include "platform/frame_clock.h"
 
 namespace bd::app {
@@ -79,7 +81,7 @@ class GameScreen {
   // again when the multiple changes or the screens do.
   void prepare_enlarged(int factor);
   void draw();
-  void capture();
+  void capture(bool last);
   void count_rates(bool new_frame, bool shown);
   // The pause menu, until it is closed. False if the run is to end.
   bool run_menu();
@@ -107,6 +109,9 @@ class GameScreen {
   // did, and the last capture it made.
   std::array<SDL_Texture*, 2> shown_3d_{};
   std::uint64_t capture_kept_ = 0;
+  // The game's sound (Settings, Sound), a frame at a time.
+  platform::AudioFeed sound_;
+  AudioOut audio_;
   std::vector<SDL_Gamepad*> gamepads_;
   std::vector<Key> keys_;
   std::vector<PadButton> pad_buttons_;

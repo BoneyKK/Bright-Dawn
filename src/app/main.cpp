@@ -106,6 +106,7 @@ constexpr const char* kUsage =
     "                        default) or processor (exact, slower)\n"
     "  --3d-resolution N     the graphics hardware's 3D at N times the DS's\n"
     "                        resolution (1 to 8), or auto (to fit the window)\n"
+    "  --mute                no sound\n"
     "  --language LANGUAGE   the console's language, which the game shows its text in:\n"
     "                        english, french, german, italian, spanish or japanese\n"
     "  --renderer WAY        drawing the window: vulkan (the default; the system's own\n"
@@ -122,6 +123,8 @@ constexpr const char* kUsage =
     "  --touch X,Y@F[-L]     touch the touch screen at pixel X,Y from frame F to frame L;\n"
     "                        may be given more than once\n"
     "  --capture FILE        with --frames, write the window's last frame to FILE (BMP)\n"
+    "  --capture-every N     with --capture, also write every Nth frame, to FILE-N.bmp\n"
+    "  --record-sound FILE   keep the game's sound in FILE (WAV, 16-bit stereo)\n"
     "  --interpret-only      do not use the translated code (bright-dawn-game only)\n"
     "  --video-drivers       list the window systems this build can use, and stop\n"
     "  --extract-code ROM DIR  check the ROM, write its program code to DIR (for the\n"
@@ -430,6 +433,18 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
   for (const auto& [what, count] : console.polygon_renderer().notes())
     log::writef(log::Level::Info, "game", "asked of the 3D hardware and not done: %s (%" PRIu64 " frames)", what.c_str(),
                 count);
+  {
+    const nds::SoundDriver& sound = console.sound_driver();
+    for (std::uint32_t n = 0; n < nds::SoundDriver::kCommands; ++n)
+      if (sound.statistics().commands[n] != 0)
+        log::writef(log::Level::Debug, "sound", "\"%s\": %" PRIu64 " times", nds::SoundDriver::command_name(n),
+                    sound.statistics().commands[n]);
+    for (const auto& [what, count] : sound.sequences().notes())
+      log::writef(log::Level::Info, "sound", "the sequence player: %s (%" PRIu64 " times)", what.c_str(), count);
+    for (const auto& [what, count] : sound.not_carried_out())
+      log::writef(log::Level::Info, "sound", "asked of the sound program and not done: %s (%" PRIu64 " times)",
+                  what.c_str(), count);
+  }
   for (const auto& [number, count] : console.software_interrupts())
     log::writef(log::Level::Debug, "game", "BIOS call 0x%02" PRIX32 ": %" PRIu64 " times", number, count);
   played.end = screen.end() == app::GameEnd::Running ? app::GameEnd::Quit : screen.end();
@@ -594,6 +609,8 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kScreenFilter, argv[++i]);
     } else if (arg == "--renderer" && has_value) {
       cl.overrides.emplace_back(ui::key::kRenderer, argv[++i]);
+    } else if (arg == "--mute") {
+      cl.overrides.emplace_back(ui::key::kSound, "off");
     } else if (arg == "--language" && has_value) {
       cl.overrides.emplace_back(ui::key::kLanguage, argv[++i]);
     } else if (arg == "--3d" && has_value) {
@@ -623,6 +640,11 @@ int main(int argc, char** argv) {
       }
       options.touches.push_back(*touch);
       ++i;
+    } else if (arg == "--capture-every" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {
+      options.capture_every = static_cast<std::uint64_t>(number);
+      ++i;
+    } else if (arg == "--record-sound" && has_value) {
+      options.record_sound = argv[++i];
     } else if (arg == "--capture" && has_value) {
       options.capture = argv[++i];
     } else if (arg == "--side-by-side") {

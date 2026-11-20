@@ -174,17 +174,16 @@ TEST(sound_driver_lets_eight_lists_wait) {
 TEST(sound_driver_counts_a_list_whatever_is_in_it) {
   Fixture f;
   f.share();
-  f.run({{SoundDriver::kStartSequence, {0, 0, 0, 0}},
+  f.run({{SoundDriver::kStopSequence, {0, 0, 0, 0}},
          {0x22, {0, 0, 0, 0}},  // No such command: skipped.
          {SoundDriver::kReadState, {0x02200000, 0, 0, 0}},
-         {SoundDriver::kStartSequence, {1, 0, 0, 0}},
+         {SoundDriver::kStopSequence, {1, 0, 0, 0}},
          {SoundDriver::kSetMasterVolume, {0x33, 0, 0, 0}}});
   CHECK(f.finished() == 2);
   CHECK(f.hardware.read(SoundHardware::kControl, 1) == 0x33);
-  CHECK(f.driver.not_carried_out().size() == 2);
-  CHECK(f.driver.not_carried_out().at("\"start a sequence\", which is not implemented") == 2);
+  CHECK(f.driver.not_carried_out().size() == 1);
   CHECK(f.driver.not_carried_out().at("\"read the sound program's state\", which is not implemented") == 1);
-  CHECK(f.driver.statistics().commands[SoundDriver::kStartSequence] == 2);
+  CHECK(f.driver.statistics().commands[SoundDriver::kStopSequence] == 2);
 }
 
 TEST(sound_driver_notes_a_list_finished_with_no_shared_block) {

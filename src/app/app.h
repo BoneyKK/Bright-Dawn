@@ -26,6 +26,8 @@ struct Options {
   bool interpret_only = false;
   std::uint64_t frames = 0;
   std::string capture;
+  std::uint64_t capture_every = 0;
+  std::filesystem::path record_sound;  // Keep the game's sound in this WAV file.  // Also write a frame every so many, named FILE-frame.bmp.
   std::vector<input::ScriptedPress> script;
   std::vector<input::ScriptedTouch> touches;
 };

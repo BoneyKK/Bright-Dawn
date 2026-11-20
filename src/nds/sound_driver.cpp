@@ -128,6 +128,7 @@ void SoundDriver::run_until(Time now) {
       ++statistics_.beats;
       next_beat_ += kPeriod;
       work(when);
+      sequences_.beat();
       update_shared();
     }
   }
@@ -177,6 +178,9 @@ void SoundDriver::update_shared() {
   if ((reg(kCapture1, 1) & 0x80) != 0) captures |= 2;
   set_memory(shared_ + kSharedChannelsActive, 2, channels);
   set_memory(shared_ + kSharedCapturesActive, 2, captures);
+  set_memory(shared_ + kSharedPlayersPlaying, 4, sequences_.players_playing());
+  for (unsigned p = 0; p < SequencePlayer::kPlayers; ++p)
+    set_memory(shared_ + kSharedPlayerTicks + p * kSharedPlayerSize, 4, sequences_.ticks(p));
 }
 
 void SoundDriver::fire(Alarm& alarm) {
@@ -237,7 +241,8 @@ void SoundDriver::stop_unreserved(std::uint32_t channels) {
   for (unsigned i = 0; i < SoundHardware::kChannels && channels != 0; ++i, channels >>= 1) {
     if ((channels & 1) == 0 || ((reserved_[0] >> i) & 1) != 0) continue;
     // The program also takes the channel away from whatever note of a
-    // sequence is playing on it; no sequence plays here.
+    // sequence is playing on it.
+    sequences_.take_channels(1u << i);
     stop_channel(i, 0);
   }
 }
@@ -436,6 +441,22 @@ void SoundDriver::command(std::uint32_t number, const std::uint32_t* a, Time now
 
     case kSetSharedBlock:
       shared_ = a[0];
+      break;
+
+    case kStartSequence:
+    case kStopSequence:
+    case kPrepareSequence:
+    case kStartPreparedSequence:
+    case kPauseSequence:
+    case kSkipSequence:
+    case kSetPlayerValue:
+    case kSetTrackValue:
+    case kMuteTracks:
+    case kSetPlayerChannels:
+    case kForgetSequenceData:
+    case kForgetBankData:
+    case kForgetWaveData:
+      sequences_.command(number, a);
       break;
 
     default:

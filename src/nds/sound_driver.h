@@ -26,14 +26,15 @@
 // - The shared block: the count of finished lists, which channels and
 //   capture units are active, and the variables the main program sets.
 //
-// What is not, yet: sequences. The program plays music and most sound effects
-// itself, from sequence data the main program points it to, on channels it
-// hands out as notes begin. None of that exists here. The commands that
-// concern sequences, and the one that reads the program's internal state, are
+// - Sequences: music and most sound effects, which the program plays itself
+//   from sequence data the main program points it to, on channels it hands
+//   out as notes begin (sequence_player.h). Each beat the sequences advance
+//   after the lists are worked through, and the shared block shows which
+//   players are playing and how many ticks each has played.
+//
+// What is not: the command that reads the program's internal state. It is
 // counted as not carried out; a list is still counted as finished, as the
-// main program would otherwise wait for ever. Because no sequence plays, no
-// channel is ever in use by one, which is what the commands that reserve and
-// release channels assume here.
+// main program would otherwise wait for ever.
 //
 // Timing: a list is worked through, and an alarm's word sent, at the instant
 // it is due; on a console the second processor takes a little time. The
@@ -50,6 +51,7 @@
 #include <string>
 
 #include "nds/arm9_bus.h"
+#include "nds/sequence_player.h"
 #include "nds/sound_hardware.h"
 #include "nds/timeline.h"
 
@@ -116,9 +118,11 @@ class SoundDriver : public Timeline::Source {
 
   // The block of main memory the main program shares, by offset.
   static constexpr std::uint32_t kSharedListsFinished = 0x00;   // 32 bits.
+  static constexpr std::uint32_t kSharedPlayersPlaying = 0x04;  // 32 bits, one per player.
   static constexpr std::uint32_t kSharedChannelsActive = 0x08;  // 16 bits, one per channel.
   static constexpr std::uint32_t kSharedCapturesActive = 0x0A;  // 16 bits, one per unit.
-  static constexpr std::uint32_t kSharedPlayerVariables = 0x20; // 16 of 16 bits each per player,
+  static constexpr std::uint32_t kSharedPlayerVariables = 0x20; // 16 of 16 bits each per player, then
+  static constexpr std::uint32_t kSharedPlayerTicks = 0x40;     // 32 bits: the ticks it has played;
   static constexpr std::uint32_t kSharedPlayerSize = 0x24;      // players this far apart.
   static constexpr std::uint32_t kSharedGlobalVariables = 0x260;
 
@@ -158,6 +162,7 @@ class SoundDriver : public Timeline::Source {
 
   std::uint32_t shared_block() const { return shared_; }
   const Statistics& statistics() const { return statistics_; }
+  const SequencePlayer& sequences() const { return sequences_; }
   // Commands and situations that could not be dealt with as the program
   // would, in words, with how often each came.
   const std::map<std::string, std::uint64_t>& not_carried_out() const { return not_carried_out_; }
@@ -166,6 +171,8 @@ class SoundDriver : public Timeline::Source {
   static const char* command_name(std::uint32_t number);
 
  private:
+  friend class SequencePlayer;
+
   struct Alarm {
     bool set = false;             // The program's own flag: started and not stopped since.
     std::uint8_t identifier = 0;
@@ -218,6 +225,7 @@ class SoundDriver : public Timeline::Source {
   std::uint32_t reserved_[2] = {0, 0};  // [1]: the set chosen by bit 0 of the command's second argument.
   Statistics statistics_;
   std::map<std::string, std::uint64_t> not_carried_out_;
+  SequencePlayer sequences_{*this};
 };
 
 }  // namespace bd::nds

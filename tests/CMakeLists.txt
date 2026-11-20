@@ -7,6 +7,7 @@ target_link_libraries(bd_test_support PUBLIC bd_rom)
 add_executable(bd_tests
   test_main.cpp
   test_assets.cpp
+  test_audio_feed.cpp
   test_checksum.cpp
   test_machine_interrupts.cpp
   test_compression.cpp
@@ -25,6 +26,7 @@ add_executable(bd_tests
   test_program.cpp
   test_save_keeper.cpp
   test_save_memory.cpp
+  test_sequence_player.cpp
   test_sound_driver.cpp
   test_sound_hardware.cpp
   test_second_processor.cpp

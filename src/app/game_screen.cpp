@@ -19,6 +19,7 @@ GameScreen::GameScreen(App& app, nds::Console& console, bool can_go_back)
     : app_(app), console_(console), can_go_back_(can_go_back) {}
 
 GameScreen::~GameScreen() {
+  console_.sound_hardware().on_output = nullptr;
   for (SDL_Gamepad* pad : gamepads_) SDL_CloseGamepad(pad);
   if (top_ != nullptr) SDL_DestroyTexture(top_);
   if (bottom_ != nullptr) SDL_DestroyTexture(bottom_);
@@ -36,6 +37,14 @@ bool GameScreen::open(std::string& error) {
     }
     // Opaque: drawn over what is there, not blended.
     SDL_SetTextureBlendMode(*texture, SDL_BLENDMODE_NONE);
+  }
+  console_.sound_hardware().on_output = [this](nds::SoundHardware::Output o) { sound_.add(o.left, o.right); };
+  if (!app_.options.record_sound.empty()) {
+    std::string why;
+    if (sound_.record(app_.options.record_sound, why))
+      log::info("sound", "the game's sound is kept in " + app_.options.record_sound.string());
+    else
+      log::warning("sound", why);
   }
   largest_texture_ = static_cast<int>(SDL_GetNumberProperty(SDL_GetRendererProperties(app_.renderer),
                                                             SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 4096));
@@ -100,6 +109,7 @@ void GameScreen::apply_settings(bool first) {
   }
   hardware = hardware && hardware_.is_open() && !hardware_failed_;
   console_.display().set_hardware_3d(hardware);
+  audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
   const bool smooth = ui::smooth_textures(s);
   console_.polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
@@ -146,12 +156,15 @@ void GameScreen::apply_settings(bool first) {
 
 bool GameScreen::frame() {
   ++frames_run_;
+  audio_.play(sound_.take());
   keep_capture();
   if (!handle_events()) return false;
   if (menu_open_ && !run_menu()) return false;
   if (app_.settings.revision() != settings_seen_) apply_settings(false);
   read_input();
-  const bool capture_now = app_.options.frames != 0 && frames_run_ == app_.options.frames && !app_.options.capture.empty();
+  const bool capture_last = app_.options.frames != 0 && frames_run_ == app_.options.frames && !app_.options.capture.empty();
+  const bool capture_now = capture_last || (app_.options.capture_every != 0 && !app_.options.capture.empty() &&
+                                            frames_run_ % app_.options.capture_every == 0);
   const bool show = app_.options.unthrottled || clock_.frame_done(SDL_GetTicksNS());
   if (clock_.drops() != drops_logged_) {
     const std::uint64_t now = SDL_GetTicksNS();
@@ -171,7 +184,7 @@ bool GameScreen::frame() {
   upload_screens();
   for (bool first = true;; first = false) {
     draw();
-    if (first && capture_now) capture();
+    if (first && capture_now) capture(capture_last);
     SDL_RenderPresent(app_.renderer);
     count_rates(first, true);
     if (app_.options.unthrottled) break;
@@ -448,20 +461,25 @@ void GameScreen::draw() {
   place(bottom, screens_.bottom);
 }
 
-void GameScreen::capture() {
+void GameScreen::capture(bool last) {
   SDL_Surface* surface = SDL_RenderReadPixels(app_.renderer, nullptr);
   if (surface == nullptr) {
     log::error("window", std::string("cannot read the window back: ") + SDL_GetError());
     std::fprintf(stderr, "error: cannot read the window back: %s\n", SDL_GetError());
     return;
   }
-  if (SDL_SaveBMP(surface, app_.options.capture.c_str())) {
-    captured_ = true;
-    log::info("window", "the last frame was written to " + app_.options.capture);
-    std::printf("The last frame was written to %s\n", app_.options.capture.c_str());
+  std::filesystem::path file = app_.options.capture;
+  if (!last) file.replace_filename(file.stem().string() + "-" + std::to_string(frames_run_) + file.extension().string());
+  const std::string name = file.string();
+  if (SDL_SaveBMP(surface, name.c_str())) {
+    if (last) {
+      captured_ = true;
+      log::info("window", "the last frame was written to " + name);
+      std::printf("The last frame was written to %s\n", name.c_str());
+    }
   } else {
-    log::error("window", "cannot write " + app_.options.capture + ": " + SDL_GetError());
-    std::fprintf(stderr, "error: cannot write %s: %s\n", app_.options.capture.c_str(), SDL_GetError());
+    log::error("window", "cannot write " + name + ": " + SDL_GetError());
+    std::fprintf(stderr, "error: cannot write %s: %s\n", name.c_str(), SDL_GetError());
   }
   SDL_DestroySurface(surface);
 }

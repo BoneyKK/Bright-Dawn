@@ -100,6 +100,8 @@ std::vector<SettingDef> game_setting_definitions() {
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
                         "Sets whether the processor draws 3D textures sharp or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));
+  defs.push_back(toggle(key::kSound, "Sound", "Sound", "Plays the game's sound and music.", true));
+  defs.push_back(number(key::kVolume, "Sound", "Volume", "Sets how loud the game's sound is, in percent.", 0, 100, 100));
   defs.push_back(toggle(key::kPlayBuilt, "Game", "Play the built game",
                         "Plays the game built from your ROM, when there is one.",
                         true));
