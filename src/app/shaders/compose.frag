@@ -10,10 +10,10 @@
 // source (the main engine's picture with the scene put in, or the scene
 // alone), the second (a bank), or the two blended.
 //
-// Where the scene is put in, edge marking as the DS does it: a pixel of an
-// opaque polygon with a pixel of another polygon number further away within
-// u_edge.x pixels across or down takes its number's edge colour. Then fog,
-// as the DS does it (nds::HardwareScene::fog).
+// Where the scene is put in: its pixels as the scene pass drew them, with
+// fog as the DS does it (nds::HardwareScene::fog); but outlines and
+// anti-aliased edges as raster.comp and finish.comp drew them, as the
+// processor does.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -22,8 +22,10 @@ layout(location = 0) out vec4 o_colour;
 layout(set = 2, binding = 0) uniform sampler2D u_screen;  // 256 by 192; alpha: the mark.
 layout(set = 2, binding = 1) uniform sampler2D u_scene;   // Colour times alpha, and alpha.
 layout(set = 2, binding = 2) uniform sampler2D u_second;  // For a capture: the second source's bank.
-layout(set = 2, binding = 3) uniform sampler2D u_edges;   // The scene's polygon numbers and depths (scene.frag).
-layout(set = 2, binding = 4) uniform sampler2D u_fog_marks;  // The scene's depths, and alpha 1 where fog is taken.
+layout(set = 2, binding = 3) uniform sampler2D u_fog_marks;  // The scene's depths, and alpha 1 where fog is taken.
+// finish.comp's pixels: six bits each of red, green, blue and alpha, plus
+// 1 << 24 where they are to be taken.
+layout(std430, set = 2, binding = 4) readonly buffer Finished { uint finished[]; };
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
   // x: 0 a screen, 1 a capture. y: for a screen, the lines u_scene has (192,
@@ -34,13 +36,9 @@ layout(set = 3, binding = 0) uniform Compose {
   // w: where it starts in its bank, and where the second source starts in
   // its bank times 65536.
   uvec4 u_capture;
-  // Edge marking: x: how many pixels wide (0 for none); y: the clear
-  // plane's polygon number; z: its depth (24 bits); w: 1 where u_scene is
-  // the scene (not a kept capture), plus 2 with anti-aliasing: the edge
-  // colour is then mixed with what is behind (here the pixel further away
-  // that makes the edge), 32 parts in 63, as the processor does.
+  // finish.comp's pixels: x and y, how many across and down; w: 1 where they
+  // are the scene's (u_scene is the scene, not a kept capture).
   uvec4 u_edge;
-  vec4 u_edge_colours[8];
   // Fog: x: 1 where u_scene is the scene and the frame asks for fog, plus 2
   // for the alpha only; y: the offset; z: the step.
   uvec4 u_fog;
@@ -48,37 +46,6 @@ layout(set = 3, binding = 0) uniform Compose {
   vec4 u_clear_colour; // What a pixel with no alpha in u_scene holds.
   uvec4 u_fog_table[8];
 };
-
-// The scene's pixel at `inside`, with edge marking.
-vec4 edged(vec2 inside) {
-  vec4 scene = texture(u_scene, inside);
-  if (u_edge.w == 0u || u_edge.x == 0u || scene.a < 0.5 / 63.0) return scene;
-  ivec2 size = textureSize(u_edges, 0);
-  ivec2 p = clamp(ivec2(inside * vec2(size)), ivec2(0), size - 1);
-  uvec4 me = uvec4(texelFetch(u_edges, p, 0) * 255.0 + 0.5);
-  uint depth = me.g << 16 | me.b << 8 | me.a;
-  const ivec2 ways[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
-  for (int k = 1; k <= int(u_edge.x); ++k) {
-    for (int w = 0; w < 4; ++w) {
-      ivec2 q = p + k * ways[w];
-      uint number = u_edge.y, further = u_edge.z;
-      if (all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, size))) {
-        uvec4 o = uvec4(texelFetch(u_edges, q, 0) * 255.0 + 0.5);
-        number = o.r;
-        further = o.g << 16 | o.b << 8 | o.a;
-      }
-      if (number != me.r && depth < further) {
-        vec3 c = u_edge_colours[me.r >> 3].rgb;
-        if ((u_edge.w & 2u) != 0u) {
-          vec4 behind = texelFetch(u_scene, clamp(q, ivec2(0), size - 1), 0);
-          if (behind.a >= 0.5 / 63.0) c = mix(behind.rgb / behind.a, c, 32.0 / 63.0);
-        }
-        return vec4(c, 1.0);
-      }
-    }
-  }
-  return scene;
-}
 
 uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
 
@@ -112,7 +79,19 @@ vec4 fogged(vec4 scene, vec2 inside) {
   return vec4(c * a, a);
 }
 
-vec4 scene_at(vec2 inside) { return fogged(edged(inside), inside); }
+// The scene's pixel at `inside`: finish.comp's where it is to be taken.
+vec4 scene_at(vec2 inside) {
+  if (u_edge.w != 0u) {
+    const ivec2 size = ivec2(u_edge.xy);
+    const ivec2 p = clamp(ivec2(inside * vec2(size)), ivec2(0), size - 1);
+    const uint f = finished[uint(p.y) * u_edge.x + uint(p.x)];
+    if ((f & (1u << 24)) != 0u) {
+      const float a = float((f >> 18) & 63u) / 63.0;
+      return vec4(vec3(f & 63u, (f >> 6) & 63u, (f >> 12) & 63u) / 63.0 * a, a);
+    }
+  }
+  return fogged(texture(u_scene, inside), inside);
+}
 
 vec3 brightened(vec3 c, uint way, float factor) {
   if (way == 2u) return c + (1.0 - c) * factor;

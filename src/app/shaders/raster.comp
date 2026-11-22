@@ -1,0 +1,662 @@
+// The 3D scene's polygons drawn as the DS draws them, as the processor does
+// (nds::PolygonRenderer::draw_polygon, followed step by step), at u_size.z
+// times the DS's resolution: corners at that many times their place (in
+// sixteenths of a DS pixel, so between the DS's pixels where they are
+// placed so), and the DS's rules on that grid. For each pixel, two layers:
+// what is in front, and at the edges of polygons what is behind, with the
+// polygon number and depth, whether it is an edge and how much of the pixel
+// the edge covers. finish.comp then does what the processor does when a
+// line is done.
+//
+// An edge pixel is one the DS would call an edge (at an end of the
+// polygon's span, or on its top or bottom line), or one with such a pixel,
+// or a pixel outside the polygon, fewer than u_control.w pixels away across
+// or down (on the DS, and at any size with "1 pixel" outlines, u_control.w
+// is one): so outlines keep their thickness. Up and down, the spans of the
+// lines that far away are looked at (the polygons are convex).
+//
+// A workgroup is 64 pixels of a line, each its own pixel's drawing, the
+// polygons in the order drawn. The spans are worked out 64 polygons at a
+// time, one by each of its threads, into shared memory.
+//
+// The sums are the processor's, in 32 bits: where that would not be enough
+// at larger sizes, the products are taken in full (muldiv, fraction), which
+// gives the same as the processor where its sums fit.
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct Corner {
+  int x, y;  // In sixteenths of a DS pixel.
+  uint z;
+  int w;
+  uint st;
+  uint colour;
+};
+struct Polygon {
+  uint first, size, attributes, texture;
+  uint place;  // In the atlas: x, and y times 65536.
+  uint flags;  // 1: clockwise; 2: textured.
+  int w_shift;
+  uint lines;
+};
+
+layout(set = 0, binding = 0) uniform sampler2D u_atlas;
+layout(std430, set = 0, binding = 1) readonly buffer Corners { Corner corners[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Polygons { Polygon polygons[]; };
+// For each pixel: x, the front layer's colour (six bits each of red, green,
+// blue and alpha), plus 1 << 24 if it takes fog, 1 << 25 if it is an edge,
+// and its polygon number times 1 << 26; y, its depth; z, the back layer's
+// colour, plus 1 << 24 if it takes fog, and how much of the pixel the front
+// edge covers (six bits) times 1 << 25; w, the back layer's depth.
+layout(std430, set = 1, binding = 0) writeonly buffer Layers { uvec4 layers[]; };
+layout(set = 2, binding = 0) uniform Raster {
+  uvec4 u_size;     // Width, height, how many times the DS's, how many polygons.
+  // The 3D control register, the alpha test's reference, 1 for w as the
+  // depth, how many pixels wide an edge is.
+  uvec4 u_control;
+  // The clear plane: colour, depth, polygon number, plus 256 if it is
+  // translucent and 512 if it takes fog.
+  uvec4 u_clear;
+  uvec4 u_toon[8];  // Six bits each of red, green and blue, four to an entry.
+};
+
+const uint kAlphaTest = 1u << 2, kAlphaBlending = 1u << 3, kAntiAliasing = 1u << 4, kEdgeMarking = 1u << 5;
+const uint kHighlight = 1u << 1;
+
+// The value at `x` on the way from `v1` at `x1` to `v2` at `x2`.
+uint muldiv(uint a, uint b, uint d) {
+  // a * b / d, for a * b under 2^48 and d under 2^16.
+  uint high, low;
+  umulExtended(a, b, high, low);
+  uint n1 = high << 16 | low >> 16;
+  uint q1 = n1 / d;
+  uint n0 = (n1 - q1 * d) << 16 | (low & 0xFFFFu);
+  return (q1 << 16) + n0 / d;
+}
+uint linear(uint v1, uint v2, uint x1, uint x, uint x2) {
+  if (x <= x1) return v1;
+  if (x >= x2) return v2;
+  if (v1 <= v2) return v1 + muldiv(v2 - v1, x - x1, x2 - x1);
+  return v2 + muldiv(v1 - v2, x2 - x, x2 - x1);
+}
+uint linear_reversed(uint v1, uint v2, uint x1, uint x, uint x2) {
+  if (x <= x1) return v1;
+  if (x >= x2) return v2;
+  if (v1 <= v2) return v2 - muldiv(v2 - v1, x2 - x, x2 - x1);
+  return v1 - muldiv(v1 - v2, x - x1, x2 - x1);
+}
+// a * 2^bits / b, for a up to b, b under 2^31.
+uint fraction(uint a, uint b, int bits) {
+  if (a >= b) return 1u << bits;
+  uint q = 0u;
+  for (int i = 0; i < bits; ++i) {
+    a <<= 1;
+    q <<= 1;
+    if (a >= b) {
+      a -= b;
+      q |= 1u;
+    }
+  }
+  return q;
+}
+uint by_factor(uint factor, uint shift, uint v1, uint v2) {
+  if (v1 <= v2) return v1 + (((v2 - v1) * factor) >> shift);
+  return v2 + (((v1 - v2) * ((1u << shift) - factor)) >> shift);
+}
+uint alpha_of(uint colour) { return (colour >> 18) & 0x3Fu; }
+uint part_of(uint colour, uint shift) { return (colour >> shift) & 0x3Fu; }
+uint colour_between(uint c1, uint c2, uint x1, uint x, uint x2) {
+  uint result = max(alpha_of(c1), alpha_of(c2)) << 18;
+  for (uint shift = 0u; shift < 18u; shift += 6u) result |= linear(part_of(c1, shift), part_of(c2, shift), x1, x, x2) << shift;
+  return result;
+}
+
+// A polygon's span on this line, and what is taken along its edges.
+struct Span {
+  uint flags;            // 1: on the line; 2: reaches this workgroup's pixels; 4: its top or bottom.
+  uint x1, x2, x3, x4;   // The left edge's pixels, the right edge's; x4 one past.
+  uint x1e, x4e;         // Pixels outside these are hidden edges.
+  int edge_left, edge_right;  // Pixels up to the first and from the second are edges.
+  uint coverage;         // Of x1, x2, x3 and x4, eight bits apart.
+  uint ze0, ze1, we0, we1, re0, re1, ge0, ge1, be0, be1, se0, se1, te0, te1;
+};
+shared Span spans[64];
+
+uint corner_x(uint i) { return uint((corners[i].x * int(u_size.z)) >> 4); }
+uint corner_y(uint i) { return uint((corners[i].y * int(u_size.z)) >> 4); }
+
+// Only the edges' pixels (x1 to x4) unless `full`.
+Span span_of(uint index, uint line, uint segment, bool full) {
+  Span sp;
+  sp.flags = 0u;
+  Polygon p = polygons[index];
+  const uint scale = u_size.z;
+  uint top = ((p.lines & 0xFFFFu) * scale) >> 4, bottom = ((p.lines >> 16) * scale) >> 4;
+  if (top == bottom) ++bottom;
+  if (line < top || line >= bottom) return sp;
+  sp.flags = 1u;
+  const int size = int(p.size);
+  const int iline = int(line);
+  const uint uline = line;
+
+  // The topmost corner, and from it the two edges that cross this line.
+  int start = 0;
+  for (int i = 0; i < size; ++i)
+    if (corner_y(p.first + uint(start)) > corner_y(p.first + uint(i))) start = i;
+  int v[4];
+  v[0] = start;
+  v[1] = (start + 1) % size;
+  v[2] = start;
+  v[3] = (start - 1 + size) % size;
+  while (int(corner_y(p.first + uint(v[1]))) <= iline) {
+    v[0] = v[1];
+    v[1] = (v[1] + 1) % size;
+    if (v[0] == start) break;
+  }
+  while (int(corner_y(p.first + uint(v[3]))) <= iline) {
+    v[2] = v[3];
+    v[3] = (v[3] - 1 + size) % size;
+    if (v[2] == start) break;
+  }
+  int t;
+  if ((p.flags & 1u) != 0u) {
+    t = v[0]; v[0] = v[2]; v[2] = t;
+    t = v[1]; v[1] = v[3]; v[3] = t;
+  }
+  if (corner_y(p.first + uint(v[0])) > corner_y(p.first + uint(v[1]))) { t = v[0]; v[0] = v[1]; v[1] = t; }
+  if (corner_y(p.first + uint(v[2])) > corner_y(p.first + uint(v[3]))) { t = v[2]; v[2] = v[3]; v[3] = t; }
+
+  uint ux[4], uy[4];
+  int X[4], Y[4];
+  for (int i = 0; i < 4; ++i) {
+    ux[i] = corner_x(p.first + uint(v[i]));
+    uy[i] = corner_y(p.first + uint(v[i]));
+    X[i] = int(ux[i]);
+    Y[i] = int(uy[i]);
+  }
+  const bool anti_aliasing = (u_control.x & kAntiAliasing) != 0u;
+  uint x1, x2, x3, x4, ut;
+  uint x1a = 0x3Fu, x2a = 0x3Fu, x3a = 0x3Fu, x4a = 0x3Fu;
+
+  // The pixels each edge covers on this line: x1 to x2 the left edge
+  // (corners 0 and 1), x3 to x4 the right (2 and 3). With anti-aliasing, how
+  // much of its first and last pixel it covers.
+  if (Y[0] == Y[1]) {
+    x1 = ux[0];
+    x2 = ux[1];
+    if (X[0] > X[1]) {
+      t = v[0]; v[0] = v[1]; v[1] = t;
+      ut = x1; x1 = x2; x2 = ut;
+    }
+  } else if (abs(X[1] - X[0]) > Y[1] - Y[0]) {
+    x1 = linear(ux[0] << 1, ux[1] << 1, uy[0], uline, uy[1]) + 1u;
+    x2 = linear(ux[0] << 1, ux[1] << 1, uy[0], uline + 1u, uy[1]) + 1u;
+    const bool negative = X[0] > X[1];
+    if (negative) {
+      t = v[0]; v[0] = v[1]; v[1] = t;
+      ut = x1; x1 = x2; x2 = ut;
+    }
+    if (anti_aliasing) {
+      // Of the corners as swapped (ux and uy are still as they were).
+      const uint a0 = negative ? 1u : 0u, a1 = negative ? 0u : 1u;
+      x1a = linear(uy[a0] << 6, uy[a1] << 6, ux[a0] << 1, x1, ux[a1] << 1) & 0x3Fu;
+      x2a = linear(uy[a0] << 6, uy[a1] << 6, ux[a0] << 1, x2 - 2u, ux[a1] << 1) & 0x3Fu;
+      if (negative) {
+        x1a = 0x3Fu - x1a;
+        x2a = 0x3Fu - x2a;
+      }
+    }
+    x1 >>= 1;
+    x2 >>= 1;
+  } else {
+    if (X[0] > X[1])
+      x1 = linear_reversed(ux[0] << 6, ux[1] << 6, uy[0], uline, uy[1]) - 1u;
+    else
+      x1 = linear(ux[0] << 6, ux[1] << 6, uy[0], uline, uy[1]);
+    if (anti_aliasing) {
+      if (abs(X[1] - X[0]) == Y[1] - Y[0])
+        x2a = x1a = 0x20u;
+      else
+        x2a = x1a = 0x3Fu - (x1 & 0x3Fu);
+    }
+    x1 >>= 6;
+    x2 = x1;
+  }
+  // From here on the corners are as swapped.
+  for (int i = 0; i < 2; ++i) {
+    ux[i] = corner_x(p.first + uint(v[i]));
+    uy[i] = corner_y(p.first + uint(v[i]));
+    X[i] = int(ux[i]);
+    Y[i] = int(uy[i]);
+  }
+
+  // The right edge (corners 2 and 3).
+  if (Y[2] == Y[3]) {
+    x3 = ux[2];
+    x4 = ux[3];
+    if (X[2] > X[3]) {
+      t = v[2]; v[2] = v[3]; v[3] = t;
+      ut = x3; x3 = x4; x4 = ut;
+    }
+  } else if (X[2] == X[3]) {
+    x3 = ux[2];
+    if ((X[0] != X[1] || X[0] != X[2]) && x3 > 0u) --x3;
+    x4 = x3;
+  } else if (abs(X[3] - X[2]) > Y[3] - Y[2]) {
+    x3 = linear(ux[2] << 1, ux[3] << 1, uy[2], uline, uy[3]) + 1u;
+    x4 = linear(ux[2] << 1, ux[3] << 1, uy[2], uline + 1u, uy[3]) + 1u;
+    const bool negative = X[2] > X[3];
+    if (negative) {
+      t = v[2]; v[2] = v[3]; v[3] = t;
+      ut = x3; x3 = x4; x4 = ut;
+    }
+    if (anti_aliasing) {
+      const uint a2 = negative ? 3u : 2u, a3 = negative ? 2u : 3u;
+      x3a = linear(uy[a2] << 6, uy[a3] << 6, ux[a2] << 1, x3, ux[a3] << 1) & 0x3Fu;
+      x4a = linear(uy[a2] << 6, uy[a3] << 6, ux[a2] << 1, x4 - 2u, ux[a3] << 1) & 0x3Fu;
+      if (!negative) {
+        x3a = 0x3Fu - x3a;
+        x4a = 0x3Fu - x4a;
+      }
+    }
+    x3 >>= 1;
+    x4 >>= 1;
+  } else {
+    if (X[2] > X[3])
+      x3 = linear_reversed(ux[2] << 6, ux[3] << 6, uy[2], uline, uy[3]) - 1u;
+    else
+      x3 = linear(ux[2] << 6, ux[3] << 6, uy[2], uline, uy[3]);
+    if (anti_aliasing) {
+      if (abs(X[3] - X[2]) == Y[3] - Y[2])
+        x4a = x3a = 0x20u;
+      else
+        x4a = x3a = x3 & 0x3Fu;
+    }
+    x3 >>= 6;
+    x4 = x3;
+  }
+  for (int i = 2; i < 4; ++i) {
+    ux[i] = corner_x(p.first + uint(v[i]));
+    uy[i] = corner_y(p.first + uint(v[i]));
+    X[i] = int(ux[i]);
+    Y[i] = int(uy[i]);
+  }
+
+  // An edge ends before the next line's begins; edges that cross.
+  if (x2 > x1) --x2;
+  if (x4 > x3) --x4;
+  if (x2 > x3) x2 = x3;
+  if (x1 > x2) {
+    x2 = x1;
+    x1a = 0x3Fu - x1a;
+    x2a = 0x3Fu - x2a;
+  }
+  if (x2 > x3) x3 = x2;
+  if (x3 > x4) {
+    x3 = x4;
+    x3a = 0x3Fu - x3a;
+    x4a = 0x3Fu - x4a;
+  }
+  // The leftmost edge first.
+  if (x1 > x4) {
+    t = v[0]; v[0] = v[2]; v[2] = t;
+    t = v[1]; v[1] = v[3]; v[3] = t;
+    ut = x1; x1 = x3; x3 = ut;
+    ut = x2; x2 = x4; x4 = ut;
+    ut = x1a; x1a = x3a; x3a = ut;
+    ut = x2a; x2a = x4a; x4a = ut;
+    for (int i = 0; i < 4; ++i) {
+      ux[i] = corner_x(p.first + uint(v[i]));
+      uy[i] = corner_y(p.first + uint(v[i]));
+      X[i] = int(ux[i]);
+      Y[i] = int(uy[i]);
+    }
+  }
+
+  if (!full) {
+    sp.x1 = x1;
+    sp.x2 = x2;
+    sp.x3 = x3;
+    sp.x4 = x4;
+    return sp;
+  }
+
+  // How far along each edge this line is, and the edges whose pixels are
+  // left out of opaque polygons.
+  uint xe1[2], xe[2], xe2[2];
+  bool hide_left, hide_right;
+  if (abs(X[1] - X[0]) > abs(Y[1] - Y[0])) {
+    xe1[0] = ux[0];
+    xe[0] = x1;
+    xe2[0] = ux[1];
+    hide_left = Y[0] < Y[1];
+  } else {
+    xe1[0] = uy[0];
+    xe[0] = uline;
+    xe2[0] = uy[1];
+    hide_left = false;
+  }
+  if (abs(X[3] - X[2]) > abs(Y[3] - Y[2])) {
+    xe1[1] = ux[2];
+    xe[1] = x4;
+    xe2[1] = ux[3];
+    hide_right = Y[2] > Y[3];
+  } else {
+    xe1[1] = uy[2];
+    xe[1] = uline;
+    xe2[1] = uy[3];
+    hide_right = X[2] != X[3];
+  }
+
+  uint ws[4];
+  for (int i = 0; i < 4; ++i) {
+    const int w = corners[p.first + uint(v[i])].w;
+    ws[i] = p.w_shift >= 0 ? uint(w >> p.w_shift) : uint(w) << uint(-p.w_shift);
+  }
+
+  uint ze[2], we[2], re[2], ge[2], be[2], se[2], te[2];
+  for (int i = 0; i < 2; ++i) {
+    const int a = i * 2, b = a + 1;
+    const Corner ca = corners[p.first + uint(v[a])], cb = corners[p.first + uint(v[b])];
+    const uint ra = part_of(ca.colour, 0u) << 3, rb = part_of(cb.colour, 0u) << 3;
+    const uint ga = part_of(ca.colour, 6u) << 3, gb = part_of(cb.colour, 6u) << 3;
+    const uint ba = part_of(ca.colour, 12u) << 3, bb = part_of(cb.colour, 12u) << 3;
+    // Texture coordinates made unsigned for the arithmetic.
+    const uint sa = uint(int(ca.st << 16) >> 16) + 0xFFFFu, sb = uint(int(cb.st << 16) >> 16) + 0xFFFFu;
+    const uint ta = uint(int(ca.st) >> 16) + 0xFFFFu, tb = uint(int(cb.st) >> 16) + 0xFFFFu;
+    ze[i] = linear(ca.z, cb.z, xe1[i], xe[i], xe2[i]);
+    if (ws[a] == ws[b] && (ws[a] & 0x00FEu) == 0u) {
+      we[i] = linear(ws[a], ws[b], xe1[i], xe[i], xe2[i]);
+      re[i] = linear(ra, rb, xe1[i], xe[i], xe2[i]);
+      ge[i] = linear(ga, gb, xe1[i], xe[i], xe2[i]);
+      be[i] = linear(ba, bb, xe1[i], xe[i], xe2[i]);
+      se[i] = linear(sa, sb, xe1[i], xe[i], xe2[i]) - 0xFFFFu;
+      te[i] = linear(ta, tb, xe1[i], xe[i], xe2[i]) - 0xFFFFu;
+    } else {
+      uint factor;
+      if (xe[i] <= xe1[i]) {
+        factor = 0u;
+      } else if (xe[i] >= xe2[i]) {
+        factor = 1u << 9;
+      } else {
+        const uint wa = (ws[a] >> 1) + (((ws[a] & 1u) != 0u && (ws[b] & 1u) == 0u) ? 1u : 0u);
+        const uint below = (ws[b] >> 1) * (xe2[i] - xe[i]) + wa * (xe[i] - xe1[i]);
+        factor = below == 0u ? 0u : fraction((ws[a] >> 1) * (xe[i] - xe1[i]), below, 9);
+      }
+      we[i] = by_factor(factor, 9u, ws[a], ws[b]);
+      re[i] = by_factor(factor, 9u, ra, rb);
+      ge[i] = by_factor(factor, 9u, ga, gb);
+      be[i] = by_factor(factor, 9u, ba, bb);
+      se[i] = by_factor(factor, 9u, sa, sb) - 0xFFFFu;
+      te[i] = by_factor(factor, 9u, ta, tb) - 0xFFFFu;
+    }
+  }
+
+  ++x4;
+  uint x1e = x1, x4e = x4;
+  const uint alpha = (p.attributes >> 16) & 0x1Fu;
+  if (alpha != 0u && (u_control.x & (kAntiAliasing | kEdgeMarking)) == 0u) {
+    if (hide_left) x1e = x2 + 1u;
+    if (hide_right) x4e = x3;
+    if (!(hide_left && hide_right) && x4e <= x1e) x4e = x1e + 1u;
+  }
+  // The top and bottom lines are edges all the way across.
+  const uint thick = u_control.w;
+  if (line < top + thick || line + thick >= bottom) sp.flags |= 4u;
+  sp.edge_left = int(x2) + int(thick) - 1;
+  sp.edge_right = int(x3) - int(thick) + 1;
+  if (x1 < segment + 64u && x4 > segment && x1 < u_size.x) sp.flags |= 2u;
+  sp.x1 = x1;
+  sp.x2 = x2;
+  sp.x3 = x3;
+  sp.x4 = x4;
+  sp.x1e = x1e;
+  sp.x4e = x4e;
+  sp.coverage = x1a | x2a << 8 | x3a << 16 | x4a << 24;
+  sp.ze0 = ze[0]; sp.ze1 = ze[1];
+  sp.we0 = we[0]; sp.we1 = we[1];
+  sp.re0 = re[0]; sp.re1 = re[1];
+  sp.ge0 = ge[0]; sp.ge1 = ge[1];
+  sp.be0 = be[0]; sp.be1 = be[1];
+  sp.se0 = se[0]; sp.se1 = se[1];
+  sp.te0 = te[0]; sp.te1 = te[1];
+  return sp;
+}
+
+// span_of, with the edges as thick as asked.
+Span span_with_edges(uint index, uint line, uint segment) {
+  Span sp = span_of(index, line, segment, true);
+  const uint reach = u_control.w - 1u;
+  if (reach == 0u || (sp.flags & 4u) != 0u || (sp.flags & 1u) == 0u) return sp;
+  // Not the top or bottom lines: those `reach` lines up and down are the
+  // polygon's.
+  const Span above = span_of(index, line - reach, segment, false), below = span_of(index, line + reach, segment, false);
+  sp.edge_left = max(sp.edge_left, max(int(above.x2), int(below.x2)));
+  sp.edge_right = min(sp.edge_right, min(int(above.x3), int(below.x3)));
+  return sp;
+}
+
+// What is known of a pixel while it is drawn.
+struct Pixel {
+  uint colour;
+  int depth;
+  uint opaque_number, translucent_number;
+  bool translucent, fog, edge;
+  uint edge_alpha;
+};
+
+// A coordinate inside a texture `size` texels wide: repeated (every other
+// time mirrored, if asked) or held at the edge.
+int wrapped(int c, int size, bool repeat, bool flip) {
+  if (!repeat) return clamp(c, 0, size - 1);
+  if (flip && (c & size) != 0) c = -1 - c;
+  return c & (size - 1);
+}
+
+uint texel(Polygon p, int s, int t) {
+  const uint word = p.texture;
+  const int size_s = 8 << ((word >> 20) & 7u), size_t = 8 << ((word >> 23) & 7u);
+  s = wrapped(s, size_s, (word & (1u << 16)) != 0u, (word & (1u << 18)) != 0u);
+  t = wrapped(t, size_t, (word & (1u << 17)) != 0u, (word & (1u << 19)) != 0u);
+  const ivec2 place = ivec2(int(p.place & 0xFFFFu), int(p.place >> 16));
+  // The atlas has each part's six bits as eight.
+  const uvec4 c = uvec4(texelFetch(u_atlas, place + ivec2(s, t), 0) * 255.0 + 0.5) >> 2;
+  return c.r | c.g << 6 | c.b << 12 | c.a << 18;
+}
+
+uint toon_entry(uint i) { return u_toon[i / 4u][i % 4u]; }
+uint times(uint a, uint b) { return ((a + 1u) * (b + 1u) - 1u) / 64u; }
+
+// Over what is there: unless that is a translucent pixel of the same number.
+void blend(inout Pixel under, uint colour, uint alpha, int depth, bool new_depth, bool fog, uint number) {
+  under.colour = (u_control.x & kAlphaBlending) != 0u && alpha_of(under.colour) != 0u
+                     ? colour_between(under.colour, colour, 0u, alpha, 63u)
+                     : colour;
+  if (new_depth) under.depth = depth;
+  under.fog = under.fog && fog;
+  under.translucent = true;
+  under.translucent_number = number;
+}
+
+void main() {
+  const uint x = gl_GlobalInvocationID.x, line = gl_GlobalInvocationID.y;
+  const uint segment = gl_WorkGroupID.x * 64u;
+  const bool inside = x < u_size.x && line < u_size.y;
+  const bool anti_aliasing = (u_control.x & kAntiAliasing) != 0u;
+  const bool w_buffer = u_control.z != 0u;
+
+  Pixel clear;
+  clear.colour = u_clear.x;
+  clear.depth = int(u_clear.y);
+  clear.opaque_number = clear.translucent_number = u_clear.z & 63u;
+  clear.translucent = (u_clear.z & 256u) != 0u;
+  clear.fog = (u_clear.z & 512u) != 0u;
+  clear.edge = false;
+  clear.edge_alpha = 0x3Fu;
+  Pixel front = clear, back = clear;
+  uint stencil = 0u;
+  bool stencil_cleared = false;
+
+  for (uint batch = 0u; batch < u_size.w; batch += 64u) {
+    const uint mine = batch + gl_LocalInvocationID.x;
+    if (mine < u_size.w) spans[gl_LocalInvocationID.x] = span_with_edges(mine, line, segment);
+    else spans[gl_LocalInvocationID.x].flags = 0u;
+    barrier();
+    const uint count = min(64u, u_size.w - batch);
+    for (uint j = 0u; j < count && inside; ++j) {
+      const uint flags = spans[j].flags;
+      if ((flags & 1u) == 0u) continue;
+      const Polygon p = polygons[batch + j];
+      const uint mode = (p.attributes >> 4) & 3u;
+      const uint number = (p.attributes >> 24) & 0x3Fu;
+      const bool shadow = mode == 3u;
+      const bool mask = shadow && number == 0u;
+      // A run of shadow masks starts with an empty stencil.
+      if (mask) {
+        if (!stencil_cleared) {
+          stencil = 0u;
+          stencil_cleared = true;
+        }
+      } else {
+        stencil_cleared = false;
+      }
+      if ((flags & 2u) == 0u) continue;
+      const uint x1 = spans[j].x1, x2 = spans[j].x2, x3 = spans[j].x3, x4 = spans[j].x4;
+      if (x < x1 || x >= x4) continue;
+      const bool level = (flags & 4u) != 0u;
+
+      const uint we0 = spans[j].we0, we1 = spans[j].we1;
+      const uint kNoPerspective = 0xFFFFFFFFu;
+      uint factor;
+      if (we0 == we1 && (we0 & 0x7Fu) == 0u) {
+        factor = kNoPerspective;
+      } else if (x <= x1) {
+        factor = 0u;
+      } else {
+        const uint below = we1 * (x4 - x) + we0 * (x - x1);
+        factor = below == 0u ? 0u : fraction(we0 * (x - x1), below, 8);
+      }
+#define ACROSS(from, to) (factor == kNoPerspective ? linear(from, to, x1, x, x4) : by_factor(factor, 8u, from, to))
+
+      int depth;
+      if (w_buffer) {
+        depth = int(ACROSS(we0, we1));
+        if (p.w_shift > 0) depth = int(uint(depth) << uint(p.w_shift));
+        else if (p.w_shift < 0) depth >>= -p.w_shift;
+      } else {
+        depth = int(linear(spans[j].ze0, spans[j].ze1, x1, x, x4));
+      }
+
+      const bool depth_equal = (p.attributes & (1u << 14)) != 0u;
+      const int margin = w_buffer ? 0xFF : 0x200;
+      bool pass_front = depth_equal ? abs(front.depth - depth) <= margin : front.depth > depth;
+      bool pass_back = anti_aliasing && front.edge && (depth_equal ? abs(back.depth - depth) <= margin : back.depth > depth);
+
+      int layer = 0;
+      if (shadow) {
+        if (mask) {
+          if (!pass_front) stencil |= 1u;
+          if (!pass_back) stencil |= 2u;
+          continue;
+        }
+        if (!pass_front || (stencil & 1u) == 0u || front.opaque_number == number) {
+          if (!pass_back || (stencil & 2u) == 0u || back.opaque_number == number) continue;
+          layer = 1;
+        }
+      } else if (!pass_front) {
+        if (!pass_back) continue;
+        layer = 1;
+      }
+
+      const uint shape_alpha = (p.attributes >> 16) & 0x1Fu;
+      const uint alpha6 = shape_alpha == 0u ? 0x3Fu : shape_alpha * 2u + 1u;
+      const uint rv = ACROSS(spans[j].re0, spans[j].re1) >> 3;
+      const uint gv = ACROSS(spans[j].ge0, spans[j].ge1) >> 3;
+      const uint bv = ACROSS(spans[j].be0, spans[j].be1) >> 3;
+      uint colour = alpha6 << 18 | bv << 12 | gv << 6 | rv;
+      const bool highlight = (u_control.x & kHighlight) != 0u;
+
+      if ((p.flags & 2u) != 0u) {
+        const int s16 = int(ACROSS(spans[j].se0 + 0xFFFFu, spans[j].se1 + 0xFFFFu) - 0xFFFFu);
+        const int t16 = int(ACROSS(spans[j].te0 + 0xFFFFu, spans[j].te1 + 0xFFFFu) - 0xFFFFu);
+        const uint tex = texel(p, s16 >> 4, t16 >> 4);
+        uint mixed = 0u;
+        if (mode == 0u) {
+          for (uint shift = 0u; shift < 24u; shift += 6u) mixed |= times(part_of(tex, shift), part_of(colour, shift)) << shift;
+        } else if (mode == 1u || mode == 3u) {
+          const uint ta = alpha_of(tex);
+          for (uint shift = 0u; shift < 18u; shift += 6u)
+            mixed |= ((part_of(tex, shift) * ta + part_of(colour, shift) * (63u - ta)) / 64u) << shift;
+          mixed |= colour & (0x3Fu << 18);
+        } else {
+          const uint table = toon_entry((colour & 0x3Fu) / 2u);
+          for (uint shift = 0u; shift < 18u; shift += 6u) {
+            uint part;
+            if (highlight) part = min(times(part_of(tex, shift), part_of(colour, shift)) + part_of(table, shift), 63u);
+            else part = times(part_of(tex, shift), part_of(table, shift));
+            mixed |= part << shift;
+          }
+          mixed |= times(alpha_of(tex), alpha_of(colour)) << 18;
+        }
+        colour = mixed;
+      } else if (mode == 2u) {
+        const uint table = toon_entry((colour & 0x3Fu) / 2u);
+        uint mixed = colour & (0x3Fu << 18);
+        for (uint shift = 0u; shift < 18u; shift += 6u) {
+          const uint part = highlight ? min(part_of(colour, shift) + part_of(table, shift), 63u) : part_of(table, shift);
+          mixed |= part << shift;
+        }
+        colour = mixed;
+      }
+#undef ACROSS
+
+      const uint alpha = alpha_of(colour);
+      if (alpha == 0u) continue;
+      if ((u_control.x & kAlphaTest) != 0u && (alpha >> 1) <= u_control.y) continue;
+      if ((x < spans[j].x1e || x >= spans[j].x4e) && (alpha == 0x3Fu || (u_control.x & kAlphaBlending) == 0u)) continue;
+
+      const bool fog = (p.attributes & (1u << 15)) != 0u;
+      if (alpha == 0x3Fu) {
+        uint edge_alpha = 0x3Fu;
+        const bool edge = int(x) <= spans[j].edge_left || int(x) >= spans[j].edge_right || level;
+        if (anti_aliasing && layer == 0 && edge) {
+          back = front;
+          const uint coverage = spans[j].coverage;
+          if (x <= x2)
+            edge_alpha = linear(coverage & 0x3Fu, (coverage >> 8) & 0x3Fu, x1, x, x2);
+          else if (x >= x3)
+            edge_alpha = linear((coverage >> 16) & 0x3Fu, coverage >> 24, x3, x, x4);
+        }
+        Pixel drawn;
+        drawn.colour = colour;
+        drawn.depth = depth;
+        drawn.opaque_number = number;
+        drawn.translucent_number = layer == 0 ? front.translucent_number : back.translucent_number;
+        drawn.translucent = false;
+        drawn.fog = fog;
+        drawn.edge = edge;
+        drawn.edge_alpha = edge_alpha;
+        if (layer == 0) front = drawn;
+        else back = drawn;
+      } else {
+        const bool new_depth = (p.attributes & (1u << 11)) != 0u;
+        if (layer == 0) {
+          if (!front.translucent || front.translucent_number != number) {
+            blend(front, colour, alpha, depth, new_depth, fog, number);
+            if (anti_aliasing && front.edge) blend(back, colour, alpha, depth, new_depth, fog, number);
+          }
+        } else if (!back.translucent || back.translucent_number != number) {
+          blend(back, colour, alpha, depth, new_depth, fog, number);
+        }
+      }
+    }
+    barrier();
+  }
+
+  if (!inside) return;
+  layers[line * u_size.x + x] = uvec4(front.colour | (front.fog ? 1u << 24 : 0u) | (front.edge ? 1u << 25 : 0u) |
+                                          front.opaque_number << 26,
+                                      uint(front.depth), back.colour | (back.fog ? 1u << 24 : 0u) | front.edge_alpha << 25,
+                                      uint(back.depth));
+}

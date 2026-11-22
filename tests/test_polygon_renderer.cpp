@@ -1036,3 +1036,52 @@ TEST(renderer_edge_marking_can_be_off) {
   f.draw();
   CHECK(f.at(10, 15) == (kGreen | kSolid) && f.r.build_scene(f.frame, f.video).edge_one_pixel);
 }
+
+// Where outlines or anti-aliasing are asked for, the graphics hardware also
+// gets the polygons as the DS draws them, in the order drawn (opaque ones
+// first), with the registers as the processor reads them: its own
+// rasterizer draws those pixels as the processor does.
+TEST(renderer_scene_has_the_polygons_as_the_ds_draws_them) {
+  using Scene = bd::nds::HardwareScene;
+  Fixture f;
+  f.io.write(PolygonRenderer::kClearColour, 4, 0x001F | 31u << 16 | 5u << 24 | 0x8000);
+  f.io.write(PolygonRenderer::kClearDepth, 2, 0x1000);
+  f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);
+  f.io.write(PolygonRenderer::kToonTable + 2, 2, 0x7C00);
+  f.rectangle(0, 0, 8, 8, kRed, alpha(16) | number(3));
+  f.polygon({Fixture::vertex(10, 20, kGreen, 0x1234, 0x2000, 16, 32), Fixture::vertex(30, 40, kBlue),
+             Fixture::vertex(40, 15, kWhite)},
+            kOpaque | number(9));
+  // Not without outlines or anti-aliasing.
+  CHECK(!f.r.build_scene(f.frame, f.video).raster.wanted);
+  CHECK(f.r.scene().raster.polygons.empty());
+
+  f.control(PolygonRenderer::kAntiAliasing | PolygonRenderer::kAlphaTest);
+  f.io.write(PolygonRenderer::kAlphaTestReference, 2, 12);
+  const Scene::Raster& raster = f.r.build_scene(f.frame, f.video).raster;
+  REQUIRE(raster.wanted && raster.polygons.size() == 2 && raster.corners.size() == 7);
+  CHECK(raster.control == (PolygonRenderer::kAntiAliasing | PolygonRenderer::kAlphaTest) && raster.alpha_reference == 12);
+  CHECK(raster.clear_colour == (kRed | kSolid) && raster.clear_depth == 0x1000u << 9 && !raster.clear_translucent);
+  CHECK(raster.edge_colours[1] == (kGreen | kSolid) && raster.toon[1] == kBlue);
+  // The opaque triangle first.
+  const Scene::Raster::Polygon& triangle = raster.polygons[0];
+  CHECK(triangle.first == 0 && triangle.size == 3 && triangle.attributes == (kOpaque | number(9)));
+  CHECK(triangle.lines == (15u * 16 | 40u * 16 << 16) && (triangle.flags & Scene::Raster::kTextured) == 0);
+  const Scene::Raster::Corner& corner = raster.corners[0];
+  CHECK(corner.x == 160 && corner.y == 320 && corner.z == 0x1234 && corner.w == 0x2000);
+  CHECK(corner.st == (16u | 32u << 16) && corner.colour == kGreen);
+  CHECK(raster.polygons[1].first == 3 && raster.polygons[1].size == 4 && raster.polygons[1].attributes == (alpha(16) | number(3)));
+
+  // An uncut polygon of a strip is put around in order; fine positions are
+  // kept where asked for.
+  f.clear();
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque);
+  f.frame.polygons.back().strip_order = true;
+  f.frame.vertices[0].fine_x = 5;
+  f.frame.vertices[2].fine_x = 7;
+  f.frame.vertices[3].fine_x = 9;
+  f.r.set_fine_positions(true);
+  const Scene::Raster& strip = f.r.build_scene(f.frame, f.video).raster;
+  REQUIRE(strip.corners.size() == 4);
+  CHECK(strip.corners[0].x == 5 && strip.corners[2].x == 9 && strip.corners[3].x == 7);
+}

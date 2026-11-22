@@ -111,6 +111,10 @@ pixels wide at N times the resolution; *1 pixel* (`pixel`) makes them one
 pixel wide at any resolution; *Off* (`off`) leaves them out. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
+`bd_gpu_tests` (ctest's `gpu`) draws test scenes with the graphics hardware
+and the processor and compares them; it needs a Vulkan device, and is
+skipped without one. Mesa's software device will do: on Ubuntu,
+`mesa-vulkan-drivers`.
 
 `bright-dawn --help` lists the options. Some change a setting for one run
 (`--scale`, `--side-by-side`, `--textures smooth`, ...); `--no-settings` uses

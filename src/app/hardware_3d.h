@@ -5,7 +5,11 @@
 // Each picture is made in two passes:
 // 1. The scene (nds::HardwareScene): triangles with a depth buffer, their
 //    textures read from one atlas that keeps each texture until it is full.
-//    Drawn again only when the scene or the resolution changes.
+//    Drawn again only when the scene or the resolution changes. Where the
+//    frame asks for outlines or anti-aliasing, the scene's polygons are also
+//    drawn as the DS draws them, by two compute shaders (shaders/raster.comp
+//    and finish.comp: the processor's rules, two layers a pixel), and those
+//    pixels are taken from there.
 // 2. The main engine's screen (256 by 192, with the marks of
 //    nds::DisplayEngine::kMark3D) enlarged, with the scene put in where it
 //    is marked, mixed as the marks say, and the master brightness on it.
@@ -63,6 +67,15 @@ class Hardware3D {
   // kept.
   SDL_Texture* draw(int which, const std::vector<std::uint32_t>& screen, const nds::HardwareScene* scene,
                     std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed);
+  // For tests and checks: the last picture draw() made of screen `which`,
+  // as red, green, blue and alpha bytes (red lowest), row after row, 256 *
+  // scale by 192 * scale. False if it cannot be read.
+  bool read_screen(int which, std::vector<std::uint32_t>& pixels);
+  // For tests and checks: the last scene as the compute shaders drew it, as
+  // the processor would (six bits each of red, green, blue and alpha, plus
+  // 1 << 24 where the screen takes it), row after row at the scale drawn.
+  // False if the last scene was not drawn so.
+  bool read_raster(std::vector<std::uint32_t>& pixels);
 
  public:
   // The compose shader's uniforms, as std140 lays them out.
@@ -70,8 +83,7 @@ class Hardware3D {
     float brightness[4];  // 1 towards white, 2 towards black; how far (0 to 1).
     float options[4];     // 1 for a capture; the lines of the second texture (192, or 256 for a kept capture).
     std::uint32_t capture[4];  // How a capture is made (shaders/compose.frag).
-    std::uint32_t edge[4];     // Edge marking: width in pixels, clear number, clear depth, 1 with the scene (+2 anti-aliased).
-    float edge_colours[8][4];
+    std::uint32_t edge[4];     // The rasterizer's pixels: width, height, 0, 1 where they are the scene's.
     std::uint32_t fog[4];      // Fog: 1 with the scene (+2 alpha only), offset, step.
     float fog_colour[4];
     float clear_colour[4];     // The clear colour, as a pixel with no alpha holds it.
@@ -96,12 +108,20 @@ class Hardware3D {
   bool run(const nds::HardwareScene* scene, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
            SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
            const ComposeUniforms& uniforms);
+  // Draws the scene's polygons as the DS does (shaders/raster.comp), then
+  // finishes them (shaders/finish.comp), into finished_.
+  void rasterize_scene(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene);
   bool make_targets(int scale);
   void release_targets();
   // A place in the atlas for a texture, or false when it is full.
   bool allocate(int width, int height, Place& place);
   bool ensure_transfer(std::uint32_t bytes);
   bool ensure_vertex_buffer(std::uint32_t bytes);
+  // A storage buffer for the rasterizer of at least `bytes`.
+  bool ensure_storage(SDL_GPUBuffer*& buffer, std::uint32_t& size, std::uint32_t bytes);
+  // Copies `bytes` from `texture` (its whole, `width` by `height`) or from
+  // `buffer` into `out`, waiting for the graphics hardware.
+  bool download(SDL_GPUTexture* texture, int width, int height, SDL_GPUBuffer* buffer, std::uint32_t bytes, void* out);
 
   SDL_Renderer* renderer_ = nullptr;
   SDL_GPUDevice* device_ = nullptr;
@@ -111,6 +131,8 @@ class Hardware3D {
   // (without it, shadow polygons are left out).
   bool stencil_ = false;
   SDL_GPUGraphicsPipeline* compose_pipeline_ = nullptr;
+  SDL_GPUComputePipeline* raster_pipeline_ = nullptr;  // shaders/raster.comp
+  SDL_GPUComputePipeline* finish_pipeline_ = nullptr;  // shaders/finish.comp
   SDL_GPUSampler* nearest_ = nullptr;
   SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
   SDL_GPUTexture* atlas_ = nullptr;
@@ -120,12 +142,19 @@ class Hardware3D {
   std::uint32_t transfer_size_ = 0;
   SDL_GPUBuffer* vertices_ = nullptr;
   std::uint32_t vertices_size_ = 0;
+  // The rasterizer's corners and polygons (nds::HardwareScene::Raster).
+  SDL_GPUBuffer* corners_ = nullptr;
+  std::uint32_t corners_size_ = 0;
+  SDL_GPUBuffer* polygons_ = nullptr;
+  std::uint32_t polygons_size_ = 0;
 
   // At the scale in use.
   int scale_ = 0;
   SDL_GPUTexture* scene_target_ = nullptr;
-  SDL_GPUTexture* edges_ = nullptr;  // The scene's polygon numbers and depths, for edge marking.
   SDL_GPUTexture* fog_marks_ = nullptr;  // The scene's depths, and where fog is taken.
+  SDL_GPUBuffer* layers_ = nullptr;      // The rasterizer's two layers, 16 bytes a pixel.
+  SDL_GPUBuffer* finished_ = nullptr;    // And its pixels when finished, 4 bytes each.
+  bool rasterized_ = false;              // The scene in scene_target_ is in finished_ too.
   SDL_GPUTexture* depth_ = nullptr;
   std::array<SDL_GPUTexture*, 2> outputs_{};  // For the top and the bottom screen,
   std::array<SDL_Texture*, 2> shown_{};       // as textures of the renderer.

@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (22 November 2026): The title screen's landscape is drawn again: the game changes some of its own code as it runs, and the old translation of it ran instead. Fog is now drawn by the graphics hardware too, as on the DS. The game library must be built again.
+**Last change** (22 November 2026): With the graphics hardware, outlines and the smoothing of polygon edges (anti-aliasing) are drawn by the processor's rules, at any resolution: the polygons are drawn once more as the DS draws them, on the graphics hardware.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -60,7 +60,7 @@ the state of each, and what comes next.
 | `game library` | 🟢 Works | Builds, loads and runs: reaches the name entry like the interpreted game, about twice as fast (600 frames in 11 s instead of 24). |
 | `runtime` | 🟢 Works | Runs translated code with the interpreter behind it. Interrupts are taken where translated code polls for them. Calls that never return no longer pile up until the program crashes (the Windows crash after about 7 minutes). Each run writes a log of the places run in the interpreter, with why. |
 | `nds` | 🟡 Partly works | The console model runs the game from the title screen to battles, with a save from about two thirds through the game. The game's save is kept between runs; the console's language is a setting. The second processor's music player is written natively. |
-| `gfx` | 🟢 Works | Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS. The smoothing of polygon edges: only with the processor. Widescreen: not yet. |
+| `gfx` | 🟢 Works | Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), the smoothing of polygon edges, shadows and fog as on the DS. Widescreen: not yet. |
 | `audio` | 🟢 Works | Music and sound effects play through your audio device (SDL 3), kept in step with the frames. Settings, Sound: on or off, and the volume. |
 | `input` | 🟢 Works | Keyboard, any number of controllers, the mouse as the stylus. Keys and buttons can be bound in Settings, Controls. |
 | `ui, app` | 🟢 Works | The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. |
@@ -70,14 +70,13 @@ the state of each, and what comes next.
 **Next:**
 
 1. First cave: not reached yet. The save starts in Saha Town, and scripted walks meet random battles. In Saha Town, black polygons that the game sends (vertex colour 0) cover the party with both 3D paths: the cause is still open.
-2. Higher resolutions, 1: smoothing (anti-aliasing) of polygon edges on the graphics hardware; model edges are jagged at 1x, less so at higher resolutions.
+2. Higher resolutions, 1: outlines and smoothed polygon edges on the graphics hardware follow the processor's rules, pixel for pixel in test scenes at 1x; still to be checked in the game (the cave) against the processor at 1x, and by eye at 4x.
 3. Higher resolutions, 2: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.
 4. Higher resolutions, 3: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.
 5. Higher resolutions, 4: the scroll of the 3D layer (BG0) is not used, by either 3D path.
-6. Higher resolutions, 5: some outline pixels are one pixel off from the processor's at 1x.
-7. Speed: the game's interrupt handler (0x01FFA900) still runs in the interpreter; it is reached only through a pointer set at run time.
-8. In-game saving: not yet tried.
-9. Widescreen and mods.
+6. Speed: the game's interrupt handler (0x01FFA900) still runs in the interpreter; it is reached only through a pointer set at run time.
+7. In-game saving: not yet tried.
+8. Widescreen and mods.
 
 The same, as a page of its own: [the project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8).
 <!-- project-map:end -->

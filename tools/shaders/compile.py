@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Compiles the graphics hardware's shaders (src/app/shaders/*.vert, *.frag)
+"""Compiles the graphics hardware's shaders (src/app/shaders/*.vert, *.frag,
+*.comp)
 to SPIR-V with glslangValidator, into src/app/hardware_shaders.h.
 
 The header is kept in the repository, so a build needs no shader compiler.
@@ -14,7 +15,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHADERS = ROOT / "src" / "app" / "shaders"
 HEADER = ROOT / "src" / "app" / "hardware_shaders.h"
-NAMES = ["scene.vert", "scene.frag", "compose.vert", "compose.frag"]
+NAMES = ["scene.vert", "scene.frag", "compose.vert", "compose.frag", "raster.comp", "finish.comp"]
 
 
 def compiled(name: str) -> bytes:

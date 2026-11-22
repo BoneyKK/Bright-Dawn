@@ -156,3 +156,12 @@ if(TARGET bright-dawn)
   set_tests_properties(app_reports_its_build PROPERTIES
     PASS_REGULAR_EXPRESSION "^bright-dawn [0-9]+[.][0-9]+[.][0-9]+-[a-z0-9.]+( [(][0-9a-f]+[)])?\n$")
 endif()
+
+# The graphics hardware's 3D drawing against the processor's, on a Vulkan
+# device if there is one (else skipped).
+if(BD_BUILD_APP)
+  add_executable(bd_gpu_tests test_main.cpp test_hardware_3d.cpp)
+  target_link_libraries(bd_gpu_tests PRIVATE bd_app)
+  add_test(NAME gpu COMMAND bd_gpu_tests)
+  set_tests_properties(gpu PROPERTIES SKIP_RETURN_CODE 77)
+endif()

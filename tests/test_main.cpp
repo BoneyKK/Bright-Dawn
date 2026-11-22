@@ -36,11 +36,17 @@ int main(int argc, char** argv) {
   const char* filter = argc > 1 ? argv[1] : "";
   int ran = 0;
   int failed = 0;
+  int skipped = 0;
   for (const TestCase& test : registry()) {
     if (std::strstr(test.name, filter) == nullptr) continue;
     g_failures_in_current_test = 0;
     try {
       test.fn();
+    } catch (const Skip&) {
+      ++ran;
+      ++skipped;
+      std::printf("[skip] %s\n", test.name);
+      continue;
     } catch (const Abort&) {
     } catch (const std::exception& e) {
       fail(__FILE__, __LINE__, e.what());
@@ -49,10 +55,11 @@ int main(int argc, char** argv) {
     if (g_failures_in_current_test != 0) ++failed;
     std::printf("[%s] %s\n", g_failures_in_current_test == 0 ? " ok " : "FAIL", test.name);
   }
-  std::printf("%d test(s) run, %d failed\n", ran, failed);
+  std::printf("%d test(s) run, %d failed, %d skipped\n", ran, failed, skipped);
   if (ran == 0) {
     std::printf("no tests matched\n");
     return 1;
   }
+  if (failed == 0 && skipped == ran) return 77;
   return failed == 0 ? 0 : 1;
 }

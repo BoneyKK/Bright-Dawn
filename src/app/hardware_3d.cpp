@@ -26,6 +26,25 @@ struct SceneUniforms {
   float options[4];  // The alpha under which nothing is drawn; 1 for highlight; 1 for opaque.
 };
 constexpr std::uint32_t kBankBytes = 256 * 256 * 4;
+static_assert(sizeof(Scene::Raster::Corner) == 24 && sizeof(Scene::Raster::Polygon) == 32,
+              "the layout the rasterizer reads");
+
+// The rasterizer's uniforms (shaders/raster.comp, finish.comp), as std140
+// lays them out.
+struct RasterUniforms {
+  std::uint32_t size[4];     // Width, height, scale, polygons.
+  std::uint32_t control[4];  // The control register, the alpha test's reference, 1 for w, edge width.
+  std::uint32_t clear[4];    // Colour, depth, number (+256 translucent, +512 fog).
+  std::uint32_t toon[8][4];
+};
+struct FinishUniforms {
+  std::uint32_t size[4];     // Width, height, what is done (finish.comp), outline width.
+  std::uint32_t clear[4];    // Number, depth.
+  std::uint32_t edge_colours[2][4];
+  std::uint32_t fog[4];      // Colour, offset, step.
+  std::uint32_t fog_table[8][4];
+};
+constexpr std::uint32_t kRasterGroup = 64;  // Pixels of a line in a workgroup.
 
 using ComposeUniforms = Hardware3D::ComposeUniforms;
 
@@ -53,7 +72,7 @@ Uint8 stencil_reference(const Scene::Run& run) {
 std::uint32_t aligned(std::uint32_t n) { return (n + 255u) & ~255u; }
 
 SDL_GPUShader* make_shader(SDL_GPUDevice* device, const std::uint8_t* code, std::size_t size, SDL_GPUShaderStage stage,
-                           std::uint32_t samplers, std::uint32_t uniforms) {
+                           std::uint32_t samplers, std::uint32_t uniforms, std::uint32_t storage_buffers = 0) {
   SDL_GPUShaderCreateInfo info{};
   info.code_size = size;
   info.code = code;
@@ -61,8 +80,26 @@ SDL_GPUShader* make_shader(SDL_GPUDevice* device, const std::uint8_t* code, std:
   info.format = SDL_GPU_SHADERFORMAT_SPIRV;
   info.stage = stage;
   info.num_samplers = samplers;
+  info.num_storage_buffers = storage_buffers;
   info.num_uniform_buffers = uniforms;
   return SDL_CreateGPUShader(device, &info);
+}
+
+SDL_GPUComputePipeline* make_compute(SDL_GPUDevice* device, const std::uint8_t* code, std::size_t size,
+                                     std::uint32_t samplers, std::uint32_t read_buffers, std::uint32_t written_buffers) {
+  SDL_GPUComputePipelineCreateInfo info{};
+  info.code_size = size;
+  info.code = code;
+  info.entrypoint = "main";
+  info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+  info.num_samplers = samplers;
+  info.num_readonly_storage_buffers = read_buffers;
+  info.num_readwrite_storage_buffers = written_buffers;
+  info.num_uniform_buffers = 1;
+  info.threadcount_x = kRasterGroup;
+  info.threadcount_y = 1;
+  info.threadcount_z = 1;
+  return SDL_CreateGPUComputePipeline(device, &info);
 }
 
 SDL_GPUTexture* make_texture(SDL_GPUDevice* device, SDL_GPUTextureFormat format, SDL_GPUTextureUsageFlags usage, int width,
@@ -87,12 +124,15 @@ Hardware3D::~Hardware3D() {
   for (SDL_GPUGraphicsPipeline* p : scene_pipelines_)
     if (p != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, p);
   if (compose_pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, compose_pipeline_);
+  for (SDL_GPUComputePipeline* p : {raster_pipeline_, finish_pipeline_})
+    if (p != nullptr) SDL_ReleaseGPUComputePipeline(device_, p);
   if (nearest_ != nullptr) SDL_ReleaseGPUSampler(device_, nearest_);
   if (atlas_ != nullptr) SDL_ReleaseGPUTexture(device_, atlas_);
   if (screen_ != nullptr) SDL_ReleaseGPUTexture(device_, screen_);
   if (bank_ != nullptr) SDL_ReleaseGPUTexture(device_, bank_);
   if (transfer_ != nullptr) SDL_ReleaseGPUTransferBuffer(device_, transfer_);
-  if (vertices_ != nullptr) SDL_ReleaseGPUBuffer(device_, vertices_);
+  for (SDL_GPUBuffer* b : {vertices_, corners_, polygons_})
+    if (b != nullptr) SDL_ReleaseGPUBuffer(device_, b);
 }
 
 bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
@@ -119,7 +159,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   SDL_GPUShader* compose_vertex = make_shader(device, shaders::kComposeVert, sizeof shaders::kComposeVert,
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
-                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1);
+                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1, 1);
   const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment;
 
   // The depth buffer: the most exact format the device has, with a stencil
@@ -149,18 +189,13 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
       using Kind = Scene::Kind;
       const auto kind = static_cast<Kind>(index / 2);
       const bool coloured = kind == Kind::Opaque || kind == Kind::Translucent || kind == Kind::Overlay || kind == Kind::Shadow;
-      // The colour; the polygon numbers and depths, which only opaque
-      // polygons write; and the depths and fog marks (the depth where the
+      // The colour, and the depths and fog marks (the depth where the
       // polygon keeps its depth, the mark times the polygon's: kept where
       // every polygon drawn on the pixel takes fog).
-      std::array<SDL_GPUColorTargetDescription, 3> targets{};
+      std::array<SDL_GPUColorTargetDescription, 2> targets{};
       SDL_GPUColorTargetDescription& target = targets[0];
       for (SDL_GPUColorTargetDescription& t : targets) t.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-      if (kind != Kind::Opaque) {
-        targets[1].blend_state.enable_color_write_mask = true;
-        targets[1].blend_state.color_write_mask = 0;
-      }
-      SDL_GPUColorTargetBlendState& fog = targets[2].blend_state;
+      SDL_GPUColorTargetBlendState& fog = targets[1].blend_state;
       if (!coloured) {
         fog.enable_color_write_mask = true;
         fog.color_write_mask = 0;
@@ -261,6 +296,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     info.target_info.color_target_descriptions = &target;
     info.target_info.num_color_targets = 1;
     compose_pipeline_ = SDL_CreateGPUGraphicsPipeline(device, &info);
+    raster_pipeline_ = make_compute(device, shaders::kRasterComp, sizeof shaders::kRasterComp, 1, 2, 1);
+    finish_pipeline_ = make_compute(device, shaders::kFinishComp, sizeof shaders::kFinishComp, 0, 1, 1);
   }
   for (SDL_GPUShader* s : {scene_vertex, scene_fragment, compose_vertex, compose_fragment})
     if (s != nullptr) SDL_ReleaseGPUShader(device, s);
@@ -271,7 +308,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   } else if (depth_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
     error = "the graphics device has no depth buffer format";
     made = false;
-  } else if (std::count(std::begin(scene_pipelines_), std::end(scene_pipelines_), nullptr) != 0 || !compose_pipeline_) {
+  } else if (std::count(std::begin(scene_pipelines_), std::end(scene_pipelines_), nullptr) != 0 || !compose_pipeline_ ||
+             !raster_pipeline_ || !finish_pipeline_) {
     made = fail("3D pipelines");
   }
   if (made) {
@@ -307,11 +345,15 @@ void Hardware3D::release_targets() {
     if (k.texture != nullptr) SDL_ReleaseGPUTexture(device_, k.texture);
     k = Kept{};
   }
-  for (SDL_GPUTexture* t : {scene_target_, edges_, fog_marks_, depth_})
+  for (SDL_GPUTexture* t : {scene_target_, fog_marks_, depth_})
     if (t != nullptr) SDL_ReleaseGPUTexture(device_, t);
-  scene_target_ = edges_ = fog_marks_ = depth_ = nullptr;
+  scene_target_ = fog_marks_ = depth_ = nullptr;
+  for (SDL_GPUBuffer* b : {layers_, finished_})
+    if (b != nullptr) SDL_ReleaseGPUBuffer(device_, b);
+  layers_ = finished_ = nullptr;
   scale_ = 0;
   scene_drawn_ = 0;
+  rasterized_ = false;
 }
 
 bool Hardware3D::make_targets(int scale) {
@@ -325,9 +367,18 @@ bool Hardware3D::make_targets(int scale) {
     return t;
   };
   scene_target_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
-  edges_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   fog_marks_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   depth_ = make(depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+  const auto make_buffer = [&](SDL_GPUBufferUsageFlags usage, std::uint32_t bytes_a_pixel) {
+    SDL_GPUBufferCreateInfo info{};
+    info.usage = usage;
+    info.size = static_cast<Uint32>(width) * static_cast<Uint32>(height) * bytes_a_pixel;
+    SDL_GPUBuffer* b = SDL_CreateGPUBuffer(device_, &info);
+    made = made && b != nullptr;
+    return b;
+  };
+  layers_ = make_buffer(SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ, 16);
+  finished_ = make_buffer(SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE | SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ, 4);
   // A kept capture is its bank of video memory, 256 by 256.
   for (Kept& k : kept_) k.texture = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour, 256);
   for (std::size_t i = 0; i < outputs_.size() && made; ++i) {
@@ -389,6 +440,17 @@ bool Hardware3D::ensure_vertex_buffer(std::uint32_t bytes) {
   return vertices_ != nullptr;
 }
 
+bool Hardware3D::ensure_storage(SDL_GPUBuffer*& buffer, std::uint32_t& size, std::uint32_t bytes) {
+  if (buffer != nullptr && size >= bytes) return true;
+  if (buffer != nullptr) SDL_ReleaseGPUBuffer(device_, buffer);
+  SDL_GPUBufferCreateInfo info{};
+  info.usage = SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+  info.size = std::max({bytes, size * 2, std::uint32_t{1} << 12});
+  buffer = SDL_CreateGPUBuffer(device_, &info);
+  size = buffer != nullptr ? info.size : 0;
+  return buffer != nullptr;
+}
+
 bool Hardware3D::ready(int scale) {
   if (device_ == nullptr) return false;
   scale = std::clamp(scale, 1, kLargestScale);
@@ -447,6 +509,62 @@ SDL_Texture* Hardware3D::draw(int which, const std::vector<std::uint32_t>& scree
   return shown_[static_cast<std::size_t>(which & 1)];
 }
 
+bool Hardware3D::read_raster(std::vector<std::uint32_t>& pixels) {
+  if (scale_ == 0 || !rasterized_) return false;
+  pixels.resize(static_cast<std::size_t>(kScreenWidth) * scale_ * kScreenHeight * scale_);
+  return download(nullptr, 0, 0, finished_, static_cast<std::uint32_t>(pixels.size() * 4), pixels.data());
+}
+
+bool Hardware3D::read_screen(int which, std::vector<std::uint32_t>& pixels) {
+  if (scale_ == 0) return false;
+  const int width = kScreenWidth * scale_, height = kScreenHeight * scale_;
+  pixels.resize(static_cast<std::size_t>(width) * height);
+  return download(outputs_[static_cast<std::size_t>(which & 1)], width, height, nullptr,
+                  static_cast<std::uint32_t>(pixels.size() * 4), pixels.data());
+}
+
+bool Hardware3D::download(SDL_GPUTexture* texture, int width, int height, SDL_GPUBuffer* buffer, std::uint32_t bytes,
+                          void* out) {
+  SDL_GPUTransferBufferCreateInfo info{};
+  info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+  info.size = bytes;
+  SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &info);
+  if (transfer == nullptr) return false;
+  bool done = false;
+  if (SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(device_)) {
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+    if (texture != nullptr) {
+      SDL_GPUTextureRegion from{};
+      from.texture = texture;
+      from.w = static_cast<Uint32>(width);
+      from.h = static_cast<Uint32>(height);
+      from.d = 1;
+      SDL_GPUTextureTransferInfo to{};
+      to.transfer_buffer = transfer;
+      SDL_DownloadFromGPUTexture(copy, &from, &to);
+    } else {
+      const SDL_GPUBufferRegion from{buffer, 0, bytes};
+      const SDL_GPUTransferBufferLocation to{transfer, 0};
+      SDL_DownloadFromGPUBuffer(copy, &from, &to);
+    }
+    SDL_EndGPUCopyPass(copy);
+    if (SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands)) {
+      done = SDL_WaitForGPUFences(device_, true, &fence, 1);
+      SDL_ReleaseGPUFence(device_, fence);
+    }
+  }
+  if (done) {
+    if (const void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false)) {
+      std::memcpy(out, mapped, bytes);
+      SDL_UnmapGPUTransferBuffer(device_, transfer);
+    } else {
+      done = false;
+    }
+  }
+  SDL_ReleaseGPUTransferBuffer(device_, transfer);
+  return done;
+}
+
 bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
                      SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
                      const ComposeUniforms& given_uniforms) {
@@ -491,13 +609,22 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     }
   }
 
-  // What goes up: the screen, the vertices and the new textures.
+  // What goes up: the screen, the vertices, the rasterizer's polygons and
+  // the new textures.
   const std::uint32_t vertex_bytes = new_scene ? static_cast<std::uint32_t>(scene.vertices.size() * sizeof(Scene::Vertex)) : 0;
+  const Scene::Raster& raster = scene.raster;
+  const bool rasterize = new_scene && raster.wanted;
+  const std::uint32_t corner_bytes =
+      rasterize ? static_cast<std::uint32_t>(raster.corners.size() * sizeof(Scene::Raster::Corner)) : 0;
+  const std::uint32_t polygon_bytes =
+      rasterize ? static_cast<std::uint32_t>(raster.polygons.size() * sizeof(Scene::Raster::Polygon)) : 0;
   const std::uint32_t bank_bytes = bank != nullptr ? kBankBytes : 0;
-  std::uint32_t bytes = kScreenBytes + aligned(vertex_bytes) + bank_bytes;
+  std::uint32_t bytes = kScreenBytes + aligned(vertex_bytes) + bank_bytes + aligned(corner_bytes) + aligned(polygon_bytes);
   for (std::uint32_t i : pending_)
     bytes += aligned(static_cast<std::uint32_t>(scene.textures[i].width * scene.textures[i].height * 4));
-  if (!ensure_transfer(bytes) || (vertex_bytes != 0 && !ensure_vertex_buffer(vertex_bytes))) {
+  if (!ensure_transfer(bytes) || (vertex_bytes != 0 && !ensure_vertex_buffer(vertex_bytes)) ||
+      (rasterize && (!ensure_storage(corners_, corners_size_, corner_bytes) ||
+                     !ensure_storage(polygons_, polygons_size_, polygon_bytes)))) {
     log::warning("3d", std::string("cannot make the buffers for a 3D scene: ") + SDL_GetError());
     return false;
   }
@@ -539,6 +666,25 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     }
     at += aligned(vertex_bytes);
   }
+  const std::uint32_t corners_at = at;
+  if (corner_bytes != 0) {
+    std::memcpy(mapped + at, raster.corners.data(), corner_bytes);
+    at += aligned(corner_bytes);
+  }
+  const std::uint32_t polygons_at = at;
+  if (polygon_bytes != 0) {
+    auto* out = reinterpret_cast<Scene::Raster::Polygon*>(mapped + at);
+    for (std::size_t i = 0; i < raster.polygons.size(); ++i) {
+      Scene::Raster::Polygon p = raster.polygons[i];
+      if ((p.flags & Scene::Raster::kTextured) != 0) {
+        const std::uint32_t t = p.texture_index;
+        if (t < places.size() && placed[t]) p.texture_index = places[t].x | std::uint32_t{places[t].y} << 16;
+        else p.flags &= ~Scene::Raster::kTextured;
+      }
+      std::memcpy(&out[i], &p, sizeof p);
+    }
+    at += aligned(polygon_bytes);
+  }
   std::vector<std::uint32_t> texture_at;
   for (std::uint32_t i : pending_) {
     const Scene::Texture& t = scene.textures[i];
@@ -570,6 +716,16 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     const SDL_GPUBufferRegion region{vertices_, 0, vertex_bytes};
     SDL_UploadToGPUBuffer(copy, &upload, &region, true);
   }
+  if (corner_bytes != 0) {
+    const SDL_GPUTransferBufferLocation upload{transfer_, corners_at};
+    const SDL_GPUBufferRegion region{corners_, 0, corner_bytes};
+    SDL_UploadToGPUBuffer(copy, &upload, &region, true);
+  }
+  if (polygon_bytes != 0) {
+    const SDL_GPUTransferBufferLocation upload{transfer_, polygons_at};
+    const SDL_GPUBufferRegion region{polygons_, 0, polygon_bytes};
+    SDL_UploadToGPUBuffer(copy, &upload, &region, true);
+  }
   for (std::size_t n = 0; n < pending_.size(); ++n) {
     const Scene::Texture& t = scene.textures[pending_[n]];
     from.offset = texture_at[n];
@@ -584,7 +740,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
 
   if (new_scene) {
     // 1. The scene, over the clear colour (times its alpha) at the clear depth.
-    std::array<SDL_GPUColorTargetInfo, 3> colours{};
+    std::array<SDL_GPUColorTargetInfo, 2> colours{};
     SDL_GPUColorTargetInfo& colour = colours[0];
     colour.texture = scene_target_;
     const float a = scene.clear_colour[3];
@@ -592,19 +748,13 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     colour.load_op = SDL_GPU_LOADOP_CLEAR;
     colour.store_op = SDL_GPU_STOREOP_STORE;
     colour.cycle = true;
-    // The clear plane's polygon number and depth.
+    // The clear plane's depth, and whether it takes fog.
     const std::uint32_t clear_depth = clear_depth_bits(scene);
     colours[1] = colour;
-    colours[1].texture = edges_;
-    colours[1].clear_color = {static_cast<float>(scene.clear_number & 63) / 255.0f,
-                              static_cast<float>(clear_depth >> 16) / 255.0f,
+    colours[1].texture = fog_marks_;
+    colours[1].clear_color = {static_cast<float>(clear_depth >> 16) / 255.0f,
                               static_cast<float>((clear_depth >> 8) & 255) / 255.0f,
-                              static_cast<float>(clear_depth & 255) / 255.0f};
-    // The clear plane's depth, and whether it takes fog.
-    colours[2] = colours[1];
-    colours[2].texture = fog_marks_;
-    colours[2].clear_color = {colours[1].clear_color.g, colours[1].clear_color.b, colours[1].clear_color.a,
-                              scene.clear_fog ? 1.0f : 0.0f};
+                              static_cast<float>(clear_depth & 255) / 255.0f, scene.clear_fog ? 1.0f : 0.0f};
     SDL_GPUDepthStencilTargetInfo depth{};
     depth.texture = depth_;
     depth.clear_depth = scene.clear_depth;
@@ -636,6 +786,8 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     }
     SDL_EndGPURenderPass(pass);
     scene_drawn_ = scene.serial;
+    rasterized_ = rasterize;
+    if (rasterize) rasterize_scene(commands, scene);
   }
 
   // 2. The screen with the scene (or the kept capture) put in.
@@ -646,24 +798,20 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 5> sources{{{screen_, nearest_},
+  const std::array<SDL_GPUTextureSamplerBinding, 4> sources{{{screen_, nearest_},
                                                              {source != nullptr ? source : scene_target_, nearest_},
                                                              {second != nullptr ? second : bank_, nearest_},
-                                                             {edges_, nearest_},
                                                              {fog_marks_, nearest_}}};
   SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), static_cast<Uint32>(sources.size()));
-  // Edge marking where the scene is put in.
+  SDL_BindGPUFragmentStorageBuffers(pass, 0, &finished_, 1);
+  // Outlines and anti-aliased edges where the scene is put in.
   ComposeUniforms uniforms = given_uniforms;
-  if (given != nullptr && source == nullptr && scene.edge_marking) {
-    using Marking = nds::PolygonRenderer::EdgeMarking;
-    uniforms.edge[0] = static_cast<std::uint32_t>(
-        nds::PolygonRenderer::edge_width(scene.edge_one_pixel ? Marking::OnePixel : Marking::OriginalThickness, scale_));
-    uniforms.edge[1] = scene.clear_number & 63u;
-    uniforms.edge[2] = clear_depth_bits(scene);
-    uniforms.edge[3] = 1 | (scene.anti_aliasing ? 2u : 0u);
-    for (std::size_t i = 0; i < 8; ++i) std::memcpy(uniforms.edge_colours[i], scene.edge_colours[i].data(), sizeof uniforms.edge_colours[i]);
+  if (given != nullptr && source == nullptr && rasterized_) {
+    uniforms.edge[0] = static_cast<std::uint32_t>(kScreenWidth * scale_);
+    uniforms.edge[1] = static_cast<std::uint32_t>(kScreenHeight * scale_);
+    uniforms.edge[3] = 1;
   }
-  // Fog, the same way.
+  // Fog, where the scene is put in.
   if (given != nullptr && source == nullptr && scene.fog) {
     uniforms.fog[0] = 1 | (scene.fog_alpha_only ? 2u : 0u);
     uniforms.fog[1] = scene.fog_offset;
@@ -680,6 +828,63 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     return false;
   }
   return true;
+}
+
+void Hardware3D::rasterize_scene(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene) {
+  const Scene::Raster& raster = scene.raster;
+  const auto width = static_cast<std::uint32_t>(kScreenWidth * scale_), height = static_cast<std::uint32_t>(kScreenHeight * scale_);
+  using Marking = nds::PolygonRenderer::EdgeMarking;
+  const auto edge_width = static_cast<std::uint32_t>(
+      scene.edge_marking
+          ? nds::PolygonRenderer::edge_width(scene.edge_one_pixel ? Marking::OnePixel : Marking::OriginalThickness, scale_)
+          : 1);
+
+  // 1. The polygons, into two layers a pixel.
+  RasterUniforms drawing{};
+  drawing.size[0] = width;
+  drawing.size[1] = height;
+  drawing.size[2] = static_cast<std::uint32_t>(scale_);
+  drawing.size[3] = static_cast<std::uint32_t>(raster.polygons.size());
+  drawing.control[0] = raster.control;
+  drawing.control[1] = raster.alpha_reference;
+  drawing.control[2] = raster.depth_is_w ? 1 : 0;
+  drawing.control[3] = edge_width;
+  drawing.clear[0] = raster.clear_colour;
+  drawing.clear[1] = raster.clear_depth;
+  drawing.clear[2] = (scene.clear_number & 63u) | (raster.clear_translucent ? 256u : 0u) | (scene.clear_fog ? 512u : 0u);
+  for (std::size_t i = 0; i < raster.toon.size(); ++i) drawing.toon[i / 4][i % 4] = raster.toon[i];
+  SDL_GPUStorageBufferReadWriteBinding written{layers_, true, 0, 0, 0};
+  SDL_GPUComputePass* pass = SDL_BeginGPUComputePass(commands, nullptr, 0, &written, 1);
+  SDL_BindGPUComputePipeline(pass, raster_pipeline_);
+  const SDL_GPUTextureSamplerBinding atlas{atlas_, nearest_};
+  SDL_BindGPUComputeSamplers(pass, 0, &atlas, 1);
+  SDL_GPUBuffer* const read[2] = {corners_, polygons_};
+  SDL_BindGPUComputeStorageBuffers(pass, 0, read, 2);
+  SDL_PushGPUComputeUniformData(commands, 0, &drawing, sizeof drawing);
+  SDL_DispatchGPUCompute(pass, width / kRasterGroup, height, 1);
+  SDL_EndGPUComputePass(pass);
+
+  // 2. What is done when a line is done.
+  FinishUniforms finishing{};
+  finishing.size[0] = width;
+  finishing.size[1] = height;
+  finishing.size[2] = (scene.edge_marking ? 1u : 0u) | (scene.fog ? 2u : 0u) | (scene.fog_alpha_only ? 4u : 0u) |
+                      (scene.anti_aliasing ? 8u : 0u);
+  finishing.size[3] = edge_width;
+  finishing.clear[0] = scene.clear_number & 63u;
+  finishing.clear[1] = raster.clear_depth;
+  for (std::size_t i = 0; i < raster.edge_colours.size(); ++i) finishing.edge_colours[i / 4][i % 4] = raster.edge_colours[i];
+  finishing.fog[0] = raster.fog_colour;
+  finishing.fog[1] = scene.fog_offset;
+  finishing.fog[2] = scene.fog_step;
+  for (std::size_t i = 0; i < scene.fog_table.size(); ++i) finishing.fog_table[i / 4][i % 4] = scene.fog_table[i];
+  written = {finished_, true, 0, 0, 0};
+  pass = SDL_BeginGPUComputePass(commands, nullptr, 0, &written, 1);
+  SDL_BindGPUComputePipeline(pass, finish_pipeline_);
+  SDL_BindGPUComputeStorageBuffers(pass, 0, &layers_, 1);
+  SDL_PushGPUComputeUniformData(commands, 0, &finishing, sizeof finishing);
+  SDL_DispatchGPUCompute(pass, width / kRasterGroup, height, 1);
+  SDL_EndGPUComputePass(pass);
 }
 
 }  // namespace bd::app

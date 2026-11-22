@@ -281,6 +281,24 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   scene.fog_table = fog_table_;
   scene.alpha_threshold = ((control_ & kAlphaTest) != 0 ? static_cast<float>(alpha_reference_ & 0x1F) * 2 + 1.5f : 0.5f) / 63.0f;
 
+  // The polygons as the DS draws them, where outlines or anti-aliasing are
+  // asked for, with the registers as the processor's drawing reads them.
+  HardwareScene::Raster& raster = scene.raster;
+  raster.wanted = scene.edge_marking || scene.anti_aliasing;
+  raster.corners.clear();
+  raster.polygons.clear();
+  raster.control = control_;
+  raster.alpha_reference = alpha_reference_ & 0x1F;
+  raster.depth_is_w = frame.depth_is_w;
+  const u32 clear_alpha = (clear_colour_ >> 16) & 0x1F;
+  raster.clear_colour = six_bits_each((clear_alpha << 15) | (clear_colour_ & 0x7FFF));
+  raster.clear_depth = clear_depth_ == 0x7FFF ? 0xFFFFFF : clear_depth_ << 9;
+  raster.clear_translucent = clear_alpha != 0 && clear_alpha < 31;
+  for (std::size_t i = 0; i < raster.toon.size(); ++i) raster.toon[i] = six_bits_each(toon_table_[i] & 0x7FFF);
+  for (std::size_t i = 0; i < raster.edge_colours.size(); ++i)
+    raster.edge_colours[i] = six_bits_each((0x1Fu << 15) | edge_colours_[i]);
+  raster.fog_colour = six_bits_each((((fog_colour_ >> 16) & 0x1F) << 15) | (fog_colour_ & 0x7FFF));
+
   // Opaque polygons first, then the translucent ones, each in the order sent.
   // A run of shadow masks starts with no pixel marked, as on the DS.
   using Kind = HardwareScene::Kind;
@@ -304,14 +322,44 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
       // A shadow is coloured as a modulated polygon; a mask is not drawn,
       // so nothing of it is left out for its alpha.
       u32 info[4] = {0, 0, (shadow ? 0u : shape.mode) | (shape.fog ? HardwareScene::kFog : 0u), shape.number};
+      const GeometryEngine::Polygon& polygon = *shape.polygon;
+      HardwareScene::Raster::Polygon* drawn = nullptr;
+      if (raster.wanted) {
+        drawn = &raster.polygons.emplace_back();
+        drawn->first = static_cast<u32>(raster.corners.size());
+        drawn->size = polygon.size;
+        drawn->attributes = polygon.attributes;
+        drawn->texture = polygon.texture;
+        drawn->flags = polygon.clockwise ? HardwareScene::Raster::kClockwise : 0;
+        drawn->w_shift = shape.w_shift;
+        i32 top = 0x7FFFFFFF, bottom = 0;
+        for (unsigned i = 0; i < polygon.size; ++i) {
+          // An uncut polygon of a strip is stored in the strip's order.
+          const unsigned k = polygon.strip_order && (i == 2 || i == 3) ? 5 - i : i;
+          const Vertex& v = frame.vertices[polygon.first + std::size_t{k}];
+          HardwareScene::Raster::Corner& c = raster.corners.emplace_back();
+          c.x = fine_positions_ ? v.fine_x : v.x * 16;
+          c.y = fine_positions_ ? v.fine_y : v.y * 16;
+          c.z = static_cast<u32>(v.z);
+          c.w = v.w;
+          c.st = static_cast<std::uint16_t>(v.s) | static_cast<u32>(static_cast<std::uint16_t>(v.t)) << 16;
+          c.colour = v.colour & 0x3FFFF;
+          top = std::min(top, c.y);
+          bottom = std::max(bottom, c.y);
+        }
+        drawn->lines = static_cast<u32>(top) | static_cast<u32>(bottom) << 16;
+      }
       if (shape.format != 0 && !mask) {
         info[0] = scene_texture(shape);
+        if (drawn != nullptr) {
+          drawn->texture_index = info[0];
+          drawn->flags |= HardwareScene::Raster::kTextured;
+        }
         info[1] = static_cast<u32>(shape.size_s) | static_cast<u32>(shape.size_t_) << 16;
         info[2] |= HardwareScene::kTextured | (shape.repeat_s ? HardwareScene::kRepeatS : 0) |
                    (shape.repeat_t ? HardwareScene::kRepeatT : 0) | (shape.flip_s ? HardwareScene::kFlipS : 0) |
                    (shape.flip_t ? HardwareScene::kFlipT : 0);
       }
-      const GeometryEngine::Polygon& polygon = *shape.polygon;
       HardwareScene::Vertex corners[10];
       for (unsigned i = 0; i < polygon.size; ++i) {
         const Vertex& v = frame.vertices[polygon.first + std::size_t{i}];

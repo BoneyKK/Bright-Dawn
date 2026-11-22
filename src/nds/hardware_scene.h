@@ -4,8 +4,10 @@
 // are read from video memory at the same moment.
 //
 // Made for speed, not to be exact: the polygons become triangles with a
-// depth buffer, and anti-aliasing and polygons drawn as lines only are left
-// out.
+// depth buffer, and polygons drawn as lines only are left out. Where a frame
+// asks for outlines (edge marking) or anti-aliasing, the polygons are also
+// handed over as the DS draws them (`raster`), so that those come out as the
+// processor draws them.
 #pragma once
 
 #include <array>
@@ -31,7 +33,7 @@ struct HardwareScene {
     // 0: the texture's index in `textures` (the drawing side puts the
     // texture's place in its atlas here: x, and y times 65536); 1: its
     // width, and height times 65536; 2: the flags below; 3: the polygon
-    // number (0 to 63), for edge marking.
+    // number (0 to 63).
     std::uint32_t info[4] = {};
   };
   // Flags (info[2]).
@@ -88,13 +90,14 @@ struct HardwareScene {
   bool highlight = false;    // The table is added rather than used instead.
   // Pixels whose alpha is under this are not drawn (0 to 1).
   float alpha_threshold = 0;
-  // Edge marking, as the DS does it: a pixel of an opaque polygon next to
-  // one of another polygon number that is further away (past the screen's
-  // edge, the clear plane, with clear_number) takes the colour of its
-  // number's group (number / 8), each 0 to 1. One DS pixel wide, or one
-  // pixel of the resolution drawn at with edge_one_pixel.
+  // Edge marking, as the DS does it: a pixel at the edge of an opaque
+  // polygon next to one of another polygon number that is further away
+  // (past the screen's edge, the clear plane, with clear_number) takes the
+  // colour of its number's group (number / 8), each 0 to 1. One DS pixel
+  // wide, or one pixel of the resolution drawn at with edge_one_pixel.
   // With anti-aliasing, an edge pixel is half its colour and half what is
-  // behind it, as the processor draws it.
+  // behind it, and the edges of polygons are mixed with what is behind them
+  // by how much of the pixel they cover. Both are drawn from `raster`.
   bool edge_marking = false;
   bool edge_one_pixel = false;
   bool anti_aliasing = false;
@@ -112,6 +115,59 @@ struct HardwareScene {
   std::array<float, 4> fog_colour{};
   std::uint32_t fog_offset = 0, fog_step = 0;
   std::array<std::uint8_t, 32> fog_table{};
+
+  // The polygons as the DS draws them, with what the drawing needs as the
+  // DS has it, for the graphics hardware's own rasterizer
+  // (app/shaders/raster.comp), which draws them as the processor does
+  // (nds::PolygonRenderer), at any resolution: two layers a pixel, the
+  // DS's spans, its edges and how much of a pixel they cover. Made only for
+  // frames that ask for edge marking or anti-aliasing (`wanted`), as only
+  // those use it.
+  struct Raster {
+    // A corner (24 bytes, as the shader reads it).
+    struct Corner {
+      std::int32_t x = 0, y = 0;   // In sixteenths of a DS pixel.
+      std::uint32_t z = 0;         // The depth, as the geometry engine gives it.
+      std::int32_t w = 0;
+      std::uint32_t st = 0;        // The texture coordinates, s, and t times 65536 (16 bits each).
+      std::uint32_t colour = 0;    // Six bits each of red, green and blue.
+    };
+    // A polygon (32 bytes), its corners in `corners` around it from `first`.
+    struct Polygon {
+      std::uint32_t first = 0;
+      std::uint32_t size = 0;        // 3 to 10.
+      std::uint32_t attributes = 0;  // The polygon attribute word.
+      std::uint32_t texture = 0;     // The texture parameter word.
+      // With kTextured: the texture's index in `textures` (the drawing side
+      // puts its place in the atlas here: x, and y times 65536).
+      std::uint32_t texture_index = 0;
+      std::uint32_t flags = 0;
+      std::int32_t w_shift = 0;      // Makes its largest w fit in 16 bits (right; left if negative).
+      // Its top and bottom corner's y, in sixteenths of a pixel: top, and
+      // bottom times 65536.
+      std::uint32_t lines = 0;
+    };
+    static constexpr std::uint32_t kClockwise = 1;
+    static constexpr std::uint32_t kTextured = 2;
+
+    bool wanted = false;
+    // In the order drawn: the opaque polygons, then the translucent ones.
+    std::vector<Corner> corners;
+    std::vector<Polygon> polygons;
+    std::uint32_t control = 0;          // The DS's 3D control register.
+    std::uint32_t alpha_reference = 0;  // For the alpha test, five bits.
+    bool depth_is_w = false;
+    // The clear plane as a pixel: six bits each of red, green, blue and
+    // alpha; its depth (24 bits); whether it is translucent and takes fog.
+    std::uint32_t clear_colour = 0, clear_depth = 0;
+    bool clear_translucent = false;
+    // Six bits each: the toon table (red, green, blue), the edge colours
+    // (with alpha 63) and the fog colour (with its alpha).
+    std::array<std::uint32_t, 32> toon{};
+    std::array<std::uint32_t, 8> edge_colours{};
+    std::uint32_t fog_colour = 0;
+  };
+  Raster raster;
 };
 
 // How the graphics hardware makes a display capture (nds::Display), as the

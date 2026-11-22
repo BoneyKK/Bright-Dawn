@@ -7,6 +7,9 @@
 namespace bd_test {
 
 struct Abort {};
+// Thrown by SKIP: the test cannot run here (it needs what this computer
+// lacks), which is not a failure.
+struct Skip {};
 
 void register_test(const char* name, void (*fn)());
 void fail(const char* file, int line, const char* expression);
@@ -35,4 +38,12 @@ struct Registrar {
       ::bd_test::fail(__FILE__, __LINE__, #cond);                  \
       throw ::bd_test::Abort{};                                    \
     }                                                              \
+  } while (0)
+
+// Abandons the test as one that cannot run here, saying why. A run in which
+// every test is skipped ends with 77, which ctest counts as skipped.
+#define SKIP(reason)                                               \
+  do {                                                             \
+    std::printf("    skipped: %s\n", (reason));                    \
+    throw ::bd_test::Skip{};                                       \
   } while (0)

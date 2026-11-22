@@ -1,0 +1,118 @@
+// What the processor does when a line is done (nds::PolygonRenderer::
+// finish_line), for each pixel that raster.comp drew: edge marking, fog and
+// anti-aliasing, at the size drawn.
+// - An edge pixel next to (up to u_size.w pixels across or down) a pixel of
+//   another polygon number that is further away takes its number's edge
+//   colour, and covers half the pixel. Past the picture's edge is the clear
+//   plane.
+// - Pixels that take fog, in both layers, are mixed with the fog colour by a
+//   density that goes with their depth.
+// - With anti-aliasing, an edge that covers part of its pixel is mixed with
+//   what is behind it by how much; where nothing is, that becomes its alpha.
+// The colour (six bits each of red, green, blue and alpha), plus 1 << 24
+// where it is an outline or so mixed: the pixels the compose pass takes from
+// here.
+#version 450
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Layers { uvec4 layers[]; };
+layout(std430, set = 1, binding = 0) writeonly buffer Finished { uint finished[]; };
+layout(set = 2, binding = 0) uniform Finish {
+  // Width, height; 1 for edge marking, 2 for fog, 4 for fog of the alpha
+  // only, 8 for anti-aliasing; how many pixels wide outlines are.
+  uvec4 u_size;
+  uvec4 u_clear;  // The clear plane's polygon number and depth.
+  uvec4 u_edge_colours[2];  // Six bits each, four to an entry.
+  uvec4 u_fog;    // Its colour (six bits each), offset and step.
+  uvec4 u_fog_table[8];
+};
+
+uint alpha_of(uint colour) { return (colour >> 18) & 0x3Fu; }
+uint part_of(uint colour, uint shift) { return (colour >> shift) & 0x3Fu; }
+uint linear(uint v1, uint v2, uint x1, uint x, uint x2) {
+  if (x <= x1) return v1;
+  if (x >= x2) return v2;
+  if (v1 <= v2) return v1 + (v2 - v1) * (x - x1) / (x2 - x1);
+  return v2 + (v1 - v2) * (x2 - x) / (x2 - x1);
+}
+uint colour_between(uint c1, uint c2, uint x1, uint x, uint x2) {
+  uint result = max(alpha_of(c1), alpha_of(c2)) << 18;
+  for (uint shift = 0u; shift < 18u; shift += 6u) result |= linear(part_of(c1, shift), part_of(c2, shift), x1, x, x2) << shift;
+  return result;
+}
+uint fog_entry(uint i) { return u_fog_table[i / 4u][i % 4u]; }
+
+uint fogged(uint colour, int depth) {
+  const int offset = depth / 0x200 - int(u_fog.y);
+  const int step = int(u_fog.z);
+  uint density;
+  if (step == 0) {
+    density = fog_entry(offset > 0 ? 31u : 0u);
+  } else if (offset < 0) {
+    density = fog_entry(0u);
+  } else {
+    const int n = offset / step - 1;
+    if (n >= 31) density = fog_entry(31u);
+    else if (n < 0) density = fog_entry(0u);
+    else density = (fog_entry(uint(n) + 1u) * uint(offset % step) + fog_entry(uint(n)) * uint(step - offset % step)) / uint(step);
+  }
+  if (density == 127u) ++density;
+  // All four parts, or the alpha only.
+  const uint first = (u_size.z & 4u) != 0u ? 18u : 0u;
+  uint mixed = 0u;
+  for (uint shift = 0u; shift < 24u; shift += 6u) {
+    uint part = part_of(colour, shift);
+    if (shift >= first) part = (part_of(u_fog.x, shift) * density + part * (128u - density)) / 128u;
+    mixed |= part << shift;
+  }
+  return mixed;
+}
+
+void main() {
+  const uint x = gl_GlobalInvocationID.x, y = gl_GlobalInvocationID.y;
+  const uint width = u_size.x, height = u_size.y;
+  if (x >= width || y >= height) return;
+  const uvec4 me = layers[y * width + x];
+  uint front = me.x & 0xFFFFFFu, back = me.z & 0xFFFFFFu;
+  uint edge_alpha = (me.z >> 25) & 0x3Fu;
+  const uint number = me.x >> 26;
+  const int depth = int(me.y);
+  bool taken = false;
+
+  if ((u_size.z & 1u) != 0u && (me.x & (1u << 25)) != 0u) {
+    bool edge = false;
+    const ivec2 ways[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
+    for (int k = 1; k <= int(u_size.w) && !edge; ++k) {
+      for (int w = 0; w < 4 && !edge; ++w) {
+        const ivec2 q = ivec2(int(x), int(y)) + k * ways[w];
+        uint other = u_clear.x;
+        int further = int(u_clear.y);
+        if (q.x >= 0 && q.y >= 0 && q.x < int(width) && q.y < int(height)) {
+          const uvec2 o = layers[uint(q.y) * width + uint(q.x)].xy;
+          other = o.x >> 26;
+          further = int(o.y);
+        }
+        edge = other != number && depth < further;
+      }
+    }
+    if (edge) {
+      front = u_edge_colours[number >> 5][(number >> 3) & 3u];
+      edge_alpha = 0x20u;
+      taken = true;
+    }
+  }
+
+  const bool anti_aliasing = (u_size.z & 8u) != 0u;
+  if ((u_size.z & 2u) != 0u) {
+    if ((me.x & (1u << 24)) != 0u) front = fogged(front, depth);
+    if (anti_aliasing && (me.z & (1u << 24)) != 0u) back = fogged(back, int(me.w));
+  }
+
+  if (anti_aliasing && edge_alpha < 0x3Fu) {
+    if (alpha_of(back) != 0u) front = colour_between(back, front, 0u, edge_alpha, 0x3Fu);
+    else front = (front & 0x3FFFFu) | edge_alpha << 18;
+    taken = true;
+  }
+  finished[y * width + x] = front | (taken ? 1u << 24 : 0u);
+}
