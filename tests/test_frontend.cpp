@@ -1,7 +1,12 @@
 // The parts of the window that do not need a window: where the screens go,
 // how their colours are passed on, the default bindings and frame pacing.
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <map>
 #include <set>
+#include <utility>
+#include <vector>
 
 #include "gfx/screen_image.h"
 #include "gfx/screen_layout.h"
@@ -402,6 +407,106 @@ TEST(screens_are_enlarged_to_the_whole_multiple_at_or_above_the_scale) {
   // No larger than a texture may be: 2048 / 256 = 8.
   CHECK(prescale_factor(11.2, 2048) == 8);
   CHECK(prescale_factor(3.5, 100) == 1);
+}
+
+namespace {
+
+// What the window shows in each column of a screen `scale` window pixels
+// per DS pixel wide, for a picture made at `made_at` pixels per DS pixel and
+// shown with `filter`: for each column, the weight of each of the picture's
+// pixels in it, as the graphics hardware samples (nearest or bilinear from
+// texel middles, clamped at the sides) after enlarging it by enlarge_factor.
+std::vector<std::vector<std::pair<int, double>>> screen_columns(bd::gfx::ScreenFilter filter, double scale,
+                                                                int made_at, int largest_texture = 8192) {
+  const int across = 256 * made_at;
+  const int factor = bd::gfx::enlarge_factor(filter, scale, largest_texture, made_at);
+  const int texels = 256 * factor;
+  const auto pixel_of = [&](long t) {
+    t = std::clamp<long>(t, 0, texels - 1);
+    return static_cast<int>(t * across / texels);  // Enlarged without smoothing.
+  };
+  const double width = 256 * scale;
+  std::vector<std::vector<std::pair<int, double>>> columns;
+  for (int x = 0; x < static_cast<int>(width + 1e-9); ++x) {
+    const double u = (x + 0.5) * texels / width;  // In texels, from the left side.
+    std::vector<std::pair<int, double>> mix;
+    const auto add = [&](int pixel, double weight) {
+      if (weight < 1e-6) return;
+      for (auto& m : mix)
+        if (m.first == pixel) {
+          m.second += weight;
+          return;
+        }
+      mix.push_back({pixel, weight});
+    };
+    if (filter == bd::gfx::ScreenFilter::Sharp) {
+      add(pixel_of(static_cast<long>(u)), 1);
+    } else {
+      const double v = u - 0.5;
+      const long t = static_cast<long>(std::floor(v));
+      add(pixel_of(t), 1 - (v - t));
+      add(pixel_of(t + 1), v - t);
+    }
+    columns.push_back(mix);
+  }
+  return columns;
+}
+
+// Columns of a mix of two pixels between each two neighbours, the most.
+int most_mixed_per_boundary(const std::vector<std::vector<std::pair<int, double>>>& columns) {
+  std::map<int, int> mixed;  // By the left pixel of the two.
+  for (const auto& c : columns)
+    if (c.size() > 1) ++mixed[std::min(c[0].first, c[1].first)];
+  int most = 0;
+  for (const auto& m : mixed) most = std::max(most, m.second);
+  return most;
+}
+
+// Columns that show each pixel alone, the fewest and the most.
+std::pair<int, int> pure_columns(const std::vector<std::vector<std::pair<int, double>>>& columns, int pixels) {
+  std::vector<int> pure(static_cast<std::size_t>(pixels), 0);
+  for (const auto& c : columns)
+    if (c.size() == 1) ++pure[static_cast<std::size_t>(c[0].first)];
+  return {*std::min_element(pure.begin(), pure.end()), *std::max_element(pure.begin(), pure.end())};
+}
+
+}  // namespace
+
+TEST(sharp_pixels_smooth_edges_mixes_only_one_window_pixel_where_two_pixels_meet) {
+  using bd::gfx::ScreenFilter;
+  // The console's own picture and the graphics hardware's at 1, 2 and 4
+  // times the resolution, at whole and other scales.
+  const struct {
+    double scale;
+    int made_at;
+  } cases[] = {{2.5, 1}, {3.7, 1}, {1.3, 1}, {5.25, 1}, {2.5, 2}, {3.7, 2}, {4.3, 4}, {7.1, 4}};
+  for (const auto& k : cases) {
+    const auto columns = screen_columns(ScreenFilter::SharpSmoothEdges, k.scale, k.made_at);
+    CHECK(most_mixed_per_boundary(columns) <= 1);
+    // So each pixel is a sharp block, of all but one column of its width.
+    const double width = k.scale / k.made_at;
+    const auto [fewest, most] = pure_columns(columns, 256 * k.made_at);
+    CHECK(fewest >= static_cast<int>(width) - 1 && most <= static_cast<int>(std::ceil(width)));
+  }
+  // At whole scales, exact: each pixel the same number of columns, none mixed.
+  for (const auto& [scale, made_at] : {std::pair{2.0, 1}, {3.0, 1}, {4.0, 2}, {6.0, 2}, {4.0, 4}, {8.0, 4}}) {
+    for (ScreenFilter filter : {ScreenFilter::SharpSmoothEdges, ScreenFilter::Sharp}) {
+      const auto columns = screen_columns(filter, scale, made_at);
+      CHECK(most_mixed_per_boundary(columns) == 0);
+      const int each = static_cast<int>(scale) / made_at;
+      CHECK(pure_columns(columns, 256 * made_at) == std::pair(each, each));
+    }
+  }
+  // Sharp never mixes.
+  CHECK(most_mixed_per_boundary(screen_columns(ScreenFilter::Sharp, 2.5, 1)) == 0);
+  CHECK(most_mixed_per_boundary(screen_columns(ScreenFilter::Sharp, 3.7, 2)) == 0);
+  // The enlarged picture is a whole multiple of the one made, so its pixels stay
+  // blocks of one size; no larger than a texture may be.
+  CHECK(bd::gfx::enlarge_factor(ScreenFilter::SharpSmoothEdges, 2.5, 8192, 2) == 4);
+  CHECK(bd::gfx::enlarge_factor(ScreenFilter::SharpSmoothEdges, 4.5, 1024, 4) == 4);
+  CHECK(bd::gfx::enlarge_factor(ScreenFilter::SharpSmoothEdges, 2.5, 8192, 4) == 4);
+  CHECK(bd::gfx::enlarge_factor(ScreenFilter::Smooth, 2.5, 8192, 1) == 1);
+  CHECK(bd::gfx::enlarge_factor(ScreenFilter::Sharp, 2.5, 8192, 2) == 2);
 }
 
 TEST(the_program_knows_its_own_file) {

@@ -69,4 +69,15 @@ int prescale_factor(double scale, int largest_texture) {
   return factor < 1 ? 1 : factor;
 }
 
+int enlarge_factor(ScreenFilter filter, double scale, int largest_texture, int made_at) {
+  if (filter != ScreenFilter::SharpSmoothEdges || made_at < 1) return made_at;
+  // The smallest whole multiple of the picture at or above the scale, so that
+  // each of its pixels stays a block and the smoothing only shrinks.
+  const int at_least = prescale_factor(scale, 1 << 30);
+  int factor = (at_least + made_at - 1) / made_at * made_at;
+  const int most = largest_texture / kScreenWidth / made_at * made_at;
+  if (factor > most) factor = most;
+  return factor < made_at ? made_at : factor;
+}
+
 }  // namespace bd::gfx
