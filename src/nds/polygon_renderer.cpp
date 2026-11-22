@@ -257,6 +257,7 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
 
   for (unsigned i = 0; i < 3; ++i) scene.clear_colour[i] = fraction_of_31(clear_colour_ >> (5 * i));
   scene.clear_colour[3] = fraction_of_31(clear_colour_ >> 16);
+  scene.depth_is_w = frame.depth_is_w;
   scene.clear_depth = clear_depth_ == 0x7FFF ? 1.0f : static_cast<float>(clear_depth_ << 9) / 16777216.0f;
   for (std::size_t i = 0; i < scene.toon.size(); ++i)
     for (unsigned part = 0; part < 3; ++part) scene.toon[i][part] = fraction_of_31(toon_table_[i] >> (5 * part));
@@ -365,7 +366,16 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         }
       };
       if (kind == Kind::Shadow) put(Kind::ShadowGuard);
-      put(kind);
+      // A translucent polygon of full alpha has pixels of full alpha where
+      // its texture has: those are drawn as opaque ones, first.
+      if ((kind == Kind::Translucent || kind == Kind::Overlay) && shape.alpha == 0x3F) {
+        put(Kind::Solid);
+        // The same triangles again for the other pixels.
+        const HardwareScene::Run& solid = scene.runs.back();
+        scene.runs.push_back({solid.first, solid.count, kind, shape.depth_equal, number});
+      } else {
+        put(kind);
+      }
     }
   };
   add(false);

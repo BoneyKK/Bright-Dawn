@@ -23,7 +23,7 @@ static_assert(sizeof(Scene::Vertex) == 44, "the vertex layout the shaders read")
 // The scene shader's uniforms, as std140 lays them out.
 struct SceneUniforms {
   float toon[32][4];
-  float options[4];  // The alpha under which nothing is drawn; 1 for highlight; 1 for opaque.
+  float options[4];  // The alpha under which nothing is drawn; 1 for highlight; 1 for opaque; 1 for depth by w.
 };
 constexpr std::uint32_t kBankBytes = 256 * 256 * 4;
 
@@ -34,12 +34,26 @@ std::uint32_t clear_depth_bits(const Scene& scene) {
   return static_cast<std::uint32_t>(std::clamp(scene.clear_depth, 0.0f, 1.0f) * 16777215.0f + 0.5f);
 }
 
+// Which of a run's pixels are drawn, as the scene shader's u_options.z
+// says: 0 all, as they are; 1 all, as opaque ones; 2 those of less than full
+// alpha; 3 those of full alpha, as opaque ones.
+int pixels_drawn(Scene::Kind kind) {
+  switch (kind) {
+    case Scene::Kind::Opaque: return 1;
+    case Scene::Kind::Translucent:
+    case Scene::Kind::Overlay: return 2;
+    case Scene::Kind::Solid: return 3;
+    default: return 0;
+  }
+}
+
 // What a run writes in the stencil buffer, or compares with it (the
 // pipelines say which bits).
 Uint8 stencil_reference(const Scene::Run& run) {
   const auto number = static_cast<Uint8>(run.number & 63);
   switch (run.kind) {
     case Scene::Kind::Opaque:
+    case Scene::Kind::Solid:
     case Scene::Kind::ShadowGuard: return number;
     case Scene::Kind::Translucent:
     case Scene::Kind::Overlay: return static_cast<Uint8>(0x40 | number);
@@ -145,9 +159,10 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
         {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, offsetof(Scene::Vertex, colour)},
         {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_UINT4, offsetof(Scene::Vertex, info)},
     }};
-    for (int index = 0; index < 14; ++index) {
+    for (int index = 0; index < static_cast<int>(std::size(scene_pipelines_)); ++index) {
       using Kind = Scene::Kind;
-      const auto kind = static_cast<Kind>(index / 2);
+      // The pixels of full alpha of a translucent polygon are drawn as opaque ones.
+      const auto kind = static_cast<Kind>(index / 2) == Kind::Solid ? Kind::Opaque : static_cast<Kind>(index / 2);
       const bool coloured = kind == Kind::Opaque || kind == Kind::Translucent || kind == Kind::Overlay || kind == Kind::Shadow;
       // The colour; the polygon numbers and depths, which only opaque
       // polygons write; and the depths and fog marks (the depth where the
@@ -215,7 +230,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
         op.compare_op = SDL_GPU_COMPAREOP_ALWAYS;
         Uint8 compare = 0, write = 0x7F;
         switch (kind) {
-          case Kind::Opaque: break;
+          case Kind::Opaque:
+          case Kind::Solid: break;
           case Kind::Translucent:
           case Kind::Overlay:
             // Not over translucent pixels of the same polygon number.
@@ -625,9 +641,10 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
       for (std::size_t i = 0; i < scene.toon.size(); ++i) std::memcpy(uniforms.toon[i], scene.toon[i].data(), sizeof uniforms.toon[i]);
       uniforms.options[0] = scene.alpha_threshold;
       uniforms.options[1] = scene.highlight ? 1.0f : 0.0f;
+      uniforms.options[3] = scene.depth_is_w ? 1.0f : 0.0f;
       for (const Scene::Run& run : scene.runs) {
         if (!stencil_ && run.kind >= Scene::Kind::ShadowClear) continue;
-        uniforms.options[2] = run.kind == Scene::Kind::Opaque ? 1.0f : 0.0f;
+        uniforms.options[2] = static_cast<float>(pixels_drawn(run.kind));
         SDL_BindGPUGraphicsPipeline(pass, scene_pipelines_[static_cast<int>(run.kind) * 2 + (run.depth_equal ? 1 : 0)]);
         if (stencil_) SDL_SetGPUStencilReference(pass, stencil_reference(run));
         SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, sizeof uniforms);

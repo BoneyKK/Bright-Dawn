@@ -106,7 +106,7 @@ class Hardware3D {
   SDL_Renderer* renderer_ = nullptr;
   SDL_GPUDevice* device_ = nullptr;
   // By nds::HardwareScene::Kind, times two: nearer only, or as near too.
-  SDL_GPUGraphicsPipeline* scene_pipelines_[14] = {};
+  SDL_GPUGraphicsPipeline* scene_pipelines_[16] = {};  // By kind, and depth equal.
   // The depth buffer has a stencil buffer, for polygon numbers and shadows
   // (without it, shadow polygons are left out).
   bool stencil_ = false;

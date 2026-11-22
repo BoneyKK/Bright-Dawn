@@ -841,6 +841,29 @@ TEST(renderer_scene_has_shadows_for_the_graphics_hardware) {
   CHECK(shadow.colour[3] == (31 << 2 | 31 >> 4) && shadow.colour[0] == 255 && (shadow.info[2] & Scene::kModeMask) == 0);
 }
 
+TEST(renderer_scene_draws_the_solid_pixels_of_translucent_polygons_as_opaque_ones) {
+  // A pixel of full alpha in a translucent polygon (one with a texture of
+  // its own alpha) is drawn as an opaque one, its depth kept, as the
+  // processor draws it: each such polygon is first drawn for those pixels,
+  // then for the others. Not so where the polygon's own alpha is less.
+  using Scene = bd::nds::HardwareScene;
+  using Kind = Scene::Kind;
+  Fixture f;
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kAlphaBlending);
+  f.fill_textures();
+  f.hand_over_textures();
+  f.textured_square(8, format(1), kOpaque | number(1));
+  f.textured_square(8, format(6), kOpaque | number(1) | kNewDepth);
+  f.textured_square(8, format(1), alpha(20) | number(1));
+  const Scene& scene = f.r.build_scene(f.frame, f.video);
+  const Kind kinds[] = {Kind::Solid, Kind::Overlay, Kind::Solid, Kind::Translucent, Kind::Overlay};
+  CHECK(scene.runs.size() == std::size(kinds));
+  for (std::size_t i = 0; i < std::min(scene.runs.size(), std::size(kinds)); ++i) CHECK(scene.runs[i].kind == kinds[i]);
+  if (scene.runs.size() != std::size(kinds)) return;
+  CHECK(scene.runs[0].first == 0 && scene.runs[0].count == 6 && scene.runs[1].first == 0 && scene.runs[1].count == 6);
+  CHECK(scene.runs[2].first == 6 && scene.runs[3].first == 6 && scene.runs[4].first == 12 && scene.vertices.size() == 18);
+}
+
 TEST(renderer_scene_has_fog_for_the_graphics_hardware) {
   using Scene = bd::nds::HardwareScene;
   Fixture f;
@@ -927,9 +950,12 @@ TEST(renderer_scene_depth_is_w_when_the_frame_asks) {
   const auto depth = [&](std::size_t i) { return scene.vertices[i].position[2] / scene.vertices[i].position[3]; };
   CHECK(depth(0) == 0x100000 / 16777216.0f && depth(6) == 0x2000 / 16777216.0f && depth(6) < depth(0));
   CHECK(depth(12) == 0xFFFFFF / 16777216.0f);
+  // The graphics hardware is told to take w across with perspective.
+  CHECK(scene.depth_is_w);
   // With z, z.
   f.frame.depth_is_w = false;
   f.r.build_scene(f.frame, f.video);
+  CHECK(!scene.depth_is_w);
   CHECK(depth(0) == 0x100000 / 16777216.0f && depth(6) == 0x700000 / 16777216.0f);
 }
 
