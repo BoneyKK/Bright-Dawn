@@ -19,6 +19,7 @@ Only the standard library is used.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import html
 import json
@@ -29,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "tools/status/project_map.json"
 SVG = ROOT / "docs/status/project-map.svg"
 README = ROOT / "README.md"
+ICON = ROOT / "src/app/icon/bright-dawn.svg"
 SVG_IN_README = "docs/status/project-map.svg"
 START = ("<!-- project-map:start: made by tools/status/render_map.py from "
          "tools/status/project_map.json; change that file, not this part -->")
@@ -202,12 +204,14 @@ def page(data: dict) -> str:
     steps = "\n".join(f"      <li>{e(step)}</li>" for step in data["next"])
     d = data["diagram"]
     change = data["last_change"]
+    icon = "data:image/svg+xml;base64," + base64.b64encode(ICON.read_bytes()).decode()
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(data["title"])}</title>
+<link rel="icon" href="{icon}">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -222,7 +226,8 @@ def page(data: dict) -> str:
     padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 48px; }}
   main {{ max-width: 1060px; margin: 0 auto; display: grid; gap: 28px; }}
   header {{ display: grid; gap: 6px; }}
-  h1 {{ font: 600 2.1rem/1.15 var(--display); margin: 0; text-wrap: balance; }}
+  h1 {{ font: 600 2.1rem/1.15 var(--display); margin: 0; display: flex; align-items: center; gap: 14px; text-wrap: balance; }}
+  h1 img {{ width: 48px; height: 48px; flex: none; }}
   h2 {{ font: 600 1.3rem/1.2 var(--display); margin: 0 0 10px; }}
   a {{ color: var(--accent); }}
   .meta {{ color: var(--muted); font-size: .9rem; }}
@@ -265,7 +270,7 @@ def page(data: dict) -> str:
 <body>
 <main>
   <header>
-    <h1>{e(data["title"])}</h1>
+    <h1><img src="{icon}" alt="">{e(data["title"])}</h1>
     <div class="meta">Last change: <b>{e(change["what"])}</b>, {long_date(change["date"])}</div>
     <div class="legend" aria-label="Status key">
 {legend}

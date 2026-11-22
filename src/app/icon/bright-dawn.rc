@@ -1,0 +1,2 @@
+// The Windows program's icon (tools/icon/make_icon.py makes the .ico).
+1 ICON "bright-dawn.ico"

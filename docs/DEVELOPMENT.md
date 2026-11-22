@@ -116,6 +116,11 @@ and the processor and compares them; it needs a Vulkan device, and is
 skipped without one. Mesa's software device will do: on Ubuntu,
 `mesa-vulkan-drivers`.
 
+The program's icon is `src/app/icon/bright-dawn.svg`. The Windows program
+carries it (`bright-dawn.ico`, put in by `bright-dawn.rc`) and the window
+shows it (`src/app/window_icon.h`); after a change to the SVG, run
+`tools/icon/make_icon.py` (needs `cairosvg` and Pillow) to make those again.
+
 Where the graphics hardware draws a game's 3D differently from the
 processor, `--dump-3d FILE` (with `--frames`) writes the last frame's 3D
 scene as it was made: its polygons, the 3D registers, and the texture

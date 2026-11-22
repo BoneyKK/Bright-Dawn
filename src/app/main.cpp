@@ -33,6 +33,7 @@
 #include "app/game_screen.h"
 #include "app/hang_watch.h"
 #include "app/launcher.h"
+#include "app/window_icon.h"
 #include "core/log.h"
 #include "core/version.h"
 #include "game_library_host.h"
@@ -224,6 +225,25 @@ void log_system(SDL_Renderer* renderer) {
   }
 }
 
+// Gives the window the program's icon (app/window_icon.h), at each size it
+// has: the system picks the one that fits.
+void set_window_icon(SDL_Window* window) {
+  SDL_Surface* icon = nullptr;
+  for (const app::window_icon::Png& png : app::window_icon::kPngs) {
+    SDL_Surface* image = SDL_LoadPNG_IO(SDL_IOFromConstMem(png.data, png.size), true);
+    if (image == nullptr) continue;
+    if (icon == nullptr) {
+      icon = image;
+    } else {
+      SDL_AddSurfaceAlternateImage(icon, image);
+      SDL_DestroySurface(image);
+    }
+  }
+  if (icon == nullptr) return;
+  if (!SDL_SetWindowIcon(window, icon)) log::debug("window", std::string("the window has no icon: ") + SDL_GetError());
+  SDL_DestroySurface(icon);
+}
+
 // Opens the window and its renderer, hidden until both are there. With
 // `vulkan`, the window is made for Vulkan and drawn with SDL's GPU renderer
 // on a Vulkan device, which the graphics hardware's 3D scenes share (else
@@ -261,6 +281,7 @@ bool open_window(App& a, gfx::Point size, bool vulkan) {
       return false;
     }
   }
+  set_window_icon(a.window);
   SDL_ShowWindow(a.window);
   return true;
 }
