@@ -240,14 +240,28 @@ bool Machine::in_memory(std::size_t index) {
   return matches;
 }
 
+// Whether any of the entry's code lies in an image of the program.
+bool Machine::in_program_images(const TranslatedEntry& entry) const {
+  const auto found = overlays_.find(-1);
+  if (found == overlays_.end()) return false;
+  for (u32 r = 0; r < entry.run_count; ++r) {
+    const u32 start = entry.runs[r].address, length = entry.runs[r].length;
+    for (const Overlay& o : found->second)
+      if (start < o.load_address + o.size && o.load_address < start + length) return true;
+  }
+  return false;
+}
+
 Machine::Function Machine::lookup(u32 address) {
   auto it = std::lower_bound(
       table_.begin(), table_.end(), address,
       [](const TranslatedEntry& e, u32 a) { return e.address < a; });
   for (; it != table_.end() && it->address == address; ++it) {
     // Without the program's images, or what the translation was made from,
-    // code always in memory is taken to be as it was translated.
-    if ((it->overlay < 0 && (overlays_.count(-1) == 0 || it->run_count == 0)) ||
+    // code always in memory is taken to be as it was translated; so is code
+    // that no image of the program holds (the console's own, as its BIOS):
+    // there is nothing to check it against.
+    if ((it->overlay < 0 && (overlays_.count(-1) == 0 || it->run_count == 0 || !in_program_images(*it))) ||
         in_memory(static_cast<std::size_t>(it - table_.begin()))) {
       if (it->changed != nullptr) *it->changed = 0;  // It is the code in memory: calls to it go straight there.
       return it->function;

@@ -79,7 +79,10 @@ class MixedExecutor : public guest::Executor {
         {"inltab", 0, 0, 0, 0, 1},    // The caller of the helper is abandoned.
         {"skipdata", 0, 0, 0, 1, 1},  // The helper returns past the data word.
         {"svc", 0, 0, 0, 0, 0},
-        {"coro", 6, 0, 0, 6, 3},      // Three steps, each switching there and back.
+        // Three steps, each switching there and back. co_body, reached only
+        // through the pointer a_coro sets, is translated too, so two calls
+        // fewer are handed back from the interpreter.
+        {"coro", 4, 0, 0, 6, 3},
         {"hidmodes", 0, 0, 0, 0, 0},  // The hidden code is called and returns; nothing unusual.
         // Two exception returns, each leaving a translated function for somewhere
         // other than its caller. The second function was called from interpreted
@@ -93,11 +96,16 @@ class MixedExecutor : public guest::Executor {
     };
     for (const Expected& e : kExpected) {
       if (test != e.test) continue;
-      if (s.native_calls_from_interpreter != e.native_calls * n) return "unexpected number of calls handed back to translated code";
-      if (s.native_jumps_from_interpreter != e.native_jumps * n) return "unexpected number of jumps handed back to translated code";
-      if (s.returns_through_jumps != e.returns_through_jumps * n) return "unexpected number of jumps recognised as returns";
-      if (s.returns_elsewhere != e.returns_elsewhere * n) return "unexpected number of calls that returned elsewhere";
-      if (s.call_sites_abandoned != e.abandoned * n) return "unexpected number of abandoned call sites";
+      const std::string counted = " (per input: " + std::to_string(s.native_calls_from_interpreter / n) + ", " +
+                                  std::to_string(s.native_jumps_from_interpreter / n) + ", " +
+                                  std::to_string(s.returns_through_jumps / n) + ", " +
+                                  std::to_string(s.returns_elsewhere / n) + ", " +
+                                  std::to_string(s.call_sites_abandoned / n) + ")";
+      if (s.native_calls_from_interpreter != e.native_calls * n) return "unexpected number of calls handed back to translated code" + counted;
+      if (s.native_jumps_from_interpreter != e.native_jumps * n) return "unexpected number of jumps handed back to translated code" + counted;
+      if (s.returns_through_jumps != e.returns_through_jumps * n) return "unexpected number of jumps recognised as returns" + counted;
+      if (s.returns_elsewhere != e.returns_elsewhere * n) return "unexpected number of calls that returned elsewhere" + counted;
+      if (s.call_sites_abandoned != e.abandoned * n) return "unexpected number of abandoned call sites" + counted;
     }
     return std::string();
   }

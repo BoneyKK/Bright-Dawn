@@ -143,6 +143,28 @@ def return_point(i: Insn) -> int | None:
     return None
 
 
+def ends_flow(i: Insn) -> bool:
+    """True if execution never continues with the next instruction."""
+    if i.cond != 14:
+        return False
+    if i.kind == "b":
+        return not i.f["link"]
+    if i.kind == "bx":
+        return not i.f["link"]
+    return writes_pc(i)
+
+
+def literal_address(i: Insn) -> int | None:
+    """The address of the word "ldr rX, [pc, #n]" loads (rX not pc), else None."""
+    f = i.f
+    if i.kind == "mem" and f["load"] and f["rn"] == 15 and f["size"] == "w" and f["off"][0] == "imm" \
+            and f["pre"] and not f["wb"] and f["rd"] != 15:
+        base = i.pc_value & ~3 if i.thumb else i.pc_value
+        address = base + f["off"][1] if f["up"] else base - f["off"][1]
+        return None if address & 3 else address
+    return None
+
+
 def code_address(i: Insn) -> int | None:
     """The address "add/sub rX, pc, #n" computes (ARM; rX not pc), else None."""
     f = i.f
@@ -302,6 +324,25 @@ def explore(img: Image, addr: int, thumb: bool, known: set) -> Function:
     return fn
 
 
+def complete_code(img: Image, addr: int, thumb: bool):
+    """The code at `addr` if the bytes there read as a complete piece of code, else None.
+
+    Complete means: every instruction is defined, and every path ends by
+    transferring control and does not run off into bytes that were never
+    decoded. Rejecting a real function here costs speed, not correctness:
+    the interpreter runs whatever has no translation.
+    """
+    fn = explore(img, addr, thumb, set())
+    if fn.bad or not fn.insns:
+        return None
+    for insn in fn.insns.values():
+        if insn.kind == "undef":
+            return None
+        if not ends_flow(insn) and insn.end not in fn.insns:
+            return None
+    return fn
+
+
 def _looks_like_start(img: Image, addr: int, thumb: bool) -> bool:
     """A function that saves LR (or the frame) on the stack as its first or second instruction."""
     i = img.decode(addr, thumb)
@@ -353,6 +394,36 @@ def find_functions(img: Image, entries: list, extra_known: set | None = None,
                     known.add(key)
                     todo.append(key)
         run()
+        # Code addresses that code loads as constants: a handler or callback
+        # the program sets at run time (its interrupt handler, for one), which
+        # need not start by saving anything. Taken where the bytes there read
+        # as complete code that nothing found covers.
+        covered = set()
+        for fn in funcs.values():
+            covered.update(fn.insns)
+        scanned = set()
+        while True:
+            fresh = [k for k in funcs if k not in scanned]
+            scanned.update(fresh)
+            for k in fresh:
+                covered.update(funcs[k].insns)
+            for k in fresh:
+                for i in funcs[k].insns.values():
+                    a = literal_address(i)
+                    w = None if a is None else img.word(a)
+                    if w is None or (w & 3) not in (0, 1) or not img.contains(w & ~1):
+                        continue
+                    key = (w & ~1, bool(w & 1))
+                    if key in known or key[0] in covered:
+                        continue
+                    found = complete_code(img, key[0], key[1])
+                    if found is not None and not covered.intersection(found.insns):
+                        known.add(key)
+                        todo.append(key)
+                        covered.update(found.insns)
+            if not todo:
+                break
+            run()
     # A function that returns twice returns the second time to where it was
     # called from, where no call waits any more: there too translated code
     # must start, after every call to it. Its callers then return twice as

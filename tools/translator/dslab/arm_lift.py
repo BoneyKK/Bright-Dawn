@@ -32,7 +32,7 @@ very rare forms (coprocessor instructions other than MRC and MCR, breakpoints,
 undefined instructions).
 """
 
-from .arm_analysis import is_return, writes_pc
+from .arm_analysis import ends_flow, is_return, writes_pc
 from .arm_decode import Insn
 
 COND_EXPR = ["c.Z", "!c.Z", "c.C", "!c.C", "c.N", "!c.N", "c.V", "!c.V", "(c.C && !c.Z)", "(!c.C || c.Z)",
@@ -399,17 +399,6 @@ class Emitter:
             if f["wb"]:
                 body.append(f"c.r[{rn}] = {end};")
         return ["{"] + ["    " + b for b in body] + ["}"]
-
-
-def ends_flow(i: Insn) -> bool:
-    """True if execution never continues with the next instruction."""
-    if i.cond != 14:
-        return False
-    if i.kind == "b":
-        return not i.f["link"]
-    if i.kind == "bx":
-        return not i.f["link"]
-    return writes_pc(i)
 
 
 def lift_function(fn, names: dict, image=None) -> str:
