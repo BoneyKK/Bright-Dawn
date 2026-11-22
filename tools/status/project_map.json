@@ -2,8 +2,8 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "A log lists the places not run natively, and the interrupt entry now runs translated. With the graphics hardware, the title no longer flickers between the two screens, and polygons are put in front of each other by w, as the game asks",
-    "date": "2026-11-20"
+    "what": "With the graphics hardware, battles now run at the internal resolution: every display capture is made at it, and no frame falls back to the processor. Outlines (edge marking) are drawn as on the DS, with a setting: original thickness, 1 pixel or off. Shadows under characters are drawn too.",
+    "date": "2026-11-22"
   },
   "statuses": {
     "done": "Works",
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Widescreen: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off) and shadows as on the DS. Fog and the smoothing of polygon edges: only with the processor. Widescreen: not yet."
     },
     {
       "part": "audio",
@@ -425,6 +425,12 @@
   ],
   "next": [
     "First cave: not reached yet. The save starts in Saha Town, and scripted walks meet random battles. In Saha Town, black polygons that the game sends (vertex colour 0) cover the party with both 3D paths: the cause is still open.",
+    "Higher resolutions, 1: fog on the graphics hardware. Battles use fog in some frames; the graphics hardware leaves it out.",
+    "Higher resolutions, 2: smoothing (anti-aliasing) of polygon edges on the graphics hardware; model edges are jagged at 1x, less so at higher resolutions.",
+    "Higher resolutions, 3: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.",
+    "Higher resolutions, 4: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.",
+    "Higher resolutions, 5: the scroll of the 3D layer (BG0) is not used, by either 3D path.",
+    "Higher resolutions, 6: some outline pixels are one pixel off from the processor's at 1x.",
     "Speed: the game's interrupt handler (0x01FFA900) still runs in the interpreter; it is reached only through a pointer set at run time.",
     "In-game saving: not yet tried.",
     "Widescreen and mods."
