@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (22 November 2026): The game's interrupt handler runs natively, and the interpreter now runs less than a quarter of a percent of the instructions in a frame. In Saha Town, the black polygons are gone: the picture matches the DS's. A save made in the game is kept through a restart and loads.
+**Last change** (22 November 2026): The game's interrupt handler runs natively, and the interpreter now runs less than a quarter of a percent of the instructions in a frame. In Saha Town, the black polygons are gone: the picture matches the DS's. A save made in the game, in Saha Town and in the first cave, is kept through a restart and loads.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -69,13 +69,12 @@ the state of each, and what comes next.
 
 **Next:**
 
-1. First cave: not reached yet. The save starts in Saha Town, and scripted walks meet random battles.
-2. Higher resolutions, 1: smoothing (anti-aliasing) of polygon edges on the graphics hardware; model edges are jagged at 1x, less so at higher resolutions.
-3. Higher resolutions, 2: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.
-4. Higher resolutions, 3: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.
-5. Higher resolutions, 4: the scroll of the 3D layer (BG0) is not used, by either 3D path.
-6. Higher resolutions, 5: outlines with the graphics hardware are lighter than on the DS where edges are smoothed, and some are one pixel off at 1x. The DS mixes them with a second layer that its own way of covering pixels fills; matching it needs the DS's rasterizing on the graphics hardware (a compute shader).
-7. Widescreen and mods.
+1. Higher resolutions, 1: smoothing (anti-aliasing) of polygon edges on the graphics hardware; model edges are jagged at 1x, less so at higher resolutions.
+2. Higher resolutions, 2: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.
+3. Higher resolutions, 3: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.
+4. Higher resolutions, 4: the scroll of the 3D layer (BG0) is not used, by either 3D path.
+5. Higher resolutions, 5: outlines with the graphics hardware are lighter than on the DS where edges are smoothed, and some are one pixel off at 1x. The DS mixes them with a second layer that its own way of covering pixels fills; matching it needs the DS's rasterizing on the graphics hardware (a compute shader).
+6. Widescreen and mods.
 
 The same, as a page of its own: [the project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8).
 <!-- project-map:end -->
