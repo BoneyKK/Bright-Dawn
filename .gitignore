@@ -12,6 +12,8 @@ compile_commands.json
 *.dsv
 /extracted/
 /romfs/
+# A 3D scene dumped from the game (--dump-3d) holds its textures.
+*.scene
 
 # Editor / OS
 .vscode/

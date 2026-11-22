@@ -9,7 +9,9 @@
 #include "nds/arm9_io.h"
 #include "nds/geometry_engine.h"
 #include "nds/polygon_renderer.h"
+#include "nds/scene_dump.h"
 #include "nds/video_memory.h"
+#include "temp_dir.h"
 #include "test.h"
 
 namespace {
@@ -1084,4 +1086,55 @@ TEST(renderer_scene_has_the_polygons_as_the_ds_draws_them) {
   const Scene::Raster& strip = f.r.build_scene(f.frame, f.video).raster;
   REQUIRE(strip.corners.size() == 4);
   CHECK(strip.corners[0].x == 5 && strip.corners[2].x == 9 && strip.corners[3].x == 7);
+}
+
+// A frame kept as it was drawn, written to a file, read back and put into
+// another renderer draws the same picture.
+TEST(renderer_frame_dumped_and_read_back_draws_the_same) {
+  Fixture f;
+  f.r.keep_inputs(true);
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kAntiAliasing | PolygonRenderer::kEdgeMarking |
+            PolygonRenderer::kFog | 5u << PolygonRenderer::kFogShift);
+  f.io.write(PolygonRenderer::kClearColour, 4, 0x1234 | 20u << 16 | 7u << 24);
+  f.io.write(PolygonRenderer::kEdgeColours + 6, 2, 0x4210);
+  f.io.write(PolygonRenderer::kToonTable + 8, 2, 0x1F);
+  f.io.write(PolygonRenderer::kFogTable + 3, 1, 90);
+  f.io.write(PolygonRenderer::kFogColour, 4, 0x7FFF | 9u << 16);
+  f.fill_textures();
+  for (u32 i = 0; i < 64; ++i) f.texture_word(i * 2, 0x8000 | i * 0x111);
+  for (u32 i = 0; i < 32; ++i) f.texture_byte(0x100 + i, i * 7);
+  for (u32 i = 0; i < 16; ++i) f.palette_word(i * 2, i * 0x421);
+  f.hand_over_textures();
+  f.textured_square(8, format(7) | kRepeatS, kOpaque | number(3) | kFogged);
+  f.polygon({Fixture::vertex(20, 10, kRed, 0x300000), Fixture::vertex(40, 60, kGreen, 0x300000),
+             Fixture::vertex(70, 5, kBlue, 0x300000)},
+            alpha(20) | number(9), format(3) | (0x100 >> 3) | 1u << 20);
+  f.frame.depth_is_w = true;
+  f.draw();
+  const std::vector<u32> picture = f.r.image();
+
+  bd::nds::SceneDump dump;
+  dump.inputs = f.r.kept_inputs();
+  dump.edge_marking = PolygonRenderer::EdgeMarking::OnePixel;
+  dump.scale = 3;
+  dump.screens[1].assign(256 * 192, 0x80000000u);
+  dump.fills[1] = 1;
+  const bd_test::TempDir dir;
+  std::string error;
+  REQUIRE(bd::nds::write_scene_dump(dir.path() / "scene", dump, error));
+  bd::nds::SceneDump back;
+  REQUIRE(bd::nds::read_scene_dump(dir.path() / "scene", back, error));
+  CHECK(back.edge_marking == PolygonRenderer::EdgeMarking::OnePixel && back.scale == 3 && back.fills[1] == 1 &&
+        back.screens[1].size() == 256 * 192 && back.inputs.frame.depth_is_w);
+  CHECK(back.inputs.frame.vertices == f.frame.vertices && back.inputs.frame.polygons.size() == 2);
+
+  bd::nds::Arm9Io io;
+  PolygonRenderer other;
+  other.attach(io);
+  VideoMemory video;
+  bd::nds::restore_scene_inputs(back.inputs, io, video);
+  CHECK(other.draw(back.inputs.frame, video) == picture);
+  // Not a dump.
+  dir.write("other", "not a scene");
+  CHECK(!bd::nds::read_scene_dump(dir.path() / "other", back, error));
 }

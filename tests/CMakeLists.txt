@@ -165,3 +165,11 @@ if(BD_BUILD_APP)
   add_test(NAME gpu COMMAND bd_gpu_tests)
   set_tests_properties(gpu PROPERTIES SKIP_RETURN_CODE 77)
 endif()
+
+# A 3D scene dumped from the game (bright-dawn --dump-3d), drawn by the
+# processor and the graphics hardware and compared. Not a test: it needs a
+# dump, which holds the game's textures and is never in the repository.
+if(BD_BUILD_APP)
+  add_executable(bd_scene_check scene_check.cpp)
+  target_link_libraries(bd_scene_check PRIVATE bd_app)
+endif()

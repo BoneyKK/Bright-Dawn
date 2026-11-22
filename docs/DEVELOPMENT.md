@@ -116,6 +116,20 @@ and the processor and compares them; it needs a Vulkan device, and is
 skipped without one. Mesa's software device will do: on Ubuntu,
 `mesa-vulkan-drivers`.
 
+Where the graphics hardware draws a game's 3D differently from the
+processor, `--dump-3d FILE` (with `--frames`) writes the last frame's 3D
+scene as it was made: its polygons, the 3D registers, and the texture
+memory. `build/tests/bd_scene_check FILE [--out DIR] [--scale N]` draws it
+with both and compares them, at 1x: how many pixels of the graphics
+hardware's own rasterizer (outlines, anti-aliased edges) differ from the
+processor's, and the first polygon after which they do, with its corners;
+and for each screen, how far the pixels put in from the triangles and from
+the rasterizer are from the processor's. Its text holds only numbers, and
+can be shared; the dump and the pictures `--out` writes hold the game's
+textures and are never to be committed (`*.scene` is ignored by git).
+`bd_gpu_tests` with `BD_FAILED_SCENES=DIR` writes a dump of each test
+scene that differs.
+
 `bright-dawn --help` lists the options. Some change a setting for one run
 (`--scale`, `--side-by-side`, `--textures smooth`, ...); `--no-settings` uses
 the defaults. `--hold` and `--touch` press a button or touch the screen over

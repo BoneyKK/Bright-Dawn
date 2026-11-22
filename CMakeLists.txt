@@ -143,6 +143,7 @@ add_library(bd_nds STATIC
   src/nds/display_engine.cpp
   src/nds/geometry_engine.cpp
   src/nds/polygon_renderer.cpp
+  src/nds/scene_dump.cpp
   src/nds/interrupts.cpp
   src/nds/ipc.cpp
   src/nds/keypad.cpp

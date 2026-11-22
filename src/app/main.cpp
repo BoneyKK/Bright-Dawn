@@ -129,6 +129,8 @@ constexpr const char* kUsage =
     "                        may be given more than once\n"
     "  --capture FILE        with --frames, write the window's last frame to FILE (BMP)\n"
     "  --capture-every N     with --capture, also write every Nth frame, to FILE-N.bmp\n"
+    "  --dump-3d FILE        with --frames, write the 3D scene of the last frame to FILE,\n"
+    "                        to find faults in its drawing (it holds the game's textures)\n"
     "  --record-sound FILE   keep the game's sound in FILE (WAV, 16-bit stereo)\n"
     "  --interpret-only      do not use the translated code (bright-dawn-game only)\n"
     "  --video-drivers       list the window systems this build can use, and stop\n"
@@ -697,6 +699,8 @@ int main(int argc, char** argv) {
       options.record_sound = argv[++i];
     } else if (arg == "--capture" && has_value) {
       options.capture = argv[++i];
+    } else if (arg == "--dump-3d" && has_value) {
+      options.dump_3d = app::from_utf8(argv[++i]);
     } else if (arg == "--side-by-side") {
       cl.overrides.emplace_back(ui::key::kArrangement, "side_by_side");
     } else if (arg == "--bottom-only") {
@@ -726,6 +730,10 @@ int main(int argc, char** argv) {
       complain(nullptr, "Not understood: " + arg + "\n\n" + kUsage);
       return 1;
     }
+  }
+  if (!options.dump_3d.empty() && options.frames == 0) {
+    complain(nullptr, "--dump-3d needs --frames: it writes the last of them.");
+    return 1;
   }
   if (!options.capture.empty() && options.frames == 0) {
     complain(nullptr, "--capture needs --frames: it writes the last of them.");

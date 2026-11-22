@@ -170,6 +170,26 @@ class PolygonRenderer {
   // What a frame asked for that is not carried out, with how many frames.
   const std::map<std::string, std::uint64_t>& notes() const { return notes_; }
 
+  // What a frame's 3D picture (or scene) was made from: its polygons, the
+  // registers, and the memory textures are read from, as they were then.
+  // Kept for each frame drawn or made a scene of while asked, for a dump of
+  // one (nds/scene_dump.h): it holds the game's textures, so it is for
+  // finding faults on the player's computer, never for the repository.
+  struct Inputs {
+    GeometryEngine::Frame frame;
+    std::uint32_t control = 0, alpha_reference = 0, clear_colour = 0, clear_depth = 0, clear_image_offset = 0;
+    std::uint32_t fog_colour = 0, fog_offset = 0;
+    std::array<std::uint16_t, 8> edge_colours{};
+    std::array<std::uint8_t, 32> fog_table{};
+    std::array<std::uint16_t, 32> toon_table{};
+    // VideoMemory::texture() and texture_palette() for every address: -1
+    // where no bank is.
+    std::vector<std::int16_t> textures, palettes;
+  };
+  void keep_inputs(bool on) { keep_inputs_ = on; }
+  // Empty frame and memory until a frame is kept.
+  const Inputs& kept_inputs() const { return inputs_; }
+
  private:
   // What is known of a pixel while a frame is drawn.
   struct Pixel {
@@ -232,6 +252,9 @@ class PolygonRenderer {
   std::array<bool, kHeight> stencil_cleared_{};
   Image image_;
   std::map<std::string, std::uint64_t> notes_;
+  bool keep_inputs_ = false;
+  Inputs inputs_;
+  void keep(const GeometryEngine::Frame& frame, const VideoMemory& video);
   // The lines are drawn at once on several threads: each line's drawing
   // writes only that line, and reads only what no line's drawing changes
   // (finish_line reads the lines next to its own, so all are drawn first).

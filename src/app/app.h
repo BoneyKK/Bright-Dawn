@@ -27,6 +27,8 @@ struct Options {
   std::uint64_t frames = 0;
   std::string capture;
   std::uint64_t capture_every = 0;
+  // Write the 3D scene of the last frame here (nds/scene_dump.h).
+  std::filesystem::path dump_3d;
   std::filesystem::path record_sound;  // Keep the game's sound in this WAV file.  // Also write a frame every so many, named FILE-frame.bmp.
   std::vector<input::ScriptedPress> script;
   std::vector<input::ScriptedTouch> touches;

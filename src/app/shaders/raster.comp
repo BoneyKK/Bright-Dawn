@@ -19,9 +19,11 @@
 // polygons in the order drawn. The spans are worked out 64 polygons at a
 // time, one by each of its threads, into shared memory.
 //
-// The sums are the processor's, in 32 bits: where that would not be enough
-// at larger sizes, the products are taken in full (muldiv, fraction), which
-// gives the same as the processor where its sums fit.
+// The sums are the processor's, in 32 bits, wrapping as they do: at the
+// DS's size they never overflow but where a corner is out of range (one on
+// the near plane has a depth of -512). At N times the size, a product that
+// the larger size makes larger wraps at N times 2^32 (product_over), and
+// fractions are taken in full (fraction): the same values as at 1x.
 #version 450
 
 layout(local_size_x = 64) in;
@@ -65,26 +67,30 @@ const uint kAlphaTest = 1u << 2, kAlphaBlending = 1u << 3, kAntiAliasing = 1u <<
 const uint kHighlight = 1u << 1;
 
 // The value at `x` on the way from `v1` at `x1` to `v2` at `x2`.
-uint muldiv(uint a, uint b, uint d) {
-  // a * b / d, for a * b under 2^48 and d under 2^16.
+// a * b / d as the processor works it out at the DS's size: in 32 bits,
+// which wrap where a corner is out of range. At N times the size, b and d
+// are N times as large, and the product wraps at N times 2^32: the same
+// value as at 1x, wrapped or not.
+uint product_over(uint a, uint b, uint d) {
   uint high, low;
   umulExtended(a, b, high, low);
-  uint n1 = high << 16 | low >> 16;
-  uint q1 = n1 / d;
-  uint n0 = (n1 - q1 * d) << 16 | (low & 0xFFFFu);
+  high %= u_size.z;  // Under 8: the product is under 2^35.
+  const uint n1 = high << 16 | low >> 16;
+  const uint q1 = n1 / d;
+  const uint n0 = (n1 - q1 * d) << 16 | (low & 0xFFFFu);
   return (q1 << 16) + n0 / d;
 }
 uint linear(uint v1, uint v2, uint x1, uint x, uint x2) {
   if (x <= x1) return v1;
   if (x >= x2) return v2;
-  if (v1 <= v2) return v1 + muldiv(v2 - v1, x - x1, x2 - x1);
-  return v2 + muldiv(v1 - v2, x2 - x, x2 - x1);
+  if (v1 <= v2) return v1 + product_over(v2 - v1, x - x1, x2 - x1);
+  return v2 + product_over(v1 - v2, x2 - x, x2 - x1);
 }
 uint linear_reversed(uint v1, uint v2, uint x1, uint x, uint x2) {
   if (x <= x1) return v1;
   if (x >= x2) return v2;
-  if (v1 <= v2) return v2 - muldiv(v2 - v1, x2 - x, x2 - x1);
-  return v1 - muldiv(v1 - v2, x - x1, x2 - x1);
+  if (v1 <= v2) return v2 - product_over(v2 - v1, x2 - x, x2 - x1);
+  return v1 - product_over(v1 - v2, x - x1, x2 - x1);
 }
 // a * 2^bits / b, for a up to b, b under 2^31.
 uint fraction(uint a, uint b, int bits) {
@@ -437,6 +443,12 @@ Span span_with_edges(uint index, uint line, uint segment) {
   return sp;
 }
 
+// Whether two depths are no more than `margin` apart, however far apart.
+bool within(int a, int b, int margin) {
+  const uint apart = a >= b ? uint(a) - uint(b) : uint(b) - uint(a);
+  return apart <= uint(margin);
+}
+
 // What is known of a pixel while it is drawn.
 struct Pixel {
   uint colour;
@@ -550,8 +562,8 @@ void main() {
 
       const bool depth_equal = (p.attributes & (1u << 14)) != 0u;
       const int margin = w_buffer ? 0xFF : 0x200;
-      bool pass_front = depth_equal ? abs(front.depth - depth) <= margin : front.depth > depth;
-      bool pass_back = anti_aliasing && front.edge && (depth_equal ? abs(back.depth - depth) <= margin : back.depth > depth);
+      bool pass_front = depth_equal ? within(front.depth, depth, margin) : front.depth > depth;
+      bool pass_back = anti_aliasing && front.edge && (depth_equal ? within(back.depth, depth, margin) : back.depth > depth);
 
       int layer = 0;
       if (shadow) {

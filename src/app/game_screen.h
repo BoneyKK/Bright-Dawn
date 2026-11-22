@@ -82,6 +82,8 @@ class GameScreen {
   void prepare_enlarged(int factor);
   void draw();
   void capture(bool last);
+  // Writes the last 3D scene, as made, to --dump-3d's file.
+  void dump_3d();
   void count_rates(bool new_frame, bool shown);
   // The pause menu, until it is closed. False if the run is to end.
   bool run_menu();

@@ -162,7 +162,28 @@ void PolygonRenderer::make_shapes(const GeometryEngine::Frame& frame) {
   }
 }
 
+void PolygonRenderer::keep(const GeometryEngine::Frame& frame, const VideoMemory& video) {
+  Inputs& in = inputs_;
+  in.frame = frame;
+  in.control = control_;
+  in.alpha_reference = alpha_reference_;
+  in.clear_colour = clear_colour_;
+  in.clear_depth = clear_depth_;
+  in.clear_image_offset = clear_image_offset_;
+  in.fog_colour = fog_colour_;
+  in.fog_offset = fog_offset_;
+  in.edge_colours = edge_colours_;
+  in.fog_table = fog_table_;
+  in.toon_table = toon_table_;
+  in.textures.resize(VideoMemory::kTextureSize);
+  for (u32 a = 0; a < VideoMemory::kTextureSize; ++a) in.textures[a] = static_cast<std::int16_t>(video.texture(a));
+  in.palettes.resize(VideoMemory::kTexturePaletteSize);
+  for (u32 a = 0; a < VideoMemory::kTexturePaletteSize; ++a)
+    in.palettes[a] = static_cast<std::int16_t>(video.texture_palette(a));
+}
+
 const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame& frame, const VideoMemory& video) {
+  if (keep_inputs_) keep(frame, video);
   frame_ = &frame;
   video_ = &video;
   w_buffer_ = frame.depth_is_w;
@@ -245,6 +266,7 @@ std::uint32_t PolygonRenderer::scene_texture(const Shape& shape) {
 }
 
 const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& frame, const VideoMemory& video) {
+  if (keep_inputs_) keep(frame, video);
   frame_ = &frame;
   video_ = &video;
   make_shapes(frame);

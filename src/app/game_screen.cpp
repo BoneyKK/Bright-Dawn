@@ -9,6 +9,7 @@
 #include "core/version.h"
 #include "gfx/screen_image.h"
 #include "imgui.h"
+#include "nds/scene_dump.h"
 #include "ui/game_settings.h"
 
 namespace bd::app {
@@ -116,6 +117,7 @@ void GameScreen::apply_settings(bool first) {
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
   console_.polygon_renderer().set_edge_marking(ui::edge_marking(s));
+  console_.polygon_renderer().keep_inputs(!app_.options.dump_3d.empty());
   const bool smooth = ui::smooth_textures(s);
   console_.polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
                                                         : nds::PolygonRenderer::TextureFilter::Nearest);
@@ -184,6 +186,7 @@ bool GameScreen::frame() {
       drops_logged_at_ = now;
     }
   }
+  if (!app_.options.dump_3d.empty() && frames_run_ == app_.options.frames) dump_3d();
   if (!show && !capture_now) {
     count_rates(true, false);
     return true;
@@ -468,6 +471,33 @@ void GameScreen::draw() {
   if (shown_3d_[1] != nullptr) bottom = shown_3d_[1];
   place(top, screens_.top);
   place(bottom, screens_.bottom);
+}
+
+void GameScreen::dump_3d() {
+  const nds::Display& display = console_.display();
+  nds::SceneDump dump;
+  dump.inputs = console_.polygon_renderer().kept_inputs();
+  dump.edge_marking = console_.polygon_renderer().edge_marking();
+  dump.fine_positions = console_.polygon_renderer().fine_positions();
+  dump.scale = scale_3d();
+  for (int i = 0; i < 2; ++i) {
+    const nds::Display::ScreenFill& fill = display.frame_fill(i);
+    const auto n = static_cast<std::size_t>(i);
+    dump.screens[n] = i == 0 ? display.top_screen() : display.bottom_screen();
+    dump.fills[n] = fill.fill == nds::Display::Fill::kScene ? 1 : fill.fill == nds::Display::Fill::kNone ? 0 : 2;
+    dump.brightness[n] = fill.brightness;
+  }
+  std::string error;
+  const std::string name = app_.options.dump_3d.string();
+  if (dump.inputs.frame.polygons.empty()) {
+    std::fprintf(stderr, "error: no 3D scene to write to %s\n", name.c_str());
+  } else if (nds::write_scene_dump(app_.options.dump_3d, dump, error)) {
+    log::info("3d", "the 3D scene of the last frame was written to " + name);
+    std::printf("The 3D scene of the last frame was written to %s\n", name.c_str());
+  } else {
+    log::error("3d", error);
+    std::fprintf(stderr, "error: %s\n", error.c_str());
+  }
 }
 
 void GameScreen::capture(bool last) {

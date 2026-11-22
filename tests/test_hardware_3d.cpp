@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
@@ -19,6 +20,7 @@
 #include "nds/display_engine.h"
 #include "nds/geometry_engine.h"
 #include "nds/polygon_renderer.h"
+#include "nds/scene_dump.h"
 #include "nds/video_memory.h"
 #include "test.h"
 
@@ -81,6 +83,7 @@ struct Frame {
   Frame() {
     r.attach(io);
     io.write(PolygonRenderer::kClearDepth, 2, 0x7FFF);
+    r.keep_inputs(std::getenv("BD_FAILED_SCENES") != nullptr);
   }
   void control(u32 value) { io.write(PolygonRenderer::kControl, 2, value); }
 
@@ -207,7 +210,22 @@ int compare_raster(Frame& f, u32 control, const char* what) {
   int differ = 0;
   for (std::size_t i = 0; i < drawn.size(); ++i) {
     if ((drawn[i] & 0xFFFFFF) == wanted[i]) continue;
-    if (++differ <= 5)
+    if (++differ == 1) {
+      // BD_FAILED_SCENES=dir: each scene that differs is written there, for
+      // bd_scene_check.
+      if (const char* dir = std::getenv("BD_FAILED_SCENES")) {
+        static int written = 0;
+        bd::nds::SceneDump dump;
+        dump.inputs = f.r.kept_inputs();
+        dump.edge_marking = f.r.edge_marking();
+        dump.screens[0].assign(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
+        dump.fills[0] = 1;
+        std::string error;
+        const std::filesystem::path path = std::filesystem::path(dir) / (std::string(what) + "-" + std::to_string(++written) + ".scene");
+        if (bd::nds::write_scene_dump(path, dump, error)) std::printf("    written to %s\n", path.string().c_str());
+      }
+    }
+    if (differ <= 5)
       std::printf("    %s: (%d, %d) is %06x, not %06x\n", what, static_cast<int>(i % kWidth), static_cast<int>(i / kWidth),
                   drawn[i] & 0xFFFFFF, wanted[i]);
   }
@@ -275,7 +293,7 @@ void random_scene(Frame& f, std::mt19937& random, u32 control) {
       v.x = std::clamp(static_cast<int>(cx + radius * std::cos(angles[static_cast<std::size_t>(i)])), 0, 256);
       v.y = std::clamp(static_cast<int>(cy + radius * std::sin(angles[static_cast<std::size_t>(i)])), 0, 192);
       v.fine_x = v.x * 16, v.fine_y = v.y * 16;
-      v.z = std::clamp(z + static_cast<int>(any(0x40000)) - 0x20000, 0, 0xFFFFFF);
+      v.z = any(16) == 0 ? -512 : std::clamp(z + static_cast<int>(any(0x40000)) - 0x20000, 0, 0xFFFFFF);
       v.w = perspective ? 0x200 + static_cast<int>(any(0x20000)) : kOne;
       v.colour = any(0x40000);
       v.s = static_cast<std::int16_t>(static_cast<int>(any(2048)) - 512);
@@ -361,4 +379,120 @@ TEST(hardware_outlines_keep_their_thickness_at_3x) {
       CHECK(at(45, i) == (edge ? kGreen : inside ? kRed : 0u));
     }
   }
+}
+
+namespace {
+
+// What games draw that random polygons seldom are: meshes whose polygons
+// share their edges, thin polygons, polygons of up to ten corners, every
+// texture format, and many polygons.
+void mesh_scene(Frame& f, std::mt19937& random, u32 control) {
+  const auto any = [&](u32 below) { return static_cast<u32>(random() % below); };
+  for (const auto bank : {VideoMemory::kA, VideoMemory::kB, VideoMemory::kE})
+    f.video.set_control(bank, VideoMemory::kEnable);
+  for (u32 i = 0; i < 0x20000; i += 2) f.video.write(0x06800000 + i, 2, any(0x10000));  // Bank A, slot 0.
+  for (u32 i = 0; i < 0x20000; i += 2) f.video.write(0x06820000 + i, 2, any(0x10000));  // Bank B, slot 1.
+  for (u32 i = 0; i < 0x10000; i += 2) f.video.write(0x06880000 + i, 2, any(0x10000));  // Bank E, palettes.
+  f.video.set_control(VideoMemory::kA, VideoMemory::kEnable | 3);
+  f.video.set_control(VideoMemory::kB, VideoMemory::kEnable | 3 | 8);
+  f.video.set_control(VideoMemory::kE, VideoMemory::kEnable | 3);
+  f.control(control | PolygonRenderer::kTextures | PolygonRenderer::kAlphaBlending |
+            (any(2) != 0 ? PolygonRenderer::kAlphaTest : 0u) | (any(2) != 0 ? PolygonRenderer::kFog | 6u << 8 : 0u));
+  f.frame.depth_is_w = any(2) != 0;
+  f.io.write(PolygonRenderer::kAlphaTestReference, 2, any(16));
+  f.io.write(PolygonRenderer::kClearColour, 4, any(0x8000) | any(32) << 16 | any(64) << 24 | any(2) << 15);
+  f.io.write(PolygonRenderer::kFogOffset, 2, any(0x8000));
+  for (u32 i = 0; i < 32; ++i) f.io.write(PolygonRenderer::kFogTable + i, 1, i * 4);
+  // Forty textures (with the palette, as the polygon gives it), as a scene
+  // has: thousands would not fit in the graphics hardware's atlas.
+  std::vector<u32> textures;
+  for (int i = 0; i < 40; ++i) {
+    const u32 format = any(8);
+    textures.push_back(format == 0 ? 0u
+                                   : format << 26 | any(4) << 20 | any(4) << 23 | any(0x2000) | any(16) << 16 |
+                                         (any(2) != 0 ? 1u << 29 : 0u));
+  }
+  const auto texture = [&] { return textures[any(40)]; };
+  const auto corner = [&](int x, int y, int z, int w) {
+    Vertex v;
+    v.x = std::clamp(x, 0, 256), v.y = std::clamp(y, 0, 192);
+    v.fine_x = v.x * 16, v.fine_y = v.y * 16;
+    // Corners on the near plane come out of the geometry engine at -512.
+    v.z = any(16) == 0 ? -512 : std::clamp(z, 0, 0xFFFFFF), v.w = w;
+    v.colour = any(0x40000);
+    v.s = static_cast<std::int16_t>(static_cast<int>(any(4096)) - 1024);
+    v.t = static_cast<std::int16_t>(static_cast<int>(any(4096)) - 1024);
+    return v;
+  };
+  const bool perspective = any(2) != 0;
+  const bool far_away = any(4) == 0;  // w of up to 30 bits.
+  const auto w_of = [&] {
+    return !perspective ? kOne : far_away ? 0x10000 + static_cast<int>(any(0x3FFF0000)) : 0x1000 + static_cast<int>(any(0x400000));
+  };
+
+  // A mesh: a grid of quads, each split into two triangles or kept whole,
+  // over most of the screen, its corners shared.
+  const int step = 6 + static_cast<int>(any(14));
+  const int columns = 256 / step + 1, rows = 192 / step + 1;
+  std::vector<Vertex> grid;
+  const int base_z = static_cast<int>(any(0x800000));
+  for (int r = 0; r <= rows; ++r)
+    for (int c = 0; c <= columns; ++c)
+      grid.push_back(corner(c * step + static_cast<int>(any(3)) - 1, r * step + static_cast<int>(any(3)) - 1,
+                            base_z + static_cast<int>(any(0x10000)), w_of()));
+  const u32 mesh_number = any(64), mesh_alpha = any(4) == 0 ? 1 + any(30) : 31;
+  for (int r = 0; r < rows; ++r)
+    for (int c = 0; c < columns; ++c) {
+      const Vertex a = grid[static_cast<std::size_t>(r * (columns + 1) + c)], b = grid[static_cast<std::size_t>(r * (columns + 1) + c + 1)];
+      const Vertex d = grid[static_cast<std::size_t>((r + 1) * (columns + 1) + c)], e = grid[static_cast<std::size_t>((r + 1) * (columns + 1) + c + 1)];
+      const u32 attributes = alpha(mesh_alpha) | number(any(3) == 0 ? any(64) : mesh_number) | any(3) << 4 | 1u << 15 | 1u << 11;
+      const u32 t = texture();
+      if (any(2) != 0) {
+        const Vertex quad[4] = {a, d, e, b};
+        f.polygon(quad, 4, attributes, t, t & 63);
+      } else {
+        const Vertex one[3] = {a, d, e}, two[3] = {a, e, b};
+        f.polygon(one, 3, attributes, t, t & 63);
+        f.polygon(two, 3, attributes, t, t & 63);
+      }
+    }
+  // Thin spikes in front, as stalagmites: a pixel to a few wide.
+  for (int n = 0; n < 300; ++n) {
+    const int x = static_cast<int>(any(256)), y = static_cast<int>(any(192)), width = 1 + static_cast<int>(any(4));
+    const int height = 5 + static_cast<int>(any(60)), z = static_cast<int>(any(0x800000));
+    const Vertex spike[3] = {corner(x, y, z, w_of()), corner(x + width, y + height, z, w_of()), corner(x - width, y + height, z, w_of())};
+    const u32 t = texture();
+    f.polygon(spike, 3, alpha(any(3) == 0 ? 1 + any(30) : 31) | number(any(64)) | any(3) << 4, t, t & 63);
+  }
+  // Polygons of ten corners.
+  for (int n = 0; n < 20; ++n) {
+    const double cx = any(256), cy = any(192), radius = 4 + any(60);
+    Vertex ring[10];
+    const int z = static_cast<int>(any(0x800000));
+    for (int i = 0; i < 10; ++i)
+      ring[i] = corner(static_cast<int>(cx + radius * std::cos(i * 0.6283)), static_cast<int>(cy + radius * std::sin(i * 0.6283)),
+                       z, w_of());
+    const u32 t = texture();
+    f.polygon(ring, 10, alpha(31) | number(any(64)), t, t & 63);
+  }
+}
+
+}  // namespace
+
+TEST(hardware_rasterizer_draws_meshes_as_the_processor_at_1x) {
+  std::mt19937 random(7);
+  const u32 controls[] = {PolygonRenderer::kAntiAliasing, PolygonRenderer::kEdgeMarking | PolygonRenderer::kAntiAliasing,
+                          PolygonRenderer::kEdgeMarking};
+  int failed = 0;
+  const int scenes = std::getenv("BD_SCENES") != nullptr ? std::atoi(std::getenv("BD_SCENES")) : 12;
+  for (int round = 0; round < scenes; ++round) {
+    Frame f;
+    mesh_scene(f, random, controls[round % 3]);
+    const int differ = compare_raster(f, f.r.control(), "mesh");
+    if (differ != 0) {
+      ++failed;
+      std::printf("    scene %d: %zu polygons, %d pixels differ\n", round, f.frame.polygons.size(), differ);
+    }
+  }
+  CHECK(failed == 0);
 }
