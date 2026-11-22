@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "At 1x, the graphics hardware's 3D is the processor's, pixel for pixel: the polygons are drawn by the DS's rules on the graphics hardware for every frame, and display captures keep five bits a colour part, as on the DS. On the title screen, in Saha Town and in the first cave, both screens match.",
+    "what": "The game's 2D was measured on the title screen, in the first cave, in Saha Town and in a battle: no layer or sprite is turned or scaled, nothing uses mosaic, and every scroll is a whole pixel. So drawing the 2D at a higher resolution would give the same picture as enlarging it, and it stays at the DS's resolution.",
     "date": "2026-11-22"
   },
   "statuses": {
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), the smoothing of polygon edges, shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel. Widescreen: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), the smoothing of polygon edges, shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Widescreen: not yet."
     },
     {
       "part": "audio",
@@ -424,9 +424,8 @@
     }
   ],
   "next": [
-    "Higher resolutions, 1: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.",
-    "Higher resolutions, 2: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.",
-    "Higher resolutions, 3: the scroll of the 3D layer (BG0) is not used, by either 3D path.",
+    "Higher resolutions, 1: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.",
+    "Higher resolutions, 2: the scroll of the 3D layer (BG0) is not used, by either 3D path.",
     "Widescreen and mods."
   ]
 }
