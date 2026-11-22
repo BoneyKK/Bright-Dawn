@@ -1,8 +1,10 @@
 // Drawing a 3D frame's polygons. The frames are made by hand, with corners
 // already on the screen, and the expectations worked out from the hardware's
 // arithmetic.
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
+#include <iterator>
 
 #include "nds/arm9_io.h"
 #include "nds/geometry_engine.h"
@@ -806,6 +808,39 @@ TEST(renderer_smoothing_keeps_outlines_and_mixes_alpha) {
   CHECK(f.at(1, 0) == rgba(44, 19, 0, 45));
 }
 
+TEST(renderer_scene_has_shadows_for_the_graphics_hardware) {
+  using Scene = bd::nds::HardwareScene;
+  using Kind = Scene::Kind;
+  Fixture f;
+  f.control(PolygonRenderer::kAlphaBlending);
+  // A floor; two masks and a shadow; a mask after it, and another shadow.
+  f.rectangle(0, 0, 16, 16, kWhite, kOpaque | number(1), 0x400000);
+  f.rectangle(4, 4, 12, 12, kBlack, alpha(15) | mode(3) | number(0), 0x600000);
+  f.rectangle(4, 4, 8, 8, kBlack, alpha(15) | mode(3) | number(0), 0x600000);
+  f.rectangle(0, 0, 16, 16, kRed, alpha(15) | mode(3) | number(2), 0x200000);
+  f.rectangle(8, 0, 12, 4, kBlack, alpha(15) | mode(3) | number(0), 0x600000);
+  f.rectangle(0, 0, 16, 16, kBlack, alpha(15) | mode(3) | number(3), 0x200000);
+  const Scene& scene = f.r.build_scene(f.frame, f.video);
+  // A run of masks starts with no pixel marked; a shadow first unmarks the
+  // pixels of its own number, then is drawn where marked.
+  const Kind kinds[] = {Kind::Opaque, Kind::ShadowClear, Kind::ShadowMask, Kind::ShadowGuard, Kind::Shadow,
+                        Kind::ShadowClear, Kind::ShadowMask, Kind::ShadowGuard, Kind::Shadow};
+  CHECK(scene.runs.size() == std::size(kinds));
+  for (std::size_t i = 0; i < std::min(scene.runs.size(), std::size(kinds)); ++i) CHECK(scene.runs[i].kind == kinds[i]);
+  if (scene.runs.size() != std::size(kinds)) return;
+  CHECK(scene.runs[0].number == 1 && scene.runs[2].count == 12 && scene.runs[3].number == 2 && scene.runs[4].number == 2);
+  CHECK(scene.runs[7].number == 3 && scene.runs[8].number == 3);
+  // The clear: one triangle over all of clip space.
+  const Scene::Vertex* clear = &scene.vertices[scene.runs[1].first];
+  CHECK(scene.runs[1].count == 3 && clear[0].position[0] == -1.0f && clear[1].position[0] == 3.0f &&
+        clear[2].position[1] == 3.0f && clear[0].position[3] == 1.0f);
+  // A mask is never left out for its alpha; a shadow has its own, and is
+  // coloured as a modulated polygon.
+  CHECK(scene.vertices[scene.runs[2].first].colour[3] == 255);
+  const Scene::Vertex& shadow = scene.vertices[scene.runs[4].first];
+  CHECK(shadow.colour[3] == (31 << 2 | 31 >> 4) && shadow.colour[0] == 255 && (shadow.info[2] & Scene::kModeMask) == 0);
+}
+
 TEST(renderer_scene_for_the_graphics_hardware) {
   using Scene = bd::nds::HardwareScene;
   Fixture f;
@@ -818,11 +853,10 @@ TEST(renderer_scene_for_the_graphics_hardware) {
   f.rectangle(0, 0, 128, 96, kRed, kOpaque);                                   // Opaque: two triangles.
   f.textured_square(8, format(7) | kRepeatS, alpha(15) | number(5));            // Translucent, textured.
   f.rectangle(0, 0, 8, 8, kRed, alpha(0));                                      // An outline: left out.
-  f.rectangle(0, 0, 8, 8, kRed, kOpaque | mode(3));                             // A shadow: left out.
   const Scene& scene = f.r.build_scene(f.frame, f.video);
   CHECK(scene.serial == 1 && scene.vertices.size() == 12 && scene.runs.size() == 2);
   CHECK(scene.runs[0].kind == Scene::Kind::Opaque && scene.runs[0].first == 0 && scene.runs[0].count == 6);
-  CHECK(scene.runs[1].kind == Scene::Kind::Overlay && scene.runs[1].count == 6 && scene.runs[1].number == 6);
+  CHECK(scene.runs[1].kind == Scene::Kind::Overlay && scene.runs[1].count == 6 && scene.runs[1].number == 5);
   // Places from the top left of the screen to clip space, depth 0 to 1.
   const Scene::Vertex& corner = scene.vertices[0];
   const float w = corner.position[3];

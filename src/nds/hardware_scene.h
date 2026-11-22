@@ -4,8 +4,8 @@
 // are read from video memory at the same moment.
 //
 // Made for speed, not to be exact: the polygons become triangles with a
-// depth buffer, and fog, anti-aliasing, shadow polygons and polygons drawn
-// as lines only are left out.
+// depth buffer, and fog, anti-aliasing and polygons drawn as lines only are
+// left out.
 #pragma once
 
 #include <array>
@@ -47,14 +47,21 @@ struct HardwareScene {
     Opaque,        // Over what is behind; keeps its depth.
     Translucent,   // Blended by its alpha; keeps its depth.
     Overlay,       // Blended by its alpha; leaves the depth as it was.
+    // Shadow polygons, as the DS draws them, with a mark for each pixel (a
+    // stencil buffer). Only Shadow draws a colour; none keeps its depth.
+    ShadowClear,   // One triangle over the whole picture: no pixel is marked.
+    ShadowMask,    // Marks the pixels where it is not nearer than what is there.
+    ShadowGuard,   // A shadow's own triangles: unmarks the pixels of opaque polygons of its number.
+    Shadow,        // Blended by its alpha where marked and nearer than what is there.
   };
   struct Run {
     std::uint32_t first = 0, count = 0;  // Vertices.
     Kind kind = Kind::Opaque;
     // Drawn where it is nearer than what is there, or also where as near.
     bool depth_equal = false;
-    // Of a translucent run: its polygon number plus one. It is not drawn
-    // over translucent pixels of the same number (a stencil buffer).
+    // Its polygon number (0 to 63). Each pixel keeps the number of the last
+    // polygon drawn on it, and whether that one is translucent: a
+    // translucent run is not drawn over translucent pixels of its number.
     std::uint8_t number = 0;
   };
 

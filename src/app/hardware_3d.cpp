@@ -34,6 +34,22 @@ std::uint32_t clear_depth_bits(const Scene& scene) {
   return static_cast<std::uint32_t>(std::clamp(scene.clear_depth, 0.0f, 1.0f) * 16777215.0f + 0.5f);
 }
 
+// What a run writes in the stencil buffer, or compares with it (the
+// pipelines say which bits).
+Uint8 stencil_reference(const Scene::Run& run) {
+  const auto number = static_cast<Uint8>(run.number & 63);
+  switch (run.kind) {
+    case Scene::Kind::Opaque:
+    case Scene::Kind::ShadowGuard: return number;
+    case Scene::Kind::Translucent:
+    case Scene::Kind::Overlay: return static_cast<Uint8>(0x40 | number);
+    case Scene::Kind::ShadowClear: return 0;
+    case Scene::Kind::ShadowMask: return 0x80;
+    case Scene::Kind::Shadow: return static_cast<Uint8>(0xC0 | number);
+  }
+  return 0;
+}
+
 std::uint32_t aligned(std::uint32_t n) { return (n + 255u) & ~255u; }
 
 SDL_GPUShader* make_shader(SDL_GPUDevice* device, const std::uint8_t* code, std::size_t size, SDL_GPUShaderStage stage,
@@ -129,17 +145,24 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
         {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, offsetof(Scene::Vertex, colour)},
         {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_UINT4, offsetof(Scene::Vertex, info)},
     }};
-    for (int index = 0; index < 6; ++index) {
-      const int kind = index / 2;
-      // The colour, and the polygon numbers and depths, which translucent
-      // polygons leave as they are.
+    for (int index = 0; index < 14; ++index) {
+      using Kind = Scene::Kind;
+      const auto kind = static_cast<Kind>(index / 2);
+      const bool coloured = kind == Kind::Opaque || kind == Kind::Translucent || kind == Kind::Overlay || kind == Kind::Shadow;
+      // The colour, and the polygon numbers and depths, which only opaque
+      // polygons write.
       std::array<SDL_GPUColorTargetDescription, 2> targets{};
       SDL_GPUColorTargetDescription& target = targets[0];
       target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
       targets[1].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-      if (kind != static_cast<int>(Scene::Kind::Opaque)) {
+      if (kind != Kind::Opaque) {
         targets[1].blend_state.enable_color_write_mask = true;
         targets[1].blend_state.color_write_mask = 0;
+      }
+      if (!coloured) {
+        target.blend_state.enable_color_write_mask = true;
+        target.blend_state.color_write_mask = 0;
+      } else if (kind != Kind::Opaque) {
         // Colours are kept times their alpha: "over".
         target.blend_state.enable_blend = true;
         target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
@@ -160,21 +183,47 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
       info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
       info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;  // The geometry engine has culled.
       info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
-      info.depth_stencil_state.enable_depth_test = true;
-      info.depth_stencil_state.enable_depth_write = kind != static_cast<int>(Scene::Kind::Overlay);
+      info.depth_stencil_state.enable_depth_test = kind != Kind::ShadowClear && kind != Kind::ShadowGuard;
+      info.depth_stencil_state.enable_depth_write = kind == Kind::Opaque || kind == Kind::Translucent;
       info.depth_stencil_state.compare_op = index % 2 != 0 ? SDL_GPU_COMPAREOP_LESS_OR_EQUAL : SDL_GPU_COMPAREOP_LESS;
-      if (stencil_ && kind != static_cast<int>(Scene::Kind::Opaque)) {
-        // Not over translucent pixels of the same polygon number, which
-        // each translucent pixel drawn leaves in the stencil buffer.
+      if (stencil_) {
+        // A byte for each pixel (stencil_reference() gives what is written):
+        // the low six bits, the number of the last polygon drawn on it; 64,
+        // that polygon is translucent; 128, marked by a shadow mask.
         SDL_GPUStencilOpState op{};
         op.fail_op = SDL_GPU_STENCILOP_KEEP;
         op.depth_fail_op = SDL_GPU_STENCILOP_KEEP;
         op.pass_op = SDL_GPU_STENCILOP_REPLACE;
-        op.compare_op = SDL_GPU_COMPAREOP_NOT_EQUAL;
+        op.compare_op = SDL_GPU_COMPAREOP_ALWAYS;
+        Uint8 compare = 0, write = 0x7F;
+        switch (kind) {
+          case Kind::Opaque: break;
+          case Kind::Translucent:
+          case Kind::Overlay:
+            // Not over translucent pixels of the same polygon number.
+            op.compare_op = SDL_GPU_COMPAREOP_NOT_EQUAL;
+            compare = 0x7F;
+            break;
+          case Kind::ShadowClear: write = 0x80; break;
+          case Kind::ShadowMask:
+            op.pass_op = SDL_GPU_STENCILOP_KEEP;
+            op.depth_fail_op = SDL_GPU_STENCILOP_REPLACE;
+            write = 0x80;
+            break;
+          case Kind::ShadowGuard:
+            op.compare_op = SDL_GPU_COMPAREOP_EQUAL;
+            compare = 0x7F;
+            write = 0x80;
+            break;
+          case Kind::Shadow:
+            op.compare_op = SDL_GPU_COMPAREOP_EQUAL;
+            compare = 0x80;
+            break;
+        }
         info.depth_stencil_state.front_stencil_state = op;
         info.depth_stencil_state.back_stencil_state = op;
-        info.depth_stencil_state.compare_mask = 0xFF;
-        info.depth_stencil_state.write_mask = 0xFF;
+        info.depth_stencil_state.compare_mask = compare;
+        info.depth_stencil_state.write_mask = write;
         info.depth_stencil_state.enable_stencil_test = true;
       }
       info.target_info.color_target_descriptions = targets.data();
@@ -223,7 +272,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   if (!made) return false;  // What was made is let go by the destructor.
   log::writef(log::Level::Info, "3d", "the graphics hardware draws 3D scenes (%s, depth buffer format %d, %s)",
               SDL_GetGPUDeviceDriver(device), static_cast<int>(depth_format_),
-              stencil_ ? "with polygon numbers" : "without polygon numbers");
+              stencil_ ? "with polygon numbers and shadows" : "without polygon numbers or shadows");
   return true;
 }
 
@@ -552,9 +601,10 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
       uniforms.options[0] = scene.alpha_threshold;
       uniforms.options[1] = scene.highlight ? 1.0f : 0.0f;
       for (const Scene::Run& run : scene.runs) {
+        if (!stencil_ && run.kind >= Scene::Kind::ShadowClear) continue;
         uniforms.options[2] = run.kind == Scene::Kind::Opaque ? 1.0f : 0.0f;
         SDL_BindGPUGraphicsPipeline(pass, scene_pipelines_[static_cast<int>(run.kind) * 2 + (run.depth_equal ? 1 : 0)]);
-        if (stencil_) SDL_SetGPUStencilReference(pass, run.number);
+        if (stencil_) SDL_SetGPUStencilReference(pass, stencil_reference(run));
         SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, sizeof uniforms);
         SDL_DrawGPUPrimitives(pass, run.count, 1, run.first, 0);
       }

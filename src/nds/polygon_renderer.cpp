@@ -274,17 +274,29 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   scene.alpha_threshold = ((control_ & kAlphaTest) != 0 ? static_cast<float>(alpha_reference_ & 0x1F) * 2 + 1.5f : 0.5f) / 63.0f;
 
   // Opaque polygons first, then the translucent ones, each in the order sent.
+  // A run of shadow masks starts with no pixel marked, as on the DS.
+  using Kind = HardwareScene::Kind;
+  bool after_mask = false;
   const auto add = [&](bool translucent_pass) {
     for (const Shape& shape : shapes_) {
       const bool translucent = shape.alpha < 0x3F || shape.format == 1 || shape.format == 6;
       if (translucent != translucent_pass) continue;
-      // Left out: polygons drawn as outlines, and shadows.
-      if (shape.alpha == 0 || shape.mode == 3) continue;
-      const HardwareScene::Kind kind = !translucent      ? HardwareScene::Kind::Opaque
-                                       : shape.new_depth ? HardwareScene::Kind::Translucent
-                                                         : HardwareScene::Kind::Overlay;
-      u32 info[4] = {0, 0, shape.mode, shape.number};
-      if (shape.format != 0) {
+      const bool shadow = shape.mode == 3;
+      const bool mask = shadow && shape.number == 0;
+      // Left out: polygons drawn as outlines.
+      if (shape.alpha == 0) {
+        after_mask = false;
+        continue;
+      }
+      const Kind kind = mask              ? Kind::ShadowMask
+                        : shadow          ? Kind::Shadow
+                        : !translucent    ? Kind::Opaque
+                        : shape.new_depth ? Kind::Translucent
+                                          : Kind::Overlay;
+      // A shadow is coloured as a modulated polygon; a mask is not drawn,
+      // so nothing of it is left out for its alpha.
+      u32 info[4] = {0, 0, shadow ? 0u : shape.mode, shape.number};
+      if (shape.format != 0 && !mask) {
         info[0] = scene_texture(shape);
         info[1] = static_cast<u32>(shape.size_s) | static_cast<u32>(shape.size_t_) << 16;
         info[2] |= HardwareScene::kTextured | (shape.repeat_s ? HardwareScene::kRepeatS : 0) |
@@ -313,23 +325,39 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         c.colour[0] = static_cast<std::uint8_t>(eight_bits(v.colour));
         c.colour[1] = static_cast<std::uint8_t>(eight_bits(v.colour >> 6));
         c.colour[2] = static_cast<std::uint8_t>(eight_bits(v.colour >> 12));
-        c.colour[3] = static_cast<std::uint8_t>(eight_bits(shape.alpha));
+        c.colour[3] = static_cast<std::uint8_t>(mask ? 0xFF : eight_bits(shape.alpha));
         std::copy(std::begin(info), std::end(info), c.info);
       }
       // An uncut polygon of a strip of four-cornered polygons is stored in
       // the strip's order.
       if (polygon.strip_order) std::swap(corners[2], corners[3]);
-      const auto number = static_cast<std::uint8_t>(translucent ? shape.number + 1 : 0);
-      if (scene.runs.empty() || scene.runs.back().kind != kind || scene.runs.back().depth_equal != shape.depth_equal ||
-          scene.runs.back().number != number)
-        scene.runs.push_back({static_cast<u32>(scene.vertices.size()), 0, kind, shape.depth_equal, number});
-      // A fan of triangles from the first corner.
-      for (unsigned i = 1; i + 1 < polygon.size; ++i) {
-        scene.vertices.push_back(corners[0]);
-        scene.vertices.push_back(corners[i]);
-        scene.vertices.push_back(corners[i + 1]);
-        scene.runs.back().count += 3;
+      const auto number = static_cast<std::uint8_t>(shape.number);
+      if (mask && !after_mask) {
+        // One triangle over the whole picture.
+        scene.runs.push_back({static_cast<u32>(scene.vertices.size()), 3, Kind::ShadowClear, false, 0});
+        for (const float xy : {0.0f, 1.0f, 2.0f}) {
+          HardwareScene::Vertex& v = scene.vertices.emplace_back();
+          v.position[0] = xy == 1.0f ? 3.0f : -1.0f;
+          v.position[1] = xy == 2.0f ? 3.0f : -1.0f;
+          v.position[3] = 1.0f;
+          v.colour[3] = 0xFF;
+        }
       }
+      after_mask = mask;
+      const auto put = [&](Kind k) {
+        if (scene.runs.empty() || scene.runs.back().kind != k || scene.runs.back().depth_equal != shape.depth_equal ||
+            scene.runs.back().number != number)
+          scene.runs.push_back({static_cast<u32>(scene.vertices.size()), 0, k, shape.depth_equal, number});
+        // A fan of triangles from the first corner.
+        for (unsigned i = 1; i + 1 < polygon.size; ++i) {
+          scene.vertices.push_back(corners[0]);
+          scene.vertices.push_back(corners[i]);
+          scene.vertices.push_back(corners[i + 1]);
+          scene.runs.back().count += 3;
+        }
+      };
+      if (kind == Kind::Shadow) put(Kind::ShadowGuard);
+      put(kind);
     }
   };
   add(false);
