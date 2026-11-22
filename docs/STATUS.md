@@ -17,10 +17,10 @@ at a glance, with what comes next.
 | Code translator (machine code to C++), from the owner's earlier project | In the repository and run by the build; tested on the guest corpus |
 | Guest test corpus: 26 programs built natively and as ARMv5TE code, in ARM and Thumb state | Done; the native reference is pinned by checksums on every platform |
 | Fallback interpreter (SkyEmu's ARM core) | In the repository; gives the reference result on the whole corpus |
-| Running translated code with the interpreter behind it, translated code first | Done for the test programs: all pass. **Not yet run on the game** |
+| Running translated code with the interpreter behind it, translated code first | Done: the test programs all pass, and the game runs this way from the title screen to battles |
 | Overlays that share an address | Done: a translation is used only while the bytes it was made from are in memory; the same for the main program's code, which the game changes in places as it runs |
 | Processor modes, each with its own registers | Done, tested in translated and interpreted code |
-| Translating the real game | Done: main program and all 366 overlays, 17,076 functions, compile and link. **No translated game code has been executed** |
+| Translating the real game | Done: main program and all 366 overlays, 18,271 functions, compile, link and run |
 | Memory map, system coprocessor, the state a game starts in | Done, tested, with video memory in its nine banks |
 | Running the game's start-up code (`bdtool boot`) | Works in the interpreter, on the real ROM: the program sets up the machine, takes interrupts, reads file tables and overlays from the cartridge, passes its check of the console, sets up its save memory and reaches its frame loop |
 | Interrupts, in interpreted code | Done, tested: the display's and timers' interrupts are taken, and the processor sleeps until one comes |
@@ -29,7 +29,7 @@ at a glance, with what comes next.
 | The second processor's services | Begun: words are received as the game's own second-processor program receives them, and the cartridge service (save memory included) and one-off touch screen samples are done. Sound: next row. Clock, power: not yet |
 | Sound | Begun, tested: the sound hardware (channels, mixer, capture units) and the part of the second processor's sound program that drives it directly, with its alarms. The real program's echo set-up runs on it. The sequence player (music and most sound effects) is written natively, and the sound goes to the computer's audio device through SDL, with a volume and an on/off setting. Pitch and volume use computed BIOS tables, which can be one step off the console's |
 | Buttons and lid | Done, tested: the main program's register and what the second processor passes on. Driven by the window |
-| Save memory (256 KiB serial flash) | Done, tested; the real program reads it, and it is kept in a file between runs (`saves` in the user data directory), with a copy of the save before the last run that changed it |
+| Save memory (256 KiB serial flash) | Done, tested; the real program reads it, and it is kept in a file between runs (`saves` in the user data directory), with a copy of the save before the last run that changed it. A save made in the game (Travel Log, in Saha Town) is kept through a restart and loads |
 | Console settings the game reads (language, owner, network address) | Done, tested. The language is a setting (Settings, Game, or `--language`): on the real European ROM, German gives the German title and name entry. The others are fixed values |
 | BIOS calls | 12 of the 17 the game has wrappers for, tested: 9 natively, 3 that wait for interrupts as this project's own code on the processor |
 | DMA | Transfers that start at once, transfers fed by the cartridge and transfers timed by the display's blanks: done, tested. Transfers started by other hardware events: not yet |
