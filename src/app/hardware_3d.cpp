@@ -173,7 +173,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   SDL_GPUShader* compose_vertex = make_shader(device, shaders::kComposeVert, sizeof shaders::kComposeVert,
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
-                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1, 1);
+                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1, 1);
   const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment;
 
   // The depth buffer: the most exact format the device has, with a stencil
@@ -206,11 +206,16 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
       const bool coloured = kind == Kind::Opaque || kind == Kind::Translucent || kind == Kind::Overlay || kind == Kind::Shadow;
       // The colour, and the depths and fog marks (the depth where the
       // polygon keeps its depth, the mark times the polygon's: kept where
-      // every polygon drawn on the pixel takes fog).
-      std::array<SDL_GPUColorTargetDescription, 2> targets{};
+      // every polygon drawn on the pixel takes fog), and the numbers of
+      // opaque polygons (for outlines above the DS's resolution).
+      std::array<SDL_GPUColorTargetDescription, 3> targets{};
       SDL_GPUColorTargetDescription& target = targets[0];
       for (SDL_GPUColorTargetDescription& t : targets) t.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
       SDL_GPUColorTargetBlendState& fog = targets[1].blend_state;
+      if (kind != Kind::Opaque) {
+        targets[2].blend_state.enable_color_write_mask = true;
+        targets[2].blend_state.color_write_mask = 0;
+      }
       if (!coloured) {
         fog.enable_color_write_mask = true;
         fog.color_write_mask = 0;
@@ -361,9 +366,9 @@ void Hardware3D::release_targets() {
     if (k.texture != nullptr) SDL_ReleaseGPUTexture(device_, k.texture);
     k = Kept{};
   }
-  for (SDL_GPUTexture* t : {scene_target_, fog_marks_, depth_})
+  for (SDL_GPUTexture* t : {scene_target_, fog_marks_, numbers_, depth_})
     if (t != nullptr) SDL_ReleaseGPUTexture(device_, t);
-  scene_target_ = fog_marks_ = depth_ = nullptr;
+  scene_target_ = fog_marks_ = numbers_ = depth_ = nullptr;
   for (SDL_GPUBuffer* b : {layers_, finished_})
     if (b != nullptr) SDL_ReleaseGPUBuffer(device_, b);
   layers_ = finished_ = nullptr;
@@ -384,6 +389,7 @@ bool Hardware3D::make_targets(int scale) {
   };
   scene_target_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   fog_marks_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+  numbers_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   depth_ = make(depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
   const auto make_buffer = [&](SDL_GPUBufferUsageFlags usage, std::uint32_t bytes_a_pixel) {
     SDL_GPUBufferCreateInfo info{};
@@ -630,8 +636,10 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   const std::uint32_t vertex_bytes = new_scene ? static_cast<std::uint32_t>(scene.vertices.size() * sizeof(Scene::Vertex)) : 0;
   const Scene::Raster& raster = scene.raster;
   // At the DS's resolution the rasterizer draws all of the scene, as the
-  // processor does; at larger sizes only outlines and smoothed edges.
-  const bool rasterize = new_scene && (raster.wanted || scale_ == 1);
+  // processor does. At larger sizes it is not used: it would cost far more
+  // than the triangles, and outlines are drawn from the triangles' pixels
+  // (compose.frag).
+  const bool rasterize = new_scene && scale_ == 1;
   const std::uint32_t corner_bytes =
       rasterize ? static_cast<std::uint32_t>(raster.corners.size() * sizeof(Scene::Raster::Corner)) : 0;
   const std::uint32_t polygon_bytes =
@@ -758,7 +766,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
 
   if (new_scene) {
     // 1. The scene, over the clear colour (times its alpha) at the clear depth.
-    std::array<SDL_GPUColorTargetInfo, 2> colours{};
+    std::array<SDL_GPUColorTargetInfo, 3> colours{};
     SDL_GPUColorTargetInfo& colour = colours[0];
     colour.texture = scene_target_;
     const float a = scene.clear_colour[3];
@@ -773,6 +781,10 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     colours[1].clear_color = {static_cast<float>(clear_depth >> 16) / 255.0f,
                               static_cast<float>((clear_depth >> 8) & 255) / 255.0f,
                               static_cast<float>(clear_depth & 255) / 255.0f, scene.clear_fog ? 1.0f : 0.0f};
+    // The clear plane's polygon number; no opaque polygon there yet.
+    colours[2] = colour;
+    colours[2].texture = numbers_;
+    colours[2].clear_color = {static_cast<float>(scene.clear_number & 63) / 63.0f, 0.0f, 0.0f, 0.0f};
     SDL_GPUDepthStencilTargetInfo depth{};
     depth.texture = depth_;
     depth.clear_depth = scene.clear_depth;
@@ -817,10 +829,11 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 4> sources{{{screen_, nearest_},
+  const std::array<SDL_GPUTextureSamplerBinding, 5> sources{{{screen_, nearest_},
                                                              {source != nullptr ? source : scene_target_, nearest_},
                                                              {second != nullptr ? second : bank_, nearest_},
-                                                             {fog_marks_, nearest_}}};
+                                                             {fog_marks_, nearest_},
+                                                             {numbers_, nearest_}}};
   SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), static_cast<Uint32>(sources.size()));
   SDL_BindGPUFragmentStorageBuffers(pass, 0, &finished_, 1);
   // Outlines and anti-aliased edges where the scene is put in.
@@ -829,6 +842,17 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     uniforms.edge[0] = static_cast<std::uint32_t>(kScreenWidth * scale_);
     uniforms.edge[1] = static_cast<std::uint32_t>(kScreenHeight * scale_);
     uniforms.edge[3] = 1;
+  }
+  // Above the DS's resolution, outlines where the scene is put in: solid,
+  // in the edge colours, as wide as asked.
+  if (given != nullptr && source == nullptr && scene.edge_marking && scale_ > 1) {
+    using Marking = nds::PolygonRenderer::EdgeMarking;
+    uniforms.outline[0] = static_cast<std::uint32_t>(
+        nds::PolygonRenderer::edge_width(scene.edge_one_pixel ? Marking::OnePixel : Marking::OriginalThickness, scale_));
+    uniforms.outline[1] = scene.clear_number & 63u;
+    uniforms.outline[2] = clear_depth_bits(scene);
+    uniforms.outline[3] = static_cast<std::uint32_t>(scale_);
+    std::memcpy(uniforms.outline_colours, scene.edge_colours.data(), sizeof uniforms.outline_colours);
   }
   // Fog, where the scene is put in.
   if (given != nullptr && source == nullptr && scene.fog) {

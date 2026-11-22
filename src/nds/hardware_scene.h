@@ -105,7 +105,10 @@ struct HardwareScene {
   // wide, or one pixel of the resolution drawn at with edge_one_pixel.
   // With anti-aliasing, an edge pixel is half its colour and half what is
   // behind it, and the edges of polygons are mixed with what is behind them
-  // by how much of the pixel they cover. Both are drawn from `raster`.
+  // by how much of the pixel they cover. At the DS's resolution both are
+  // drawn from `raster`. Above it, outlines are drawn solid from the
+  // triangles' own pixels (their polygon numbers and depths), and
+  // anti-aliasing is left out.
   bool edge_marking = false;
   bool edge_one_pixel = false;
   bool anti_aliasing = false;
@@ -128,10 +131,8 @@ struct HardwareScene {
   // DS has it, for the graphics hardware's own rasterizer
   // (app/shaders/raster.comp), which draws them as the processor does
   // (nds::PolygonRenderer), at any resolution: two layers a pixel, the
-  // DS's spans, its edges and how much of a pixel they cover. At the DS's
-  // resolution every pixel of the scene is taken from it; at larger sizes
-  // only outlines and smoothed edges, for frames that ask for edge marking
-  // or anti-aliasing (`wanted`).
+  // DS's spans, its edges and how much of a pixel they cover. It is used at
+  // the DS's resolution, where every pixel of the scene is taken from it.
   struct Raster {
     // A corner (24 bytes, as the shader reads it).
     struct Corner {
@@ -159,7 +160,6 @@ struct HardwareScene {
     static constexpr std::uint32_t kClockwise = 1;
     static constexpr std::uint32_t kTextured = 2;
 
-    bool wanted = false;
     // In the order drawn: the opaque polygons, then the translucent ones.
     std::vector<Corner> corners;
     std::vector<Polygon> polygons;

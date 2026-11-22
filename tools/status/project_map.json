@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "The game's 2D was measured on the title screen, in the first cave, in Saha Town and in a battle: no layer or sprite is turned or scaled, nothing uses mosaic, and every scroll is a whole pixel. So drawing the 2D at a higher resolution would give the same picture as enlarging it, and it stays at the DS's resolution.",
+    "what": "Above 1x the 3D costs far less: the drawing by the DS's rules runs only at 1x (in the first cave at 4x on a software Vulkan device, 1500 frames took 111 s instead of 529 s), and outlines are drawn solid from the triangles' own pixels, so they meet the models' edges. The program has its own icon.",
     "date": "2026-11-22"
   },
   "statuses": {
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), the smoothing of polygon edges, shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Widescreen: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel, with the smoothing of polygon edges; above 1x solid outlines that meet the models' edges, without the costly drawing by the DS's rules. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Widescreen: not yet."
     },
     {
       "part": "audio",

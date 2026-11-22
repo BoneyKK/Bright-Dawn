@@ -14,7 +14,13 @@
 // Where the scene is put in: its pixels as the scene pass drew them, with
 // fog as the DS does it (nds::HardwareScene::fog); but outlines and
 // anti-aliased edges as raster.comp and finish.comp drew them, as the
-// processor does. At the DS's resolution all its pixels are theirs.
+// processor does. At the DS's resolution all its pixels are theirs. Above
+// it, outlines are drawn here from the scene pass's own pixels, solid: a
+// pixel of an opaque polygon with one of another polygon number further
+// away, up to u_outline.x pixels across or down (past the picture's edge,
+// the clear plane), takes its number's edge colour, then fog. A gap
+// narrower than a DS pixel with the same number on its far side does not
+// count: the triangles leave such holes where the DS's spans do not.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -24,9 +30,12 @@ layout(set = 2, binding = 0) uniform sampler2D u_screen;  // 256 by 192; alpha: 
 layout(set = 2, binding = 1) uniform sampler2D u_scene;   // Colour times alpha, and alpha.
 layout(set = 2, binding = 2) uniform sampler2D u_second;  // For a capture: the second source's bank.
 layout(set = 2, binding = 3) uniform sampler2D u_fog_marks;  // The scene's depths, and alpha 1 where fog is taken.
+// The number of the opaque polygon drawn on each pixel of the scene (red,
+// times 63; the clear plane's where alpha is 0).
+layout(set = 2, binding = 4) uniform sampler2D u_numbers;
 // finish.comp's pixels: six bits each of red, green, blue and alpha, plus
 // 1 << 24 where they are to be taken.
-layout(std430, set = 2, binding = 4) readonly buffer Finished { uint finished[]; };
+layout(std430, set = 2, binding = 5) readonly buffer Finished { uint finished[]; };
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
   // x: 0 a screen, 1 a capture. y: for a screen, the lines u_scene has (192,
@@ -46,9 +55,33 @@ layout(set = 3, binding = 0) uniform Compose {
   vec4 u_fog_colour;   // With its alpha.
   vec4 u_clear_colour; // What a pixel with no alpha in u_scene holds.
   uvec4 u_fog_table[8];
+  // Outlines from the scene's pixels: x, how many pixels wide (0 for none);
+  // y and z, the clear plane's polygon number and depth; w, how many pixels
+  // a DS pixel is wide.
+  uvec4 u_outline;
+  vec4 u_outline_colours[8];
 };
 
 uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
+
+// The 24-bit depth a fog mark holds.
+uint depth_of(vec4 mark) {
+  uvec3 b = uvec3(mark.rgb * 255.0 + 0.5);
+  return b.r << 16 | b.g << 8 | b.b;
+}
+
+uint number_at(ivec2 p) { return uint(texelFetch(u_numbers, p, 0).r * 63.0 + 0.5); }
+
+// Whether polygon number `number` is there again within a DS pixel past
+// `q`, the way `way` goes.
+bool gap(ivec2 q, ivec2 way, uint number, ivec2 size) {
+  for (int j = 1; j < int(u_outline.w); ++j) {
+    const ivec2 r = q + j * way;
+    if (any(lessThan(r, ivec2(0))) || any(greaterThanEqual(r, size))) return false;
+    if (number_at(r) == number) return true;
+  }
+  return false;
+}
 
 // `scene`, the scene's pixel at `inside`, with fog, by the processor's sums
 // (nds::PolygonRenderer).
@@ -57,8 +90,7 @@ vec4 fogged(vec4 scene, vec2 inside) {
   ivec2 size = textureSize(u_fog_marks, 0);
   vec4 mark = texelFetch(u_fog_marks, clamp(ivec2(inside * vec2(size)), ivec2(0), size - 1), 0);
   if (mark.a < 0.5) return scene;
-  uvec3 b = uvec3(mark.rgb * 255.0 + 0.5);
-  int offset = int(b.r << 16 | b.g << 8 | b.b) / 512 - int(u_fog.y);
+  int offset = int(depth_of(mark)) / 512 - int(u_fog.y);
   int step = int(u_fog.z);
   uint density = fog_density(0u);
   if (step == 0) {
@@ -97,6 +129,28 @@ vec4 scene_at(vec2 inside) {
     if ((f & (1u << 24)) != 0u) {
       const float a = float((f >> 18) & 63u) / 63.0;
       return vec4(eight_bits(f & 63u), eight_bits((f >> 6) & 63u), eight_bits((f >> 12) & 63u), 1.0) * a;
+    }
+  }
+  if (u_outline.x != 0u) {
+    const ivec2 size = textureSize(u_numbers, 0);
+    const ivec2 p = clamp(ivec2(inside * vec2(size)), ivec2(0), size - 1);
+    const vec4 me = texelFetch(u_numbers, p, 0);
+    if (me.a > 0.5) {
+      const uint number = uint(me.r * 63.0 + 0.5);
+      const uint depth = depth_of(texelFetch(u_fog_marks, p, 0));
+      const ivec2 ways[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
+      for (int k = 1; k <= int(u_outline.x); ++k) {
+        for (int w = 0; w < 4; ++w) {
+          const ivec2 q = p + k * ways[w];
+          uint other = u_outline.y, further = u_outline.z;
+          if (all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, size))) {
+            other = number_at(q);
+            further = depth_of(texelFetch(u_fog_marks, q, 0));
+          }
+          if (other != number && depth < further && !gap(q, ways[w], number, size))
+            return fogged(vec4(u_outline_colours[number >> 3].rgb, 1.0), inside);
+        }
+      }
     }
   }
   return fogged(texture(u_scene, inside), inside);

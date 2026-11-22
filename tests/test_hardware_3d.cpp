@@ -353,23 +353,21 @@ TEST(hardware_rasterizer_fogs_as_the_processor) {
   }
 }
 
-// Larger than the DS's, an outline is as many pixels wide as a DS pixel is,
-// at the polygon's edges: or one, if asked.
+// Larger than the DS's, an outline is drawn from the triangles' own pixels,
+// solid in its edge colour, as many pixels wide as a DS pixel is, inside the
+// polygon's edges: or one, if asked.
 TEST(hardware_outlines_keep_their_thickness_at_3x) {
   for (const auto marking : {PolygonRenderer::EdgeMarking::OriginalThickness, PolygonRenderer::EdgeMarking::OnePixel}) {
     Frame f;
     f.r.set_edge_marking(marking);
-    f.control(PolygonRenderer::kEdgeMarking);
+    f.control(PolygonRenderer::kEdgeMarking | PolygonRenderer::kAntiAliasing);
     f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);  // Green, for numbers 8 to 15.
     f.polygon({Frame::vertex(10, 10, 63, 0x100), Frame::vertex(10, 20, 63, 0x100), Frame::vertex(20, 20, 63, 0x100),
                Frame::vertex(20, 10, 63, 0x100)},
               kOpaque | number(8));
-    f.graphics_hardware(3);
-    std::vector<u32> drawn;
-    REQUIRE(hardware().read_raster(drawn));
-    REQUIRE(drawn.size() == static_cast<std::size_t>(kWidth * 3 * kHeight * 3));
-    const auto at = [&](int x, int y) { return drawn[static_cast<std::size_t>(y * kWidth * 3 + x)] & 0xFFFFFF; };
-    constexpr u32 kGreen = 63u << 6 | 63u << 18, kRed = 63 | 63u << 18;
+    const std::vector<u32> shown_pixels = f.graphics_hardware(3);
+    const auto at = [&](int x, int y) { return shown_pixels[static_cast<std::size_t>(y * kWidth * 3 + x)] & 0xFFFFFF; };
+    constexpr u32 kGreen = 0x00FF00, kRed = 0x0000FF;
     const int wide = marking == PolygonRenderer::EdgeMarking::OnePixel ? 1 : 3;
     // Across the middle line, and down the middle column.
     for (int i = 29; i < 62; ++i) {

@@ -88,6 +88,11 @@ class Hardware3D {
     float fog_colour[4];
     float clear_colour[4];     // The clear colour, as a pixel with no alpha holds it.
     std::uint32_t fog_table[8][4];
+    // Outlines from the scene's polygon numbers and depths (above the DS's
+    // resolution): width (0 for none), the clear plane's number and depth,
+    // the scale.
+    std::uint32_t outline[4];
+    float outline_colours[8][4];
   };
 
  private:
@@ -152,6 +157,7 @@ class Hardware3D {
   int scale_ = 0;
   SDL_GPUTexture* scene_target_ = nullptr;
   SDL_GPUTexture* fog_marks_ = nullptr;  // The scene's depths, and where fog is taken.
+  SDL_GPUTexture* numbers_ = nullptr;    // The numbers of the opaque polygons drawn (scene.frag).
   SDL_GPUBuffer* layers_ = nullptr;      // The rasterizer's two layers, 16 bytes a pixel.
   SDL_GPUBuffer* finished_ = nullptr;    // And its pixels when finished, 4 bytes each.
   bool rasterized_ = false;              // The scene in scene_target_ is in finished_ too.

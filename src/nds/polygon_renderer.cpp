@@ -307,7 +307,6 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   // The polygons as the DS draws them, with the registers as the
   // processor's drawing reads them.
   HardwareScene::Raster& raster = scene.raster;
-  raster.wanted = scene.edge_marking || scene.anti_aliasing;
   raster.corners.clear();
   raster.polygons.clear();
   raster.control = control_;

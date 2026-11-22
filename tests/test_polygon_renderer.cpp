@@ -1080,15 +1080,14 @@ TEST(renderer_scene_has_the_polygons_as_the_ds_draws_them) {
   f.polygon({Fixture::vertex(10, 20, kGreen, 0x1234, 0x2000, 16, 32), Fixture::vertex(30, 40, kBlue),
              Fixture::vertex(40, 15, kWhite)},
             kOpaque | number(9));
-  // Not wanted without outlines or anti-aliasing, but made all the same:
-  // at the DS's resolution every pixel is drawn from it.
-  CHECK(!f.r.build_scene(f.frame, f.video).raster.wanted);
-  CHECK(f.r.scene().raster.polygons.size() == 2);
+  // Made without outlines or anti-aliasing too: at the DS's resolution
+  // every pixel is drawn from it.
+  CHECK(f.r.build_scene(f.frame, f.video).raster.polygons.size() == 2);
 
   f.control(PolygonRenderer::kAntiAliasing | PolygonRenderer::kAlphaTest);
   f.io.write(PolygonRenderer::kAlphaTestReference, 2, 12);
   const Scene::Raster& raster = f.r.build_scene(f.frame, f.video).raster;
-  REQUIRE(raster.wanted && raster.polygons.size() == 2 && raster.corners.size() == 7);
+  REQUIRE(raster.polygons.size() == 2 && raster.corners.size() == 7);
   CHECK(raster.control == (PolygonRenderer::kAntiAliasing | PolygonRenderer::kAlphaTest) && raster.alpha_reference == 12);
   CHECK(raster.clear_colour == (kRed | kSolid) && raster.clear_depth == 0x1000u << 9 && !raster.clear_translucent);
   CHECK(raster.edge_colours[1] == (kGreen | kSolid) && raster.toon[1] == kBlue);

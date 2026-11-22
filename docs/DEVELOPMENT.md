@@ -108,7 +108,9 @@ that slowly moving models do not jump from pixel to pixel. *Outlines*
 around 3D models (edge marking), in the game's colours: *Original
 thickness* (`original`, the default) keeps them one DS pixel wide, so N
 pixels wide at N times the resolution; *1 pixel* (`pixel`) makes them one
-pixel wide at any resolution; *Off* (`off`) leaves them out. The shaders are
+pixel wide at any resolution; *Off* (`off`) leaves them out. Above 1x they
+are solid, drawn from the triangles' own pixels, and the game's smoothing
+of polygon edges (anti-aliasing) is left out. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 `bd_gpu_tests` (ctest's `gpu`) draws test scenes with the graphics hardware
