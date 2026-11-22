@@ -584,7 +584,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
         nds::PolygonRenderer::edge_width(scene.edge_one_pixel ? Marking::OnePixel : Marking::OriginalThickness, scale_));
     uniforms.edge[1] = scene.clear_number & 63u;
     uniforms.edge[2] = clear_depth_bits(scene);
-    uniforms.edge[3] = 1;
+    uniforms.edge[3] = 1 | (scene.anti_aliasing ? 2u : 0u);
     for (std::size_t i = 0; i < 8; ++i) std::memcpy(uniforms.edge_colours[i], scene.edge_colours[i].data(), sizeof uniforms.edge_colours[i]);
   }
   SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, sizeof uniforms);

@@ -265,6 +265,7 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   // five bits of alpha at or under the reference.
   scene.edge_marking = (control_ & kEdgeMarking) != 0 && edge_marking_ != EdgeMarking::Off;
   scene.edge_one_pixel = edge_marking_ == EdgeMarking::OnePixel;
+  scene.anti_aliasing = (control_ & kAntiAliasing) != 0;
   scene.clear_number = static_cast<std::uint8_t>((clear_colour_ >> 24) & 0x3F);
   for (std::size_t i = 0; i < scene.edge_colours.size(); ++i) {
     for (unsigned part = 0; part < 3; ++part) scene.edge_colours[i][part] = fraction_of_31(edge_colours_[i] >> (5 * part));

@@ -34,7 +34,9 @@ layout(set = 3, binding = 0) uniform Compose {
   uvec4 u_capture;
   // Edge marking: x: how many pixels wide (0 for none); y: the clear
   // plane's polygon number; z: its depth (24 bits); w: 1 where u_scene is
-  // the scene (not a kept capture).
+  // the scene (not a kept capture), plus 2 with anti-aliasing: the edge
+  // colour is then mixed with what is behind (here the pixel further away
+  // that makes the edge), 32 parts in 63, as the processor does.
   uvec4 u_edge;
   vec4 u_edge_colours[8];
 };
@@ -57,7 +59,14 @@ vec4 scene_at(vec2 inside) {
         number = o.r;
         further = o.g << 16 | o.b << 8 | o.a;
       }
-      if (number != me.r && depth < further) return vec4(u_edge_colours[me.r >> 3].rgb, 1.0);
+      if (number != me.r && depth < further) {
+        vec3 c = u_edge_colours[me.r >> 3].rgb;
+        if ((u_edge.w & 2u) != 0u) {
+          vec4 behind = texelFetch(u_scene, clamp(q, ivec2(0), size - 1), 0);
+          if (behind.a >= 0.5 / 63.0) c = mix(behind.rgb / behind.a, c, 32.0 / 63.0);
+        }
+        return vec4(c, 1.0);
+      }
     }
   }
   return scene;

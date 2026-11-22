@@ -915,7 +915,7 @@ TEST(renderer_edge_colour_is_the_table_s_by_polygon_number) {
   CHECK(f.at(10, 15) == (kRed | kSolid) && f.at(30, 15) == (kBlue | kSolid) && f.at(50, 15) == (rgb(63, 63, 0) | kSolid));
   CHECK(f.at(15, 15) == (kWhite | kSolid));
   const bd::nds::HardwareScene& scene = f.r.build_scene(f.frame, f.video);
-  CHECK(scene.edge_marking && !scene.edge_one_pixel && scene.clear_number == 40);
+  CHECK(scene.edge_marking && !scene.edge_one_pixel && !scene.anti_aliasing && scene.clear_number == 40);
   CHECK(scene.edge_colours[2][2] == 1.0f && scene.edge_colours[2][0] == 0.0f && scene.edge_colours[7][1] == 1.0f);
   CHECK(scene.vertices[0].info[3] == 7 && scene.vertices[6].info[3] == 17 && scene.vertices[12].info[3] == 63);
 }

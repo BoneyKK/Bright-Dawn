@@ -85,8 +85,11 @@ struct HardwareScene {
   // edge, the clear plane, with clear_number) takes the colour of its
   // number's group (number / 8), each 0 to 1. One DS pixel wide, or one
   // pixel of the resolution drawn at with edge_one_pixel.
+  // With anti-aliasing, an edge pixel is half its colour and half what is
+  // behind it, as the processor draws it.
   bool edge_marking = false;
   bool edge_one_pixel = false;
+  bool anti_aliasing = false;
   std::uint8_t clear_number = 0;
   std::array<std::array<float, 4>, 8> edge_colours{};
 };
