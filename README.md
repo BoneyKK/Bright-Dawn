@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (22 November 2026): The title screen's landscape is drawn again: the game changes some of its own code as it runs, and the old translation of it ran instead. Fog is now drawn by the graphics hardware too, as on the DS. The game library must be built again.
+**Last change** (22 November 2026): With the graphics hardware, translucent textures no longer let polygons drawn later cover them (their pixels of full alpha are drawn as opaque ones, as on the DS), and "sharp pixels, smooth edges" no longer blurs 3D scenes at window sizes that are not whole multiples.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -74,7 +74,7 @@ the state of each, and what comes next.
 3. Higher resolutions, 2: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.
 4. Higher resolutions, 3: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.
 5. Higher resolutions, 4: the scroll of the 3D layer (BG0) is not used, by either 3D path.
-6. Higher resolutions, 5: some outline pixels are one pixel off from the processor's at 1x.
+6. Higher resolutions, 5: outlines with the graphics hardware are lighter than on the DS where edges are smoothed, and some are one pixel off at 1x. The DS mixes them with a second layer that its own way of covering pixels fills; matching it needs the DS's rasterizing on the graphics hardware (a compute shader).
 7. Speed: the game's interrupt handler (0x01FFA900) still runs in the interpreter; it is reached only through a pointer set at run time.
 8. In-game saving: not yet tried.
 9. Widescreen and mods.
