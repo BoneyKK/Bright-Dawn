@@ -4,8 +4,8 @@
 // are read from video memory at the same moment.
 //
 // Made for speed, not to be exact: the polygons become triangles with a
-// depth buffer, and fog, edge marking, anti-aliasing, shadow polygons and
-// polygons drawn as lines only are left out.
+// depth buffer, and fog, anti-aliasing, shadow polygons and polygons drawn
+// as lines only are left out.
 #pragma once
 
 #include <array>
@@ -15,6 +15,13 @@
 
 namespace bd::nds {
 
+// Edge marking (outlines), where a frame asks for it.
+enum class EdgeMarking {
+  Off,                // Never, even where a frame asks for it.
+  OriginalThickness,  // One DS pixel wide, at any resolution. The default.
+  OnePixel,           // One pixel of the resolution drawn at.
+};
+
 struct HardwareScene {
   // A corner of a triangle, as the graphics hardware reads it (44 bytes).
   struct Vertex {
@@ -23,7 +30,8 @@ struct HardwareScene {
     std::uint8_t colour[4] = {};  // Red, green, blue, alpha.
     // 0: the texture's index in `textures` (the drawing side puts the
     // texture's place in its atlas here: x, and y times 65536); 1: its
-    // width, and height times 65536; 2: the flags below; 3: not used.
+    // width, and height times 65536; 2: the flags below; 3: the polygon
+    // number (0 to 63), for edge marking.
     std::uint32_t info[4] = {};
   };
   // Flags (info[2]).
@@ -72,6 +80,15 @@ struct HardwareScene {
   bool highlight = false;    // The table is added rather than used instead.
   // Pixels whose alpha is under this are not drawn (0 to 1).
   float alpha_threshold = 0;
+  // Edge marking, as the DS does it: a pixel of an opaque polygon next to
+  // one of another polygon number that is further away (past the screen's
+  // edge, the clear plane, with clear_number) takes the colour of its
+  // number's group (number / 8), each 0 to 1. One DS pixel wide, or one
+  // pixel of the resolution drawn at with edge_one_pixel.
+  bool edge_marking = false;
+  bool edge_one_pixel = false;
+  std::uint8_t clear_number = 0;
+  std::array<std::array<float, 4>, 8> edge_colours{};
 };
 
 // How the graphics hardware makes a display capture (nds::Display), as the

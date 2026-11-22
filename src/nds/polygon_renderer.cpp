@@ -263,6 +263,13 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   scene.highlight = (control_ & kHighlight) != 0;
   // Alpha, six bits: 0 is never drawn; with the alpha test, nor is what has
   // five bits of alpha at or under the reference.
+  scene.edge_marking = (control_ & kEdgeMarking) != 0 && edge_marking_ != EdgeMarking::Off;
+  scene.edge_one_pixel = edge_marking_ == EdgeMarking::OnePixel;
+  scene.clear_number = static_cast<std::uint8_t>((clear_colour_ >> 24) & 0x3F);
+  for (std::size_t i = 0; i < scene.edge_colours.size(); ++i) {
+    for (unsigned part = 0; part < 3; ++part) scene.edge_colours[i][part] = fraction_of_31(edge_colours_[i] >> (5 * part));
+    scene.edge_colours[i][3] = 1;
+  }
   scene.alpha_threshold = ((control_ & kAlphaTest) != 0 ? static_cast<float>(alpha_reference_ & 0x1F) * 2 + 1.5f : 0.5f) / 63.0f;
 
   // Opaque polygons first, then the translucent ones, each in the order sent.
@@ -275,7 +282,7 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
       const HardwareScene::Kind kind = !translucent      ? HardwareScene::Kind::Opaque
                                        : shape.new_depth ? HardwareScene::Kind::Translucent
                                                          : HardwareScene::Kind::Overlay;
-      u32 info[4] = {0, 0, shape.mode, 0};
+      u32 info[4] = {0, 0, shape.mode, shape.number};
       if (shape.format != 0) {
         info[0] = scene_texture(shape);
         info[1] = static_cast<u32>(shape.size_s) | static_cast<u32>(shape.size_t_) << 16;
@@ -804,27 +811,23 @@ void PolygonRenderer::draw_polygon(int line, const Shape& shape) {
 void PolygonRenderer::finish_line(int line) {
   const bool anti_aliasing = (control_ & kAntiAliasing) != 0;
 
-  if ((control_ & kEdgeMarking) != 0) {
+  if ((control_ & kEdgeMarking) != 0 && edge_marking_ != EdgeMarking::Off) {
     // An edge pixel is given its polygon number's edge colour where a pixel
     // next to it has another polygon number and is further away. Past the
     // screen's edge is the clear plane.
     const std::uint8_t clear_number = static_cast<std::uint8_t>((clear_colour_ >> 24) & 0x3F);
     const i32 clear_depth = clear_depth_ == 0x7FFF ? 0xFFFFFF : static_cast<i32>(clear_depth_ << 9);
+    const auto number_and_depth = [this](int x, int y) {
+      const Pixel& p = at(0, y, x);
+      return std::pair<std::uint8_t, i32>{p.opaque_number, p.depth};
+    };
+    // At the DS's resolution, one pixel is the width either way.
+    const int width = edge_width(edge_marking_, 1);
     for (int x = 0; x < kWidth; ++x) {
       Pixel& pixel = at(0, line, x);
-      if (!pixel.edge) continue;
-      const Pixel* around[4] = {x > 0 ? &at(0, line, x - 1) : nullptr, x < kWidth - 1 ? &at(0, line, x + 1) : nullptr,
-                                line > 0 ? &at(0, line - 1, x) : nullptr,
-                                line < kHeight - 1 ? &at(0, line + 1, x) : nullptr};
-      for (const Pixel* other : around) {
-        const std::uint8_t number = other != nullptr ? other->opaque_number : clear_number;
-        const i32 depth = other != nullptr ? other->depth : clear_depth;
-        if (pixel.opaque_number != number && pixel.depth < depth) {
-          pixel.colour = six_bits_each((0x1Fu << 15) | edge_colours_[pixel.opaque_number >> 3]);
-          pixel.edge_alpha = 0x20;
-          break;
-        }
-      }
+      if (!pixel.edge || !is_edge(number_and_depth, kWidth, kHeight, x, line, width, clear_number, clear_depth)) continue;
+      pixel.colour = six_bits_each((0x1Fu << 15) | edge_colours_[pixel.opaque_number >> 3]);
+      pixel.edge_alpha = 0x20;
     }
   }
 

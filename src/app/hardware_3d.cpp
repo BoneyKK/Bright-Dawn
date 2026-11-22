@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "app/hardware_shaders.h"
+#include "nds/polygon_renderer.h"
 #include "core/log.h"
 
 namespace bd::app {
@@ -27,6 +28,11 @@ struct SceneUniforms {
 constexpr std::uint32_t kBankBytes = 256 * 256 * 4;
 
 using ComposeUniforms = Hardware3D::ComposeUniforms;
+
+// The clear depth as the scene shader writes depths: 24 bits.
+std::uint32_t clear_depth_bits(const Scene& scene) {
+  return static_cast<std::uint32_t>(std::clamp(scene.clear_depth, 0.0f, 1.0f) * 16777215.0f + 0.5f);
+}
 
 std::uint32_t aligned(std::uint32_t n) { return (n + 255u) & ~255u; }
 
@@ -97,7 +103,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   SDL_GPUShader* compose_vertex = make_shader(device, shaders::kComposeVert, sizeof shaders::kComposeVert,
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
-                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
+                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
   const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment;
 
   // The depth buffer: the most exact format the device has, with a stencil
@@ -125,9 +131,15 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     }};
     for (int index = 0; index < 6; ++index) {
       const int kind = index / 2;
-      SDL_GPUColorTargetDescription target{};
+      // The colour, and the polygon numbers and depths, which translucent
+      // polygons leave as they are.
+      std::array<SDL_GPUColorTargetDescription, 2> targets{};
+      SDL_GPUColorTargetDescription& target = targets[0];
       target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+      targets[1].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
       if (kind != static_cast<int>(Scene::Kind::Opaque)) {
+        targets[1].blend_state.enable_color_write_mask = true;
+        targets[1].blend_state.color_write_mask = 0;
         // Colours are kept times their alpha: "over".
         target.blend_state.enable_blend = true;
         target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
@@ -165,8 +177,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
         info.depth_stencil_state.write_mask = 0xFF;
         info.depth_stencil_state.enable_stencil_test = true;
       }
-      info.target_info.color_target_descriptions = &target;
-      info.target_info.num_color_targets = 1;
+      info.target_info.color_target_descriptions = targets.data();
+      info.target_info.num_color_targets = 2;
       info.target_info.depth_stencil_format = depth_format_;
       info.target_info.has_depth_stencil_target = true;
       scene_pipelines_[index] = SDL_CreateGPUGraphicsPipeline(device, &info);
@@ -228,9 +240,9 @@ void Hardware3D::release_targets() {
     if (k.texture != nullptr) SDL_ReleaseGPUTexture(device_, k.texture);
     k = Kept{};
   }
-  for (SDL_GPUTexture* t : {scene_target_, depth_})
+  for (SDL_GPUTexture* t : {scene_target_, edges_, depth_})
     if (t != nullptr) SDL_ReleaseGPUTexture(device_, t);
-  scene_target_ = depth_ = nullptr;
+  scene_target_ = edges_ = depth_ = nullptr;
   scale_ = 0;
   scene_drawn_ = 0;
 }
@@ -246,6 +258,7 @@ bool Hardware3D::make_targets(int scale) {
     return t;
   };
   scene_target_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+  edges_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   depth_ = make(depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
   // A kept capture is its bank of video memory, 256 by 256.
   for (Kept& k : kept_) k.texture = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour, 256);
@@ -368,7 +381,7 @@ SDL_Texture* Hardware3D::draw(int which, const std::vector<std::uint32_t>& scree
 
 bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
                      SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
-                     const ComposeUniforms& uniforms) {
+                     const ComposeUniforms& given_uniforms) {
   if (screen.size() != std::size_t{kScreenWidth} * kScreenHeight) return false;
   static const nds::HardwareScene kNoScene;
   const nds::HardwareScene& scene = given != nullptr ? *given : kNoScene;
@@ -503,13 +516,22 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
 
   if (new_scene) {
     // 1. The scene, over the clear colour (times its alpha) at the clear depth.
-    SDL_GPUColorTargetInfo colour{};
+    std::array<SDL_GPUColorTargetInfo, 2> colours{};
+    SDL_GPUColorTargetInfo& colour = colours[0];
     colour.texture = scene_target_;
     const float a = scene.clear_colour[3];
     colour.clear_color = {scene.clear_colour[0] * a, scene.clear_colour[1] * a, scene.clear_colour[2] * a, a};
     colour.load_op = SDL_GPU_LOADOP_CLEAR;
     colour.store_op = SDL_GPU_STOREOP_STORE;
     colour.cycle = true;
+    // The clear plane's polygon number and depth.
+    const std::uint32_t clear_depth = clear_depth_bits(scene);
+    colours[1] = colour;
+    colours[1].texture = edges_;
+    colours[1].clear_color = {static_cast<float>(scene.clear_number & 63) / 255.0f,
+                              static_cast<float>(clear_depth >> 16) / 255.0f,
+                              static_cast<float>((clear_depth >> 8) & 255) / 255.0f,
+                              static_cast<float>(clear_depth & 255) / 255.0f};
     SDL_GPUDepthStencilTargetInfo depth{};
     depth.texture = depth_;
     depth.clear_depth = scene.clear_depth;
@@ -519,7 +541,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     depth.clear_stencil = 0;
     depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
     depth.cycle = true;
-    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, &depth);
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, colours.data(), 2, &depth);
     if (!scene.runs.empty()) {
       const SDL_GPUBufferBinding binding{vertices_, 0};
       SDL_BindGPUVertexBuffers(pass, 0, &binding, 1);
@@ -549,10 +571,22 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 3> sources{{{screen_, nearest_},
+  const std::array<SDL_GPUTextureSamplerBinding, 4> sources{{{screen_, nearest_},
                                                              {source != nullptr ? source : scene_target_, nearest_},
-                                                             {second != nullptr ? second : bank_, nearest_}}};
-  SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), 3);
+                                                             {second != nullptr ? second : bank_, nearest_},
+                                                             {edges_, nearest_}}};
+  SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), 4);
+  // Edge marking where the scene is put in.
+  ComposeUniforms uniforms = given_uniforms;
+  if (given != nullptr && source == nullptr && scene.edge_marking) {
+    using Marking = nds::PolygonRenderer::EdgeMarking;
+    uniforms.edge[0] = static_cast<std::uint32_t>(
+        nds::PolygonRenderer::edge_width(scene.edge_one_pixel ? Marking::OnePixel : Marking::OriginalThickness, scale_));
+    uniforms.edge[1] = scene.clear_number & 63u;
+    uniforms.edge[2] = clear_depth_bits(scene);
+    uniforms.edge[3] = 1;
+    for (std::size_t i = 0; i < 8; ++i) std::memcpy(uniforms.edge_colours[i], scene.edge_colours[i].data(), sizeof uniforms.edge_colours[i]);
+  }
   SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, sizeof uniforms);
   SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
   SDL_EndGPURenderPass(pass);

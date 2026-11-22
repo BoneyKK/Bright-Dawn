@@ -70,6 +70,8 @@ class Hardware3D {
     float brightness[4];  // 1 towards white, 2 towards black; how far (0 to 1).
     float options[4];     // 1 for a capture; the lines of the second texture (192, or 256 for a kept capture).
     std::uint32_t capture[4];  // How a capture is made (shaders/compose.frag).
+    std::uint32_t edge[4];     // Edge marking: width in pixels, clear number, clear depth, 1 with the scene.
+    float edge_colours[8][4];
   };
 
  private:
@@ -116,6 +118,7 @@ class Hardware3D {
   // At the scale in use.
   int scale_ = 0;
   SDL_GPUTexture* scene_target_ = nullptr;
+  SDL_GPUTexture* edges_ = nullptr;  // The scene's polygon numbers and depths, for edge marking.
   SDL_GPUTexture* depth_ = nullptr;
   std::array<SDL_GPUTexture*, 2> outputs_{};  // For the top and the bottom screen,
   std::array<SDL_Texture*, 2> shown_{};       // as textures of the renderer.

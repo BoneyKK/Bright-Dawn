@@ -897,3 +897,87 @@ TEST(renderer_scene_can_place_vertices_between_pixels) {
   CHECK(scene.vertices[0].position[0] == 10.5f / 128.0f - 1.0f && scene.vertices[0].position[1] == 1.0f - 20.25f / 96.0f);
   CHECK(scene.vertices[1].position[0] == 100.0f / 128.0f - 1.0f && scene.vertices[2].position[1] == 1.0f - 80.0f / 96.0f);
 }
+
+// The edge colour is the table's entry for the polygon number's group of
+// eight, as the game writes it: here not black. The graphics hardware gets
+// the same table, the clear plane's number, and each corner's number.
+TEST(renderer_edge_colour_is_the_table_s_by_polygon_number) {
+  Fixture f;
+  f.control(PolygonRenderer::kEdgeMarking);
+  f.io.write(PolygonRenderer::kEdgeColours + 0, 2, 0x001F);   // 0 to 7: red.
+  f.io.write(PolygonRenderer::kEdgeColours + 4, 2, 0x7C00);   // 16 to 23: blue.
+  f.io.write(PolygonRenderer::kEdgeColours + 14, 2, 0x03FF);  // 56 to 63: yellow.
+  f.rectangle(10, 10, 20, 20, kWhite, kOpaque | number(7));
+  f.rectangle(30, 10, 40, 20, kWhite, kOpaque | number(17));
+  f.rectangle(50, 10, 60, 20, kWhite, kOpaque | number(63));
+  f.io.write(PolygonRenderer::kClearColour, 4, 40u << 24);
+  f.draw();
+  CHECK(f.at(10, 15) == (kRed | kSolid) && f.at(30, 15) == (kBlue | kSolid) && f.at(50, 15) == (rgb(63, 63, 0) | kSolid));
+  CHECK(f.at(15, 15) == (kWhite | kSolid));
+  const bd::nds::HardwareScene& scene = f.r.build_scene(f.frame, f.video);
+  CHECK(scene.edge_marking && !scene.edge_one_pixel && scene.clear_number == 40);
+  CHECK(scene.edge_colours[2][2] == 1.0f && scene.edge_colours[2][0] == 0.0f && scene.edge_colours[7][1] == 1.0f);
+  CHECK(scene.vertices[0].info[3] == 7 && scene.vertices[6].info[3] == 17 && scene.vertices[12].info[3] == 63);
+}
+
+// Two polygons side by side: only the nearer one's pixels next to the
+// other are edges.
+TEST(renderer_edge_marking_takes_the_nearer_side) {
+  Fixture f;
+  f.control(PolygonRenderer::kEdgeMarking);
+  f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);  // 8 to 15: green.
+  f.io.write(PolygonRenderer::kEdgeColours + 4, 2, 0x7C00);  // 16 to 23: blue.
+  f.io.write(PolygonRenderer::kClearColour, 4, 8u << 24);     // The clear plane is as polygon 8.
+  f.rectangle(0, 0, 20, 192, kRed, kOpaque | number(8), 0x200000);
+  f.rectangle(20, 0, 40, 192, kWhite, kOpaque | number(16), 0x300000);
+  f.draw();
+  CHECK(f.at(19, 50) == (kGreen | kSolid) && f.at(20, 50) == (kWhite | kSolid));
+  // Further away now: the other side.
+  f.clear();
+  f.rectangle(0, 0, 20, 192, kRed, kOpaque | number(8), 0x300000);
+  f.rectangle(20, 0, 40, 192, kWhite, kOpaque | number(16), 0x200000);
+  f.draw();
+  CHECK(f.at(19, 50) == (kRed | kSolid) && f.at(20, 50) == (kBlue | kSolid));
+}
+
+// The width of the outline, by the rule both drawings follow: at 1x one
+// pixel either way; at 3x three pixels (one DS pixel) or one.
+TEST(renderer_edge_width_at_1x_and_3x) {
+  using Marking = bd::nds::EdgeMarking;
+  CHECK(PolygonRenderer::edge_width(Marking::OriginalThickness, 1) == 1 && PolygonRenderer::edge_width(Marking::OnePixel, 1) == 1);
+  CHECK(PolygonRenderer::edge_width(Marking::OriginalThickness, 3) == 3 && PolygonRenderer::edge_width(Marking::OnePixel, 3) == 1);
+  CHECK(PolygonRenderer::edge_width(Marking::Off, 1) == 0 && PolygonRenderer::edge_width(Marking::Off, 3) == 0);
+  // A square 10 DS pixels wide in the middle of a picture 30 wide, drawn at
+  // `scale`: polygon 1 in front of the clear plane (0, further away).
+  const auto marked_across = [](int scale, Marking marking) {
+    const int size = 30 * scale;
+    const auto at = [&](int x, int y) {
+      const bool inside = x >= 10 * scale && x < 20 * scale && y >= 10 * scale && y < 20 * scale;
+      return std::pair<std::uint8_t, std::int32_t>{inside ? 1 : 0, inside ? 100 : 1000};
+    };
+    int count = 0;
+    const int y = 15 * scale;
+    for (int x = 0; x < size; ++x)
+      count += PolygonRenderer::is_edge(at, size, size, x, y, PolygonRenderer::edge_width(marking, scale), 0, 1000) ? 1 : 0;
+    return count;
+  };
+  // Across the middle line: the left and the right rim.
+  CHECK(marked_across(1, Marking::OriginalThickness) == 2 && marked_across(1, Marking::OnePixel) == 2);
+  CHECK(marked_across(3, Marking::OriginalThickness) == 6 && marked_across(3, Marking::OnePixel) == 2);
+  CHECK(marked_across(1, Marking::Off) == 0 && marked_across(3, Marking::Off) == 0);
+}
+
+// "Off": no outlines, even where the frame asks for them.
+TEST(renderer_edge_marking_can_be_off) {
+  Fixture f;
+  f.control(PolygonRenderer::kEdgeMarking);
+  f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);
+  f.rectangle(10, 10, 20, 20, kRed, kOpaque | number(8));
+  f.r.set_edge_marking(bd::nds::EdgeMarking::Off);
+  f.draw();
+  CHECK(f.at(10, 15) == (kRed | kSolid));
+  CHECK(!f.r.build_scene(f.frame, f.video).edge_marking);
+  f.r.set_edge_marking(bd::nds::EdgeMarking::OnePixel);
+  f.draw();
+  CHECK(f.at(10, 15) == (kGreen | kSolid) && f.r.build_scene(f.frame, f.video).edge_one_pixel);
+}

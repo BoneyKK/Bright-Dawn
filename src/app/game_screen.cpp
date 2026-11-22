@@ -115,6 +115,7 @@ void GameScreen::apply_settings(bool first) {
   else console_.display().set_hardware_3d(hardware);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
+  console_.polygon_renderer().set_edge_marking(ui::edge_marking(s));
   const bool smooth = ui::smooth_textures(s);
   console_.polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
                                                         : nds::PolygonRenderer::TextureFilter::Nearest);

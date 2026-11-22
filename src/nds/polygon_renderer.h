@@ -51,12 +51,14 @@
 // there, mixed from what is.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "core/workers.h"
@@ -105,10 +107,38 @@ class PolygonRenderer {
     Nearest,   // The texel a pixel falls on, as on the DS. The default.
     Bilinear,  // Mixed from the four nearest texels, in 3D scenes.
   };
+  using EdgeMarking = nds::EdgeMarking;
 
   void attach(Arm9Io& io);
 
   void set_texture_filter(TextureFilter filter) { texture_filter_ = filter; }
+  void set_edge_marking(EdgeMarking marking) { edge_marking_ = marking; }
+  EdgeMarking edge_marking() const { return edge_marking_; }
+  // How many pixels wide outlines are at `scale` times the DS's
+  // resolution; 0 for none.
+  static int edge_width(EdgeMarking marking, int scale) {
+    return marking == EdgeMarking::Off ? 0 : marking == EdgeMarking::OnePixel ? 1 : std::max(scale, 1);
+  }
+  // The rule of edge marking, at any resolution (the graphics hardware's
+  // shader, shaders/compose.frag, follows it): the pixel at (x, y) of a
+  // picture `width` by `height` is an edge if a pixel up to `reach` pixels
+  // across or down from it has another polygon number and is further away.
+  // Past the picture's edge is the clear plane. `at(x, y)` gives a pixel's
+  // polygon number and depth.
+  template <typename At>
+  static bool is_edge(const At& at, int width, int height, int x, int y, int reach, std::uint8_t clear_number,
+                      std::int32_t clear_depth) {
+    const auto [number, depth] = at(x, y);
+    for (int k = 1; k <= reach; ++k) {
+      const int around[4][2] = {{x - k, y}, {x + k, y}, {x, y - k}, {x, y + k}};
+      for (const auto& p : around) {
+        const bool inside = p[0] >= 0 && p[0] < width && p[1] >= 0 && p[1] < height;
+        const auto [other, further] = inside ? at(p[0], p[1]) : std::pair<std::uint8_t, std::int32_t>{clear_number, clear_depth};
+        if (other != number && depth < further) return true;
+      }
+    }
+    return false;
+  }
   TextureFilter texture_filter() const { return texture_filter_; }
   // For the graphics hardware: places vertices at the geometry engine's
   // sixteenths of a pixel, not at whole pixels. Only worth it when the 3D
@@ -180,6 +210,7 @@ class PolygonRenderer {
   Pixel& at(int layer, int line, int x) { return layers_[layer][static_cast<std::size_t>(line * kWidth + x)]; }
 
   TextureFilter texture_filter_ = TextureFilter::Nearest;
+  EdgeMarking edge_marking_ = EdgeMarking::OriginalThickness;
   bool fine_positions_ = false;
   std::uint32_t control_ = 0;
   std::array<std::uint16_t, 8> edge_colours_{};

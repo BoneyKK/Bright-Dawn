@@ -170,6 +170,10 @@ TEST(game_settings_are_valid_and_shown_in_chapters) {
   CHECK(bd::ui::resolution_3d(s, 0) == 1);
   CHECK(s.set(bd::ui::key::k3DResolution, "3").ok() && bd::ui::resolution_3d(s, 1440) == 3);
   CHECK(s.set(bd::ui::key::k3DDrawing, "processor").ok() && !bd::ui::hardware_3d(s));
+  // Outlines as wide as a DS pixel by default; one pixel, or none.
+  CHECK(bd::ui::edge_marking(s) == bd::nds::EdgeMarking::OriginalThickness);
+  CHECK(s.set(bd::ui::key::kEdgeMarking, "pixel").ok() && bd::ui::edge_marking(s) == bd::nds::EdgeMarking::OnePixel);
+  CHECK(s.set(bd::ui::key::kEdgeMarking, "off").ok() && bd::ui::edge_marking(s) == bd::nds::EdgeMarking::Off);
   // The console's language: English unless chosen, each choice the
   // firmware's own value for it.
   using Language = bd::nds::UserSettings::Language;

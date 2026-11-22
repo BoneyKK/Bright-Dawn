@@ -99,6 +99,10 @@ std::vector<SettingDef> game_setting_definitions() {
                         "auto"));
   defs.push_back(toggle(key::kFineCoordinates, "Graphics", "High-resolution coordinates",
                         "Above 1x, places 3D models between the DS's pixels, so that they move smoothly.", true));
+  defs.push_back(choice(key::kEdgeMarking, "Graphics", "Outlines",
+                        "Sets the outlines the game draws around 3D models (edge marking): as wide as a DS pixel at "
+                        "any resolution, one pixel wide, or none.",
+                        {{"original", "Original thickness"}, {"pixel", "1 pixel"}, {"off", "Off"}}, "original"));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
                         "Sets whether the processor draws 3D textures sharp or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));
@@ -265,6 +269,12 @@ gfx::ScreenFilter screen_filter(const platform::Settings& settings) {
 bool smooth_textures(const platform::Settings& settings) { return settings.choice(key::kTextures) == "smooth"; }
 
 bool hardware_3d(const platform::Settings& settings) { return settings.choice(key::k3DDrawing) == "hardware"; }
+
+nds::EdgeMarking edge_marking(const platform::Settings& settings) {
+  using Marking = nds::EdgeMarking;
+  const std::string chosen = settings.choice(key::kEdgeMarking);
+  return chosen == "off" ? Marking::Off : chosen == "pixel" ? Marking::OnePixel : Marking::OriginalThickness;
+}
 
 int resolution_3d(const platform::Settings& settings, int shown_height) {
   const std::string chosen = settings.choice(key::k3DResolution);

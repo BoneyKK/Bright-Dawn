@@ -9,6 +9,10 @@
 // CaptureRecipe): for each of its pixels that the capture writes, the first
 // source (the main engine's picture with the scene put in, or the scene
 // alone), the second (a bank), or the two blended.
+//
+// Where the scene is put in, edge marking as the DS does it: a pixel of an
+// opaque polygon with a pixel of another polygon number further away within
+// u_edge.x pixels across or down takes its number's edge colour.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -17,6 +21,7 @@ layout(location = 0) out vec4 o_colour;
 layout(set = 2, binding = 0) uniform sampler2D u_screen;  // 256 by 192; alpha: the mark.
 layout(set = 2, binding = 1) uniform sampler2D u_scene;   // Colour times alpha, and alpha.
 layout(set = 2, binding = 2) uniform sampler2D u_second;  // For a capture: the second source's bank.
+layout(set = 2, binding = 3) uniform sampler2D u_edges;   // The scene's polygon numbers and depths (scene.frag).
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
   // x: 0 a screen, 1 a capture. y: for a screen, the lines u_scene has (192,
@@ -27,7 +32,36 @@ layout(set = 3, binding = 0) uniform Compose {
   // w: where it starts in its bank, and where the second source starts in
   // its bank times 65536.
   uvec4 u_capture;
+  // Edge marking: x: how many pixels wide (0 for none); y: the clear
+  // plane's polygon number; z: its depth (24 bits); w: 1 where u_scene is
+  // the scene (not a kept capture).
+  uvec4 u_edge;
+  vec4 u_edge_colours[8];
 };
+
+// The scene's pixel at `inside`, with edge marking.
+vec4 scene_at(vec2 inside) {
+  vec4 scene = texture(u_scene, inside);
+  if (u_edge.w == 0u || u_edge.x == 0u || scene.a < 0.5 / 63.0) return scene;
+  ivec2 size = textureSize(u_edges, 0);
+  ivec2 p = clamp(ivec2(inside * vec2(size)), ivec2(0), size - 1);
+  uvec4 me = uvec4(texelFetch(u_edges, p, 0) * 255.0 + 0.5);
+  uint depth = me.g << 16 | me.b << 8 | me.a;
+  const ivec2 ways[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
+  for (int k = 1; k <= int(u_edge.x); ++k) {
+    for (int w = 0; w < 4; ++w) {
+      ivec2 q = p + k * ways[w];
+      uint number = u_edge.y, further = u_edge.z;
+      if (all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, size))) {
+        uvec4 o = uvec4(texelFetch(u_edges, q, 0) * 255.0 + 0.5);
+        number = o.r;
+        further = o.g << 16 | o.b << 8 | o.a;
+      }
+      if (number != me.r && depth < further) return vec4(u_edge_colours[me.r >> 3].rgb, 1.0);
+    }
+  }
+  return scene;
+}
 
 vec3 brightened(vec3 c, uint way, float factor) {
   if (way == 2u) return c + (1.0 - c) * factor;
@@ -40,7 +74,7 @@ vec3 composed(vec2 at, vec2 inside, bool lit) {
   vec4 screen = texture(u_screen, at);
   uint mark = uint(screen.a * 255.0 + 0.5);
   if ((mark & 128u) == 0u) return screen.rgb;
-  vec4 scene = texture(u_scene, inside);
+  vec4 scene = scene_at(inside);
   if (scene.a < 0.5 / 63.0) return screen.rgb;
   vec3 c = scene.rgb / scene.a;
   uint effect = mark & 3u;
@@ -66,7 +100,7 @@ void main() {
   vec2 at = (vec2(float(i % width), float(i / width)) + within) / vec2(256.0, 192.0);
   vec3 first;
   if ((u_capture.x & 4u) != 0u) {
-    vec4 scene = texture(u_scene, at);
+    vec4 scene = scene_at(at);
     first = scene.a < 0.5 / 63.0 ? vec3(0.0) : scene.rgb / scene.a;
   } else {
     first = composed(at, at, false);

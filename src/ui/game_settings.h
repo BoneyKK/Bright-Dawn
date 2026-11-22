@@ -11,6 +11,7 @@
 
 #include "gfx/screen_layout.h"
 #include "input/bindings.h"
+#include "nds/hardware_scene.h"
 #include "nds/user_settings.h"
 #include "platform/settings.h"
 
@@ -32,6 +33,7 @@ inline constexpr std::string_view kTextures = "graphics.textures";
 inline constexpr std::string_view k3DDrawing = "graphics.drawing_3d";
 inline constexpr std::string_view k3DResolution = "graphics.resolution_3d";
 inline constexpr std::string_view kFineCoordinates = "graphics.fine_coordinates";
+inline constexpr std::string_view kEdgeMarking = "graphics.edge_marking";
 inline constexpr std::string_view kSound = "sound.enabled";
 inline constexpr std::string_view kVolume = "sound.volume";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";
@@ -95,6 +97,9 @@ bool hardware_3d(const platform::Settings& settings);
 // at (1 to 8), for a screen shown `shown_height` pixels high: as set, or
 // for "auto" the least that is at least as high, so no detail is lost.
 int resolution_3d(const platform::Settings& settings, int shown_height);
+// The outlines the game asks for (edge marking): off, one DS pixel wide at
+// any resolution, or one pixel of the resolution drawn at.
+nds::EdgeMarking edge_marking(const platform::Settings& settings);
 // The language the console is set to, which the game reads at its start.
 nds::UserSettings::Language game_language(const platform::Settings& settings);
 

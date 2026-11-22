@@ -103,7 +103,12 @@ drawing* or `--3d processor` has the processor draw them as the DS does,
 256 by 192, and it does where the graphics hardware cannot. Above 1x,
 *High-resolution coordinates* (Settings, Graphics; on by default) places
 vertices between the DS's pixels, as the geometry engine computes them, so
-that slowly moving models do not jump from pixel to pixel. The shaders are
+that slowly moving models do not jump from pixel to pixel. *Outlines*
+(Settings, Graphics; `--edge-marking`) sets the outlines the game asks for
+around 3D models (edge marking), in the game's colours: *Original
+thickness* (`original`, the default) keeps them one DS pixel wide, so N
+pixels wide at N times the resolution; *1 pixel* (`pixel`) makes them one
+pixel wide at any resolution; *Off* (`off`) leaves them out. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 
