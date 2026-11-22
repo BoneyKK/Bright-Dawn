@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "The game's interrupt handler runs natively, and the interpreter now runs less than a quarter of a percent of the instructions in a frame. In Saha Town, the black polygons are gone: the picture matches the DS's. A save made in the game, in Saha Town and in the first cave, is kept through a restart and loads.",
+    "what": "With the graphics hardware, outlines and the smoothing of polygon edges are drawn as the processor draws them: the polygons are drawn once more by the DS's rules, on the graphics hardware. In the first cave at 1x those pixels match the processor's; at higher resolutions outlines keep their thickness and colour.",
     "date": "2026-11-22"
   },
   "statuses": {
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS. The smoothing of polygon edges: only with the processor. Widescreen: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. Outlines (original thickness, 1 pixel or off), the smoothing of polygon edges, shadows and fog as on the DS. Widescreen: not yet."
     },
     {
       "part": "audio",
@@ -424,11 +424,10 @@
     }
   ],
   "next": [
-    "Higher resolutions, 1: smoothing (anti-aliasing) of polygon edges on the graphics hardware; model edges are jagged at 1x, less so at higher resolutions.",
-    "Higher resolutions, 2: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.",
-    "Higher resolutions, 3: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.",
-    "Higher resolutions, 4: the scroll of the 3D layer (BG0) is not used, by either 3D path.",
-    "Higher resolutions, 5: outlines with the graphics hardware are lighter than on the DS where edges are smoothed, and some are one pixel off at 1x. The DS mixes them with a second layer that its own way of covering pixels fills; matching it needs the DS's rasterizing on the graphics hardware (a compute shader).",
+    "Higher resolutions, 1: the 2D layers, sprites and text stay at the DS's resolution over the sharper 3D.",
+    "Higher resolutions, 2: a display capture that the game uses as a texture or as a scrolled background is read at the DS's resolution.",
+    "Higher resolutions, 3: the scroll of the 3D layer (BG0) is not used, by either 3D path.",
+    "Higher resolutions, 4: at 1x, the pixels of the 3D scene that the graphics hardware draws as triangles differ from the processor's in places (in the first cave, about 4,000 by more than 24 in a colour part), mostly in how textures are sampled.",
     "Widescreen and mods."
   ]
 }
