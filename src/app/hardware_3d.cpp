@@ -629,7 +629,9 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   // the new textures.
   const std::uint32_t vertex_bytes = new_scene ? static_cast<std::uint32_t>(scene.vertices.size() * sizeof(Scene::Vertex)) : 0;
   const Scene::Raster& raster = scene.raster;
-  const bool rasterize = new_scene && raster.wanted;
+  // At the DS's resolution the rasterizer draws all of the scene, as the
+  // processor does; at larger sizes only outlines and smoothed edges.
+  const bool rasterize = new_scene && (raster.wanted || scale_ == 1);
   const std::uint32_t corner_bytes =
       rasterize ? static_cast<std::uint32_t>(raster.corners.size() * sizeof(Scene::Raster::Corner)) : 0;
   const std::uint32_t polygon_bytes =
@@ -886,7 +888,7 @@ void Hardware3D::rasterize_scene(SDL_GPUCommandBuffer* commands, const nds::Hard
   finishing.size[0] = width;
   finishing.size[1] = height;
   finishing.size[2] = (scene.edge_marking ? 1u : 0u) | (scene.fog ? 2u : 0u) | (scene.fog_alpha_only ? 4u : 0u) |
-                      (scene.anti_aliasing ? 8u : 0u);
+                      (scene.anti_aliasing ? 8u : 0u) | (scale_ == 1 ? 16u : 0u);
   finishing.size[3] = edge_width;
   finishing.clear[0] = scene.clear_number & 63u;
   finishing.clear[1] = raster.clear_depth;

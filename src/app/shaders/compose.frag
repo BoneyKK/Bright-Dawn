@@ -8,12 +8,13 @@
 // A display capture (1), into a bank of 256 by 256 pixels (nds::
 // CaptureRecipe): for each of its pixels that the capture writes, the first
 // source (the main engine's picture with the scene put in, or the scene
-// alone), the second (a bank), or the two blended.
+// alone), the second (a bank), or the two blended; five bits a part, as the
+// DS keeps them in video memory, and blended as nds::Display does.
 //
 // Where the scene is put in: its pixels as the scene pass drew them, with
 // fog as the DS does it (nds::HardwareScene::fog); but outlines and
 // anti-aliased edges as raster.comp and finish.comp drew them, as the
-// processor does.
+// processor does. At the DS's resolution all its pixels are theirs.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -79,6 +80,14 @@ vec4 fogged(vec4 scene, vec2 inside) {
   return vec4(c * a, a);
 }
 
+// Six bits as eight, as the DS's screens show them (the top two bits again
+// at the bottom).
+float eight_bits(uint six) { return float(six << 2 | six >> 4) / 255.0; }
+
+// A colour as video memory keeps it: five bits a part (of the six, the top
+// five).
+uvec3 five_bits(vec3 c) { return uvec3(c * 255.0 + 0.5) >> 3u; }
+
 // The scene's pixel at `inside`: finish.comp's where it is to be taken.
 vec4 scene_at(vec2 inside) {
   if (u_edge.w != 0u) {
@@ -87,7 +96,7 @@ vec4 scene_at(vec2 inside) {
     const uint f = finished[uint(p.y) * u_edge.x + uint(p.x)];
     if ((f & (1u << 24)) != 0u) {
       const float a = float((f >> 18) & 63u) / 63.0;
-      return vec4(vec3(f & 63u, (f >> 6) & 63u, (f >> 12) & 63u) / 63.0 * a, a);
+      return vec4(eight_bits(f & 63u), eight_bits((f >> 6) & 63u), eight_bits((f >> 12) & 63u), 1.0) * a;
     }
   }
   return fogged(texture(u_scene, inside), inside);
@@ -138,7 +147,15 @@ void main() {
   uint j = ((u_capture.w >> 16) + i) & 0xFFFFu;
   vec3 second = texture(u_second, (vec2(float(j % 256u), float(j / 256u)) + within) / 256.0).rgb;
   uint source = u_capture.x & 3u;
-  if (source == 0u) o_colour.rgb = first;
-  else if (source == 1u) o_colour.rgb = second;
-  else o_colour.rgb = min(first * float(u_capture.y & 31u) / 16.0 + second * float((u_capture.y >> 8) & 31u) / 16.0, vec3(1.0));
+  uvec3 kept;
+  if (source == 0u) {
+    kept = five_bits(first);
+  } else if (source == 1u) {
+    kept = five_bits(second);
+  } else {
+    // Sixteenths of each.
+    uint weight_first = min(u_capture.y & 31u, 16u), weight_second = min((u_capture.y >> 8) & 31u, 16u);
+    kept = min((five_bits(first) * weight_first + five_bits(second) * weight_second) / 16u, uvec3(31u));
+  }
+  o_colour.rgb = vec3(eight_bits(kept.r << 1), eight_bits(kept.g << 1), eight_bits(kept.b << 1));
 }

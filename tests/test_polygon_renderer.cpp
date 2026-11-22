@@ -1080,9 +1080,10 @@ TEST(renderer_scene_has_the_polygons_as_the_ds_draws_them) {
   f.polygon({Fixture::vertex(10, 20, kGreen, 0x1234, 0x2000, 16, 32), Fixture::vertex(30, 40, kBlue),
              Fixture::vertex(40, 15, kWhite)},
             kOpaque | number(9));
-  // Not without outlines or anti-aliasing.
+  // Not wanted without outlines or anti-aliasing, but made all the same:
+  // at the DS's resolution every pixel is drawn from it.
   CHECK(!f.r.build_scene(f.frame, f.video).raster.wanted);
-  CHECK(f.r.scene().raster.polygons.empty());
+  CHECK(f.r.scene().raster.polygons.size() == 2);
 
   f.control(PolygonRenderer::kAntiAliasing | PolygonRenderer::kAlphaTest);
   f.io.write(PolygonRenderer::kAlphaTestReference, 2, 12);

@@ -496,3 +496,93 @@ TEST(hardware_rasterizer_draws_meshes_as_the_processor_at_1x) {
   }
   CHECK(failed == 0);
 }
+
+namespace {
+
+// The screen as shown at 1x, all 3D, against the processor's picture with
+// six bits as eight, as the DS's screens show them: the number of pixels not
+// the same. Where the processor's picture has no alpha, the screen's own
+// pixel (black) shows.
+int compare_shown(Frame& f) {
+  const std::vector<u32> wanted = f.processor();
+  const std::vector<u32> shown_pixels = f.graphics_hardware();
+  int differ = 0;
+  for (std::size_t i = 0; i < wanted.size(); ++i) {
+    const bool seen = ((wanted[i] >> 18) & 63) != 0;
+    for (unsigned part = 0; part < 3; ++part) {
+      const u32 six = (wanted[i] >> (part * 6)) & 63;
+      const u32 want = seen ? (six << 2 | six >> 4) : 0;
+      if (((shown_pixels[i] >> (part * 8)) & 255) != want) {
+        ++differ;
+        break;
+      }
+    }
+  }
+  return differ;
+}
+
+}  // namespace
+
+// At the DS's resolution the graphics hardware shows what the processor
+// draws, pixel for pixel, with or without outlines and smoothed edges.
+TEST(hardware_shows_the_processor_s_scene_at_1x) {
+  std::mt19937 random(2611);
+  const u32 controls[] = {0, PolygonRenderer::kAntiAliasing, PolygonRenderer::kEdgeMarking};
+  int failed = 0, scenes = 0;
+  for (int round = 0; round < 12; ++round) {
+    Frame f;
+    if (round % 4 == 3) mesh_scene(f, random, controls[round % 3]);
+    else random_scene(f, random, controls[round % 3]);
+    const int differ = compare_shown(f);
+    ++scenes;
+    if (differ != 0) {
+      ++failed;
+      std::printf("    scene %d (control %04x): %d pixels differ\n", round, f.r.control(), differ);
+    }
+  }
+  std::printf("    %d of %d scenes shown the same\n", scenes - failed, scenes);
+  CHECK(failed == 0);
+}
+
+// A display capture of the scene alone blended with a bank of video memory,
+// then shown: five bits a part, blended in sixteenths, as the processor's
+// capture keeps it in video memory (nds::Display).
+TEST(hardware_captures_as_the_processor_at_1x) {
+  std::mt19937 random(907);
+  Frame f;
+  random_scene(f, random, PolygonRenderer::kAntiAliasing);
+  const std::vector<u32> wanted = f.processor();
+  f.graphics_hardware();
+  bd::nds::CaptureRecipe recipe;
+  recipe.source = 2;
+  recipe.only_3d = true;
+  recipe.weight_first = 7;
+  recipe.weight_second = 10;
+  // Video memory holds five bits a part; the recipe has them as six.
+  recipe.second_pixels.resize(0x10000);
+  for (u32& p : recipe.second_pixels) {
+    const u32 five = random() & 0x7FFF;
+    p = (five & 0x1F) << 1 | ((five >> 5) & 0x1F) << 7 | ((five >> 10) & 0x1F) << 13;
+  }
+  const std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
+  Hardware3D& h = hardware();
+  REQUIRE(h.capture(f.r.scene(), recipe, screen, 77, 1));
+  bool failed = false;
+  REQUIRE(h.draw(0, screen, nullptr, 77, 0, 1, failed) != nullptr);
+  std::vector<u32> shown_pixels;
+  REQUIRE(h.read_screen(0, shown_pixels));
+  int differ = 0;
+  for (std::size_t i = 0; i < wanted.size(); ++i) {
+    for (unsigned part = 0; part < 3; ++part) {
+      const u32 first = (wanted[i] >> (part * 6) & 63) >> 1;
+      const u32 second = (recipe.second_pixels[i] >> (part * 6) & 63) >> 1;
+      const u32 six = std::min<u32>((first * 7 + second * 10) / 16, 31) << 1;
+      if (((shown_pixels[i] >> (part * 8)) & 255) != (six << 2 | six >> 4)) {
+        ++differ;
+        break;
+      }
+    }
+  }
+  std::printf("    %d of %zu pixels differ\n", differ, wanted.size());
+  CHECK(differ == 0);
+}

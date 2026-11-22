@@ -128,9 +128,10 @@ struct HardwareScene {
   // DS has it, for the graphics hardware's own rasterizer
   // (app/shaders/raster.comp), which draws them as the processor does
   // (nds::PolygonRenderer), at any resolution: two layers a pixel, the
-  // DS's spans, its edges and how much of a pixel they cover. Made only for
-  // frames that ask for edge marking or anti-aliasing (`wanted`), as only
-  // those use it.
+  // DS's spans, its edges and how much of a pixel they cover. At the DS's
+  // resolution every pixel of the scene is taken from it; at larger sizes
+  // only outlines and smoothed edges, for frames that ask for edge marking
+  // or anti-aliasing (`wanted`).
   struct Raster {
     // A corner (24 bytes, as the shader reads it).
     struct Corner {

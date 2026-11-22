@@ -10,8 +10,8 @@
 // - With anti-aliasing, an edge that covers part of its pixel is mixed with
 //   what is behind it by how much; where nothing is, that becomes its alpha.
 // The colour (six bits each of red, green, blue and alpha), plus 1 << 24
-// where it is an outline or so mixed: the pixels the compose pass takes from
-// here.
+// where it is an outline or so mixed, or everywhere with 16 in u_size.z (at
+// the DS's resolution): the pixels the compose pass takes from here.
 #version 450
 
 layout(local_size_x = 64) in;
@@ -20,7 +20,8 @@ layout(std430, set = 0, binding = 0) readonly buffer Layers { uvec4 layers[]; };
 layout(std430, set = 1, binding = 0) writeonly buffer Finished { uint finished[]; };
 layout(set = 2, binding = 0) uniform Finish {
   // Width, height; 1 for edge marking, 2 for fog, 4 for fog of the alpha
-  // only, 8 for anti-aliasing; how many pixels wide outlines are.
+  // only, 8 for anti-aliasing, 16 to take every pixel; how many pixels wide
+  // outlines are.
   uvec4 u_size;
   uvec4 u_clear;  // The clear plane's polygon number and depth.
   uvec4 u_edge_colours[2];  // Six bits each, four to an entry.
@@ -114,5 +115,6 @@ void main() {
     else front = (front & 0x3FFFFu) | edge_alpha << 18;
     taken = true;
   }
+  if ((u_size.z & 16u) != 0u) taken = true;
   finished[y * width + x] = front | (taken ? 1u << 24 : 0u);
 }
