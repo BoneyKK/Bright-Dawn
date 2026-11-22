@@ -277,10 +277,18 @@ std::filesystem::path not_native_path() {
   return log_file.parent_path() / (u8"not-native-" + name.substr(prefix.size()));
 }
 
-void write_not_native(runtime::Machine& machine, const std::filesystem::path& path) {
+// With the frames whose 3D the processor drew while the graphics hardware
+// was asked for, by reason.
+void write_not_native(nds::Console& console, const std::filesystem::path& path) {
+  runtime::Machine& machine = console.machine();
   if (path.empty() || !machine.has_translations()) return;
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   out << runtime::not_native_report(machine.gaps());
+  const nds::Display& display = console.display();
+  const nds::Display::Statistics& d = display.statistics();
+  out << "\n# 3D frames with the graphics hardware asked for: " << d.frames_3d_hardware << " drawn by it, "
+      << d.frames_3d_processor << " by the processor\n# frames\treason the processor drew them\n";
+  for (const auto& [why, frames] : display.fallbacks()) out << frames << '\t' << why << '\n';
   if (!out) log::warning("game", "the report of places not run natively could not be written");
 }
 
@@ -413,7 +421,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
         if (Status status = keeper->frame(); !status) log::warning("game", status.error().message);
       if (--frames_to_report == 0) {
         frames_to_report = kNotNativeEvery;
-        write_not_native(console.machine(), not_native);
+        write_not_native(console, not_native);
       }
       const bool go_on = screen.frame();
       hang_watch.resume();
@@ -424,7 +432,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     hang_watch.pause();
     console.on_frame = nullptr;
     platform::set_crash_guest_address(nullptr);
-    write_not_native(console.machine(), not_native);
+    write_not_native(console, not_native);
     if (!not_native.empty() && console.machine().has_translations())
       log::info("game", "the places not run natively are listed in " + app::utf8(not_native));
   }

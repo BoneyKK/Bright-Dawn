@@ -1,6 +1,7 @@
 #include "nds/display.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace bd::nds {
 
@@ -52,24 +53,20 @@ void Display::line_begins(unsigned line) {
     // ones, make this frame's 3D picture (or scene).
     const std::uint64_t swaps = geometry_.statistics().swaps;
     const bool capture = (capture_control_ & kCaptureOn) != 0;
-    const bool main_on_top = (power_control_ & kMainOnTop) != 0;
-    // 3D on both screens: all of the main engine's picture (source A, 256
-    // by 192) captured in this frame and the last, the main engine on the
-    // other screen now.
-    hardware_capture_ = hardware_3d_ && capture && (capture_control_ & (3u << 29 | kCapture3DOnly)) == 0 &&
-                        ((capture_control_ >> 20) & 3) == 3 && last_capture_frame_ == statistics_.frames &&
-                        main_on_top != last_main_on_top_;
-    if (capture) {
-      last_capture_frame_ = statistics_.frames + 1;
-      last_main_on_top_ = main_on_top;
+    // A capture whose second source is main memory is not made at all
+    // (capture_line()); any other is made by the graphics hardware too.
+    const bool from_main_memory = ((capture_control_ >> 29) & 3) != 0 && (capture_control_ & kCaptureFromMainMemory) != 0;
+    hardware_capture_ = hardware_3d_ && capture && !from_main_memory;
+    if (hardware_capture_) start_hardware_capture();
+    scene_this_frame_ = hardware_3d_;
+    if (hardware_wanted_ && swaps != 0) {
+      if (scene_this_frame_) {
+        ++statistics_.frames_3d_hardware;
+      } else {
+        ++statistics_.frames_3d_processor;
+        ++fallbacks_[fallback_.empty() ? std::string("the graphics hardware cannot draw") : fallback_];
+      }
     }
-    if (hardware_capture_) {
-      kept_at_ = (kept_at_ + 1) % kept_.size();
-      kept_[kept_at_].number = 0;
-      kept_[kept_at_].pixels.resize(static_cast<std::size_t>(kWidth) * kHeight);
-      capture_source_.resize(static_cast<std::size_t>(kWidth) * kHeight);
-    }
-    scene_this_frame_ = hardware_3d_ && (!capture || hardware_capture_);
     main_.set_hardware_3d(scene_this_frame_);
     if (scene_this_frame_) {
       if (swaps != swaps_built_) {
@@ -100,6 +97,52 @@ void Display::line_done(unsigned line) {
   if (capturing_) capture_line(line);
 }
 
+void Display::start_hardware_capture() {
+  const unsigned* size = kCaptureSizes[(capture_control_ >> 20) & 3];
+  CaptureRecipe& r = recipe_;
+  r.source = std::min((capture_control_ >> 29) & 3, 2u);
+  r.only_3d = (capture_control_ & kCapture3DOnly) != 0;
+  r.weight_first = std::min<u32>(capture_control_ & 0x1F, 16);
+  r.weight_second = std::min<u32>((capture_control_ >> 8) & 0x1F, 16);
+  r.width = size[0];
+  r.height = size[1];
+  r.write_start = ((capture_control_ >> 18) & 3) * 0x4000;
+  r.read_start = ((capture_control_ >> 26) & 3) * 0x4000;
+  r.second_capture = 0;
+  r.second_pixels.clear();
+  const unsigned into = (capture_control_ >> 16) & 3;
+  const unsigned from = (main_.control() >> 18) & 3;
+  if (r.source != 0) {
+    // The second source's bank as it is before this capture writes to it
+    // (it can be the same bank): a capture of the graphics hardware if it
+    // holds one, wherever the capture reads it; else what is there.
+    const u32 base = 0x06800000 + from * 0x20000;
+    const std::size_t count = static_cast<std::size_t>(r.width) * r.height;
+    const Kept* held = nullptr;
+    for (const Kept& kept : kept_) {
+      if (kept.number == 0 || kept.bank != from || (held != nullptr && held->number > kept.number)) continue;
+      bool same = true;
+      for (std::size_t i = 0; i < count && same; i += 61) {
+        const u32 at = (r.read_start + static_cast<u32>(i)) & 0xFFFF;
+        same = kept.pixels[at] == six_bits_each(video_.peek(base + at * 2, 2));
+      }
+      if (same) held = &kept;
+    }
+    if (held != nullptr) {
+      r.second_capture = held->number;
+    } else {
+      r.second_pixels.resize(0x10000);
+      for (u32 at = 0; at < 0x10000; ++at) r.second_pixels[at] = six_bits_each(video_.peek(base + at * 2, 2));
+    }
+  }
+  kept_at_ = (kept_at_ + 1) % kept_.size();
+  Kept& kept = kept_[kept_at_];
+  kept.number = 0;
+  kept.bank = into;
+  kept.pixels.assign(0x10000, kNotCaptured);
+  capture_source_.assign(static_cast<std::size_t>(kWidth) * kHeight, 0);
+}
+
 void Display::capture_line(unsigned line) {
   const unsigned* size = kCaptureSizes[(capture_control_ >> 20) & 3];
   const unsigned width = size[0], height = size[1];
@@ -113,9 +156,10 @@ void Display::capture_line(unsigned line) {
 
   // The first source: the main engine's picture before the display mode and
   // the master brightness, or the 3D picture alone.
+  const bool only_3d = (capture_control_ & kCapture3DOnly) != 0;
   const auto first = [&](unsigned x) {
-    if ((capture_control_ & kCapture3DOnly) == 0) return five_bits_each(main_.mixed_line()[x]);
-    if (!have_3d_) return u32{0x8000};
+    if (!only_3d) return five_bits_each(main_.mixed_line()[x]);
+    if (!have_3d_ || hardware_capture_) return u32{0x8000};
     return five_bits_each(renderer_.image()[static_cast<std::size_t>(line) * kWidth + x]);
   };
   // The second: a bank of video memory, as 16 bits a pixel.
@@ -129,14 +173,17 @@ void Display::capture_line(unsigned line) {
     // colour for it, and a picture all 3D is the same in every capture. The
     // lowest bits there tell this capture from the ones made before it, to
     // find which one an engine shows.
-    const auto* marks = hardware_capture_ ? main_.line_marks() : nullptr;
+    const auto* marks = hardware_capture_ && !only_3d ? main_.line_marks() : nullptr;
+    const auto is_3d = [&](unsigned x) {
+      if (!hardware_capture_ || source == 1) return false;
+      return only_3d || (marks != nullptr && ((*marks)[x] & DisplayEngine::kMark3D) != 0);
+    };
     const u32 sign = (statistics_.frames + 1) & 7;
     const u32 signature = (sign & 1) | ((sign >> 1) & 1) << 5 | ((sign >> 2) & 1) << 10;
     for (unsigned x = 0; x < width; ++x) {
       u32 pixel;
       if (source == 0) {
         pixel = first(x);
-        if (marks != nullptr && ((*marks)[x] & DisplayEngine::kMark3D) != 0) pixel ^= signature;
       } else if (source == 1) {
         pixel = second(x);
       } else {
@@ -146,13 +193,16 @@ void Display::capture_line(unsigned line) {
         for (unsigned shift = 0; shift < 15; shift += 5)
           pixel |= std::min<u32>((((a >> shift) & 0x1F) * weight_first + ((b >> shift) & 0x1F) * weight_second) / 16, 31) << shift;
       }
-      video_.poke(into + ((write_at + x * 2) & 0x1FFFF), 2, pixel);
+      if (is_3d(x)) pixel ^= signature;
+      const u32 place = (write_at + x * 2) & 0x1FFFF;
+      video_.poke(into + place, 2, pixel);
       if (hardware_capture_) {
         // What the graphics hardware's capture takes, and what this one put
         // in video memory, to find where it is shown.
-        const std::size_t at = static_cast<std::size_t>(line) * kWidth + x;
-        capture_source_[at] = main_.mixed_line()[x] | (marks != nullptr ? (*marks)[x] : 0);
-        kept_[kept_at_].pixels[at] = six_bits_each(pixel);
+        if (x < static_cast<unsigned>(kWidth) && line < static_cast<unsigned>(kHeight))
+          capture_source_[static_cast<std::size_t>(line) * kWidth + x] =
+              main_.mixed_line()[x] | (marks != nullptr ? (*marks)[x] : 0);
+        kept_[kept_at_].pixels[place / 2] = six_bits_each(pixel);
       }
     }
   }
@@ -170,6 +220,7 @@ void Display::vertical_blank() {
   top_ = main_on_top ? main_.screen() : second_.screen();
   bottom_ = main_on_top ? second_.screen() : main_.screen();
   frame_capture_ = hardware_capture_ ? kept_[kept_at_].number : 0;
+  if (frame_capture_ != 0) std::swap(frame_recipe_, recipe_);
   ScreenFill& main_fill = frame_fills_[main_on_top ? 0 : 1];
   ScreenFill& second_fill = frame_fills_[main_on_top ? 1 : 0];
   main_fill = second_fill = ScreenFill{};
@@ -182,24 +233,30 @@ void Display::vertical_blank() {
 }
 
 void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const {
-  // The recent capture the engine shows most of, at one pixel in 61; it
-  // counts if three quarters of those are the same.
+  // The recent capture the engine shows most of, at one pixel in 61, where
+  // the screen would show its bank (as display mode 2 does); it counts if
+  // three quarters of those it covers are the same.
   const std::vector<std::uint32_t>& shown = engine.unlit_screen();
   const Kept* best = nullptr;
-  unsigned best_count = 0, samples = 0;
+  unsigned best_count = 0, best_samples = 0;
   for (const Kept& kept : kept_) {
     // A capture made in this frame is not complete until the frame is: what
     // the engines show now can only be an earlier one.
     if (kept.number == 0 || kept.number > statistics_.frames || statistics_.frames + 1 - kept.number > 3) continue;
-    unsigned count = 0;
-    samples = 0;
-    for (std::size_t i = 0; i < shown.size(); i += 61, ++samples) count += shown[i] == kept.pixels[i] ? 1 : 0;
+    unsigned count = 0, samples = 0;
+    for (std::size_t i = 0; i < shown.size(); i += 61) {
+      if (kept.pixels[i] == kNotCaptured) continue;
+      ++samples;
+      count += shown[i] == kept.pixels[i] ? 1 : 0;
+    }
+    if (count * 4 < samples * 3 || samples == 0) continue;
     if (count > best_count || (best != nullptr && count == best_count && kept.number > best->number)) {
       best_count = count;
+      best_samples = samples;
       best = &kept;
     }
   }
-  if (best == nullptr || best_count * 4 < samples * 3) return;
+  if (best == nullptr || best_samples == 0) return;
   for (std::size_t i = 0; i < shown.size(); ++i)
     if (shown[i] == best->pixels[i]) screen[i] |= DisplayEngine::kMark3D;
   fill = {Fill::kCapture, best->number, engine.master_brightness()};

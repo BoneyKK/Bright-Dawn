@@ -245,7 +245,7 @@ TEST(display_marks_where_the_graphics_hardware_puts_the_3d_scene) {
   const u32 darker = f.display.bottom_screen()[0];
   CHECK(((darker >> DisplayEngine::kMarkEffectShift) & 3) == 3 && ((darker >> DisplayEngine::kMarkFactorShift) & 31) == 8);
   // Not marked where a window hides background 0 (window 0, from x 0 to
-  // 254, shows all but it), nor while a capture needs the picture drawn here.
+  // 254, shows all but it). A capture is made by the graphics hardware too.
   f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8 | 1u << 13);
   f.io.write(0x04000040, 2, 0x00FF);
   f.io.write(0x04000044, 2, 0x00C0);
@@ -258,7 +258,8 @@ TEST(display_marks_where_the_graphics_hardware_puts_the_3d_scene) {
   f.io.write(0x04000050, 2, 0);
   f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20);
   f.frame();
-  CHECK(f.display.frame_fill(1).fill != Display::Fill::kScene && f.display.bottom_screen()[191 * 256] == rgb(63, 0, 0));
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kScene && f.display.frame_capture() != 0);
+  CHECK(f.display.statistics().frames_3d_processor == 0);
 }
 
 TEST(display_keeps_hardware_captures_and_finds_where_they_are_shown) {
@@ -266,21 +267,18 @@ TEST(display_keeps_hardware_captures_and_finds_where_they_are_shown) {
   f.display.set_hardware_3d(true);
   f.send_triangle();
   f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
-  // 3D on both screens: the main engine's picture captured into bank B in
-  // every frame, the main engine on the other screen each time. The first
-  // capture has none before it, so the processor draws it.
-  const u32 capture = Display::kCaptureOn | 3u << 20 | 1u << 16;
-  f.io.write(Display::kCaptureControl, 4, capture);
   f.frame();
-  CHECK(f.display.frame_capture() == 0);
+  // The main engine's picture captured into bank B, by the graphics
+  // hardware: a scene, and what the capture takes, marked where the scene
+  // can go.
   f.io.write(Display::kPowerControl, 2, Display::kMainOnTop);
-  f.io.write(Display::kCaptureControl, 4, capture);
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20 | 1u << 16);
   f.frame();
-  // The second is the graphics hardware's: a scene, and what the capture
-  // takes, marked where the scene can go.
   const std::uint64_t kept = f.display.frame_capture();
   CHECK(kept != 0 && f.display.frame_fill(0).fill == Display::Fill::kScene);
   CHECK((f.display.capture_source()[191 * 256] & DisplayEngine::kMark3D) != 0);
+  const bd::nds::CaptureRecipe& recipe = f.display.capture_recipe();
+  CHECK(recipe.source == 0 && !recipe.only_3d && recipe.width == 256 && recipe.height == 192 && recipe.write_start == 0);
   // The main engine shows bank B on the bottom screen: that capture, marked
   // everywhere it is the same, with the engine's master brightness.
   f.io.write(Display::kPowerControl, 2, 0);
@@ -312,7 +310,7 @@ TEST(display_a_screen_shows_the_capture_it_reads_when_the_screens_swap_every_fra
     f.frame();
     return f.display.frame_capture();
   };
-  frame(false, 0);  // The first has none before it: not kept.
+  CHECK(frame(false, 0) != 0);
   const std::uint64_t into_b = frame(true, 1);
   const std::uint64_t into_a = frame(false, 0);
   REQUIRE(into_b != 0 && into_a != 0 && into_a != into_b);
@@ -328,4 +326,96 @@ TEST(display_a_screen_shows_the_capture_it_reads_when_the_screens_swap_every_fra
   f.io.write(0x04000000, 4, (picture & ~kPicture) | 2u << 16);
   frame(false, 1);
   CHECK(f.display.frame_fill(1).fill == Display::Fill::kCapture && f.display.frame_fill(1).capture == now);
+}
+
+// Captures the graphics hardware makes with the 3D scene, whatever they
+// take and wherever they go; in each, the processor draws no 3D picture.
+
+TEST(display_hardware_captures_the_3d_picture_alone) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | Display::kCapture3DOnly | 3u << 20);
+  f.frame();
+  CHECK(f.display.frame_capture() != 0 && f.display.capture_recipe().only_3d);
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kScene);
+  CHECK(f.display.statistics().frames_3d_processor == 0 && f.display.statistics().frames_3d_hardware == 1);
+}
+
+// A trail behind what moves, as the game's battles do: each frame's picture
+// blended with the last capture, into the bank the main engine shows.
+TEST(display_hardware_blends_a_capture_with_the_last_one) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, 2u << 16 | DisplayEngine::kBackground0Is3D | 1u << 8);
+  const u32 blend = Display::kCaptureOn | 2u << 29 | 3u << 20 | 9u << 8 | 7u;
+  f.io.write(Display::kCaptureControl, 4, blend);
+  f.frame();
+  const std::uint64_t first = f.display.frame_capture();
+  const bd::nds::CaptureRecipe& recipe = f.display.capture_recipe();
+  REQUIRE(first != 0);
+  CHECK(recipe.source == 2 && recipe.weight_first == 7 && recipe.weight_second == 9);
+  // Bank A held no capture of the graphics hardware: it goes as it is.
+  CHECK(recipe.second_capture == 0 && recipe.second_pixels.size() == 0x10000);
+  f.io.write(Display::kCaptureControl, 4, blend);
+  f.frame();
+  const std::uint64_t second = f.display.frame_capture();
+  CHECK(second > first && recipe.second_capture == first && recipe.second_pixels.empty());
+  // The screen shows the first, in bank A while the second was made.
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kCapture && f.display.frame_fill(1).capture == first);
+  CHECK(f.display.statistics().frames_3d_processor == 0);
+}
+
+// 256 by 128, a quarter of the way into bank B: the screen showing bank B
+// shows it from line 64, and the lines above are not it.
+TEST(display_hardware_captures_other_sizes_and_places) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 2u << 20 | 1u << 18 | 1u << 16);
+  f.frame();
+  const std::uint64_t kept = f.display.frame_capture();
+  REQUIRE(kept != 0);
+  CHECK(f.display.capture_recipe().height == 128 && f.display.capture_recipe().write_start == 0x4000);
+  f.io.write(0x04000000, 4, 2u << 16 | 1u << 18);
+  f.frame();
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kCapture && f.display.frame_fill(1).capture == kept);
+  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kMark3D) != 0);
+  CHECK((f.display.bottom_screen()[0] & DisplayEngine::kMark3D) == 0);
+}
+
+// The second source fed from main memory is not made (as without the
+// graphics hardware); the scene is drawn all the same.
+TEST(display_hardware_draws_the_scene_when_a_capture_reads_main_memory) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 1u << 29 | Display::kCaptureFromMainMemory | 3u << 20);
+  f.frame();
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kScene && f.display.frame_capture() == 0);
+  CHECK(f.display.statistics().frames_3d_processor == 0);
+}
+
+TEST(display_counts_the_frames_the_processor_draws_for_the_graphics_hardware) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  f.frame();
+  f.display.hardware_3d_failed("the graphics hardware failed");
+  f.frame();
+  const Display::Statistics& s = f.display.statistics();
+  CHECK(s.frames_3d_hardware == 1 && s.frames_3d_processor == 1);
+  CHECK(f.display.fallbacks().size() == 1 && f.display.fallbacks().begin()->second == 1);
+  // Not counted with the processor asked for.
+  f.display.set_hardware_3d(false);
+  f.frame();
+  CHECK(s.frames_3d_processor == 1 && f.display.fallbacks().size() == 1);
 }

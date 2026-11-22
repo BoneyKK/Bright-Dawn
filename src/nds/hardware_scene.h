@@ -74,4 +74,25 @@ struct HardwareScene {
   float alpha_threshold = 0;
 };
 
+// How the graphics hardware makes a display capture (nds::Display), as the
+// DS does, at its own resolution: what is taken, and where it goes in its
+// bank of video memory. A bank is kept as 256 by 256 pixels, as the main
+// engine's display mode 2 shows one: pixel n of the bank at (n % 256,
+// n / 256).
+struct CaptureRecipe {
+  unsigned source = 0;   // 0 the first source, 1 the second, 2 the two blended.
+  bool only_3d = false;  // The first source is the 3D scene alone, not the main engine's picture with it.
+  unsigned weight_first = 16, weight_second = 0;  // For 2: sixteenths of each.
+  unsigned width = 256, height = 192;
+  // In pixels: where the capture starts in its bank, and where the second
+  // source starts in its bank. Both wrap at the end of the bank.
+  std::uint32_t write_start = 0, read_start = 0;
+  // The second source's bank: the capture made by the graphics hardware
+  // that it holds (its number), or 0, and as it is in video memory (256 *
+  // 256 colours of six bits a part; empty if it holds such a capture or the
+  // second source is not used).
+  std::uint64_t second_capture = 0;
+  std::vector<std::uint32_t> second_pixels;
+};
+
 }  // namespace bd::nds

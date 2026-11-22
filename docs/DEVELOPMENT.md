@@ -83,7 +83,9 @@ and in the game's code) or the game not finishing a frame for 10 seconds.
 With the built game, `logs/not-native-` and the same time lists where the
 game's code ran in the interpreter instead of natively, the most
 instructions first, with the instruction and why (no translated code starts
-there, or its overlay was not in memory): the places still to work on. It is
+there, or its overlay was not in memory): the places still to work on. At
+its end it counts the frames whose 3D the graphics hardware drew and the
+frames the processor drew instead, with the reason. It is
 written about once a minute and when the game ends.
 Please attach it when reporting a problem: *Report a problem* (the
 launcher's Log page, or the pause menu) opens the bug form on GitHub with the

@@ -104,11 +104,15 @@ void GameScreen::apply_settings(bool first) {
   if (hardware && !hardware_tried_) {
     hardware_tried_ = true;
     std::string why;
-    if (!hardware_.open(app_.renderer, why))
+    if (!hardware_.open(app_.renderer, why)) {
       log::warning("3d", "the graphics hardware cannot draw 3D scenes, so the processor draws them: " + why);
+      hardware_problem_ = "the graphics hardware cannot draw 3D scenes: " + why;
+    }
   }
+  const bool wanted = hardware;
   hardware = hardware && hardware_.is_open() && !hardware_failed_;
-  console_.display().set_hardware_3d(hardware);
+  if (wanted && !hardware) console_.display().hardware_3d_failed(hardware_problem_);
+  else console_.display().set_hardware_3d(hardware);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
   const bool smooth = ui::smooth_textures(s);
@@ -389,7 +393,8 @@ void GameScreen::keep_capture() {
   const std::uint64_t number = display.frame_capture();
   if (number == 0 || number == capture_kept_ || !hardware_.is_open() || hardware_failed_) return;
   capture_kept_ = number;
-  if (!hardware_.capture(console_.polygon_renderer().scene(), display.capture_source(), number, scale_3d()))
+  if (!hardware_.capture(console_.polygon_renderer().scene(), display.capture_recipe(), display.capture_source(), number,
+                         scale_3d()))
     give_up_hardware("make a display capture");
 }
 
@@ -402,7 +407,8 @@ void GameScreen::give_up_hardware(const char* why) {
                          ", so the processor draws the 3D pictures from now on");
   hardware_failed_ = true;
   shown_3d_ = {};
-  console_.display().set_hardware_3d(false);
+  hardware_problem_ = std::string("the graphics hardware failed to ") + why;
+  console_.display().hardware_3d_failed(hardware_problem_);
 }
 
 void GameScreen::prepare_enlarged(int factor) {

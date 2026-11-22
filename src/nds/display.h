@@ -61,6 +61,11 @@ class Display {
     std::uint64_t frames = 0;             // Shown.
     std::uint64_t pictures_3d = 0;        // 3D pictures drawn.
     std::uint64_t captures = 0;           // Display captures finished.
+    // Once the game uses 3D, with the graphics hardware asked for: the
+    // frames its scene draws, and the frames the processor draws instead
+    // (for the reasons in fallbacks()).
+    std::uint64_t frames_3d_hardware = 0;
+    std::uint64_t frames_3d_processor = 0;
   };
 
   // `palette` and `sprites` are the two kibibytes each of palette memory and
@@ -86,14 +91,31 @@ class Display {
   // polygon renderer then makes a scene (PolygonRenderer::build_scene) in
   // place of the picture, and the main engine marks where it goes.
   //
-  // A frame with a display capture is drawn here, as the capture needs the
-  // picture, except in the pattern of 3D on both screens: a capture of all
-  // of the main engine's picture in each frame while it changes screens.
-  // That capture is made by the graphics hardware too (frame_capture()); in
-  // video memory it has the 2D pictures only. A screen that then shows it
+  // A display capture is then made by the graphics hardware too
+  // (frame_capture()), at its resolution, whatever it takes: the main
+  // engine's picture or the 3D alone, a bank of video memory, or the two
+  // blended, of any size, anywhere in its bank. Here it is still written to
+  // video memory, for the game, with what the processor has: the 2D
+  // pictures, and no colour where the 3D goes. A screen that then shows it
   // (the main engine in display mode 2, or the second engine with a copy of
-  // it) is marked where it does, for the graphics hardware's capture.
-  void set_hardware_3d(bool on) { hardware_3d_ = on; }
+  // it) is marked where it does, for the graphics hardware's capture. A
+  // capture that reads a bank holding one of the graphics hardware's reads
+  // that one, so that a capture blended with the last (a trail behind what
+  // moves) keeps the resolution.
+  void set_hardware_3d(bool on) {
+    hardware_3d_ = hardware_wanted_ = on;
+    fallback_.clear();
+  }
+  // The graphics hardware was asked for and cannot draw: the processor
+  // does, from now on, and its frames are counted under `why`.
+  void hardware_3d_failed(const std::string& why) {
+    hardware_3d_ = false;
+    hardware_wanted_ = true;
+    fallback_ = why;
+  }
+  // The frames the processor drew while the graphics hardware was asked
+  // for, by reason.
+  const std::map<std::string, std::uint64_t>& fallbacks() const { return fallbacks_; }
 
   // What the graphics hardware puts in where a screen is marked.
   enum class Fill : std::uint8_t { kNone, kScene, kCapture };
@@ -105,10 +127,11 @@ class Display {
   // Of the frame last completed: 0 the top screen, 1 the bottom screen.
   const ScreenFill& frame_fill(int screen) const { return frame_fills_[screen & 1]; }
   // The capture the graphics hardware makes, of the frame last completed:
-  // its number (0 for none, each larger than the last), and what it takes:
-  // the main engine's picture before the display mode and the master
-  // brightness, marked for the scene.
+  // its number (0 for none, each larger than the last), how it is made,
+  // and its first source: the main engine's picture before the display
+  // mode and the master brightness, marked for the scene.
   std::uint64_t frame_capture() const { return frame_capture_; }
+  const CaptureRecipe& capture_recipe() const { return frame_recipe_; }
   const std::vector<std::uint32_t>& capture_source() const { return capture_source_; }
 
   DisplayEngine& main_engine() { return main_; }
@@ -124,10 +147,16 @@ class Display {
   // hardware, and says so in `fill`.
   void find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const;
 
+  // Starts this frame's capture by the graphics hardware.
+  void start_hardware_capture();
+
   // A capture made by the graphics hardware: what it put in video memory,
-  // six bits a part.
+  // six bits a part, where in its bank (256 * 256; kNotCaptured where it
+  // put nothing).
+  static constexpr std::uint32_t kNotCaptured = 0xFFFFFFFF;
   struct Kept {
     std::uint64_t number = 0;  // 0 while it is made.
+    unsigned bank = 0;         // 0 to 3: A to D.
     std::vector<std::uint32_t> pixels;
   };
 
@@ -140,15 +169,15 @@ class Display {
   std::uint64_t swaps_drawn_ = 0;   // The 3D engine's swap count when the 3D picture was last drawn,
   std::uint64_t swaps_built_ = 0;   // and when the scene was last made.
   bool have_3d_ = false, have_scene_ = false;
-  bool hardware_3d_ = false, scene_this_frame_ = false;
+  bool hardware_3d_ = false, hardware_wanted_ = false, scene_this_frame_ = false;
+  std::string fallback_;  // Why the processor draws, while the graphics hardware is wanted.
+  std::map<std::string, std::uint64_t> fallbacks_;
   // Captures by the graphics hardware: this frame's, its place in kept_,
-  // and the pattern that allows them (the last frame with a capture and
-  // where the main engine was).
+  // and how it is made.
   bool hardware_capture_ = false;
   std::size_t kept_at_ = 0;
   std::array<Kept, 3> kept_;
-  std::uint64_t last_capture_frame_ = 0;
-  bool last_main_on_top_ = false;
+  CaptureRecipe recipe_, frame_recipe_;
   std::vector<std::uint32_t> capture_source_;
   std::uint64_t frame_capture_ = 0;
   std::array<ScreenFill, 2> frame_fills_{};

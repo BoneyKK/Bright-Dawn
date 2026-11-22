@@ -24,9 +24,9 @@ struct SceneUniforms {
   float toon[32][4];
   float options[4];  // The alpha under which nothing is drawn; 1 for highlight; 1 for opaque.
 };
-struct ComposeUniforms {
-  float brightness[4];  // 1 towards white, 2 towards black; how far (0 to 1).
-};
+constexpr std::uint32_t kBankBytes = 256 * 256 * 4;
+
+using ComposeUniforms = Hardware3D::ComposeUniforms;
 
 std::uint32_t aligned(std::uint32_t n) { return (n + 255u) & ~255u; }
 
@@ -68,6 +68,7 @@ Hardware3D::~Hardware3D() {
   if (nearest_ != nullptr) SDL_ReleaseGPUSampler(device_, nearest_);
   if (atlas_ != nullptr) SDL_ReleaseGPUTexture(device_, atlas_);
   if (screen_ != nullptr) SDL_ReleaseGPUTexture(device_, screen_);
+  if (bank_ != nullptr) SDL_ReleaseGPUTexture(device_, bank_);
   if (transfer_ != nullptr) SDL_ReleaseGPUTransferBuffer(device_, transfer_);
   if (vertices_ != nullptr) SDL_ReleaseGPUBuffer(device_, vertices_);
 }
@@ -96,7 +97,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   SDL_GPUShader* compose_vertex = make_shader(device, shaders::kComposeVert, sizeof shaders::kComposeVert,
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
-                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
   const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment;
 
   // The depth buffer: the most exact format the device has, with a stencil
@@ -204,7 +205,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     atlas_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, kAtlasSize, kAtlasSize);
     screen_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, kScreenWidth,
                            kScreenHeight);
-    if (nearest_ == nullptr || atlas_ == nullptr || screen_ == nullptr) made = fail("3D textures");
+    bank_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, 256);
+    if (nearest_ == nullptr || atlas_ == nullptr || screen_ == nullptr || bank_ == nullptr) made = fail("3D textures");
   }
   if (!made) return false;  // What was made is let go by the destructor.
   log::writef(log::Level::Info, "3d", "the graphics hardware draws 3D scenes (%s, depth buffer format %d, %s)",
@@ -238,14 +240,15 @@ bool Hardware3D::make_targets(int scale) {
   const int width = kScreenWidth * scale, height = kScreenHeight * scale;
   const SDL_GPUTextureUsageFlags colour = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
   bool made = true;
-  const auto make = [&](SDL_GPUTextureFormat format, SDL_GPUTextureUsageFlags usage) {
-    SDL_GPUTexture* t = make_texture(device_, format, usage, width, height);
+  const auto make = [&](SDL_GPUTextureFormat format, SDL_GPUTextureUsageFlags usage, int lines = kScreenHeight) {
+    SDL_GPUTexture* t = make_texture(device_, format, usage, width, lines * scale);
     made = made && t != nullptr;
     return t;
   };
   scene_target_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   depth_ = make(depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
-  for (Kept& k : kept_) k.texture = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+  // A kept capture is its bank of video memory, 256 by 256.
+  for (Kept& k : kept_) k.texture = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour, 256);
   for (std::size_t i = 0; i < outputs_.size() && made; ++i) {
     outputs_[i] = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
     if (!made) break;
@@ -311,15 +314,30 @@ bool Hardware3D::ready(int scale) {
   return scale == scale_ || make_targets(scale);
 }
 
-bool Hardware3D::capture(const nds::HardwareScene& scene, const std::vector<std::uint32_t>& source,
-                         std::uint64_t number, int scale) {
+bool Hardware3D::capture(const nds::HardwareScene& scene, const nds::CaptureRecipe& recipe,
+                         const std::vector<std::uint32_t>& source, std::uint64_t number, int scale) {
   if (!ready(scale)) return false;
-  // In place of the oldest.
-  Kept* oldest = &kept_[0];
+  // The second source: a kept capture, or the bank as it is.
+  SDL_GPUTexture* second = nullptr;
+  const Kept* read = nullptr;
+  for (const Kept& k : kept_)
+    if (recipe.second_capture != 0 && k.number == recipe.second_capture) read = &k;
+  if (read != nullptr) second = read->texture;
+  else if (recipe.second_pixels.size() == 0x10000) second = bank_;
+  // In place of the oldest, but not the one it reads.
+  Kept* oldest = nullptr;
   for (Kept& k : kept_)
-    if (k.number < oldest->number) oldest = &k;
+    if (&k != read && (oldest == nullptr || k.number < oldest->number)) oldest = &k;
   oldest->number = 0;
-  if (!run(&scene, source, nullptr, oldest->texture, 0)) return false;
+  ComposeUniforms uniforms{};
+  uniforms.options[0] = 1;
+  uniforms.capture[0] = std::min(recipe.source, 2u) | (recipe.only_3d ? 4u : 0u);
+  uniforms.capture[1] = recipe.weight_first | recipe.weight_second << 8;
+  uniforms.capture[2] = recipe.width | recipe.height << 16;
+  uniforms.capture[3] = (recipe.write_start & 0xFFFF) | (recipe.read_start & 0xFFFF) << 16;
+  if (recipe.source != 0 && second == nullptr) uniforms.capture[0] = recipe.only_3d ? 4u : 0u;
+  const std::vector<std::uint32_t>* bank = second == bank_ ? &recipe.second_pixels : nullptr;
+  if (!run(&scene, source, nullptr, second, bank, oldest->texture, uniforms)) return false;
   oldest->number = number;
   return true;
 }
@@ -337,13 +355,20 @@ SDL_Texture* Hardware3D::draw(int which, const std::vector<std::uint32_t>& scree
       return nullptr;
     }
   }
-  if (!run(scene, screen, source, outputs_[static_cast<std::size_t>(which & 1)], brightness)) return nullptr;
+  ComposeUniforms uniforms{};
+  const unsigned direction = brightness >> 14;
+  uniforms.brightness[0] = direction == 1 || direction == 2 ? static_cast<float>(direction) : 0.0f;
+  uniforms.brightness[1] = static_cast<float>(std::min(brightness & 0x1F, 16)) / 16.0f;
+  uniforms.options[1] = source != nullptr ? 256.0f : static_cast<float>(kScreenHeight);
+  if (!run(scene, screen, source, nullptr, nullptr, outputs_[static_cast<std::size_t>(which & 1)], uniforms))
+    return nullptr;
   failed = false;
   return shown_[static_cast<std::size_t>(which & 1)];
 }
 
 bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
-                     SDL_GPUTexture* target, std::uint16_t brightness) {
+                     SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
+                     const ComposeUniforms& uniforms) {
   if (screen.size() != std::size_t{kScreenWidth} * kScreenHeight) return false;
   static const nds::HardwareScene kNoScene;
   const nds::HardwareScene& scene = given != nullptr ? *given : kNoScene;
@@ -387,7 +412,8 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
 
   // What goes up: the screen, the vertices and the new textures.
   const std::uint32_t vertex_bytes = new_scene ? static_cast<std::uint32_t>(scene.vertices.size() * sizeof(Scene::Vertex)) : 0;
-  std::uint32_t bytes = kScreenBytes + aligned(vertex_bytes);
+  const std::uint32_t bank_bytes = bank != nullptr ? kBankBytes : 0;
+  std::uint32_t bytes = kScreenBytes + aligned(vertex_bytes) + bank_bytes;
   for (std::uint32_t i : pending_)
     bytes += aligned(static_cast<std::uint32_t>(scene.textures[i].width * scene.textures[i].height * 4));
   if (!ensure_transfer(bytes) || (vertex_bytes != 0 && !ensure_vertex_buffer(vertex_bytes))) {
@@ -406,6 +432,18 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     mapped[4 * i + 3] = static_cast<std::uint8_t>(p >> 24);
   }
   std::uint32_t at = kScreenBytes;
+  const std::uint32_t bank_at = at;
+  if (bank != nullptr) {
+    for (std::size_t i = 0; i < 0x10000; ++i) {
+      const std::uint32_t p = (*bank)[i];
+      const auto eight = [](std::uint32_t six) { return static_cast<std::uint8_t>((six & 0x3F) << 2 | (six & 0x3F) >> 4); };
+      mapped[at + 4 * i + 0] = eight(p);
+      mapped[at + 4 * i + 1] = eight(p >> 6);
+      mapped[at + 4 * i + 2] = eight(p >> 12);
+      mapped[at + 4 * i + 3] = 255;
+    }
+    at += bank_bytes;
+  }
   const std::uint32_t vertices_at = at;
   if (vertex_bytes != 0) {
     auto* out = reinterpret_cast<Scene::Vertex*>(mapped + at);
@@ -440,6 +478,12 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   to.h = kScreenHeight;
   to.d = 1;
   SDL_UploadToGPUTexture(copy, &from, &to, true);
+  if (bank != nullptr) {
+    from.offset = bank_at;
+    to.texture = bank_;
+    to.w = to.h = 256;
+    SDL_UploadToGPUTexture(copy, &from, &to, true);
+  }
   if (vertex_bytes != 0) {
     const SDL_GPUTransferBufferLocation upload{transfer_, vertices_at};
     const SDL_GPUBufferRegion region{vertices_, 0, vertex_bytes};
@@ -505,12 +549,10 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 2> sources{{{screen_, nearest_}, {source != nullptr ? source : scene_target_, nearest_}}};
-  SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), 2);
-  ComposeUniforms uniforms{};
-  const unsigned direction = brightness >> 14;
-  uniforms.brightness[0] = direction == 1 || direction == 2 ? static_cast<float>(direction) : 0.0f;
-  uniforms.brightness[1] = static_cast<float>(std::min(brightness & 0x1F, 16)) / 16.0f;
+  const std::array<SDL_GPUTextureSamplerBinding, 3> sources{{{screen_, nearest_},
+                                                             {source != nullptr ? source : scene_target_, nearest_},
+                                                             {second != nullptr ? second : bank_, nearest_}}};
+  SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), 3);
   SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, sizeof uniforms);
   SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
   SDL_EndGPURenderPass(pass);

@@ -105,6 +105,7 @@ class GameScreen {
   // frame last shown, or null when the frame was drawn here.
   Hardware3D hardware_;
   bool hardware_tried_ = false, hardware_failed_ = false;
+  std::string hardware_problem_;  // Why the graphics hardware cannot draw, when it is asked for.
   // The screens as the graphics hardware drew them (top, bottom), where it
   // did, and the last capture it made.
   std::array<SDL_Texture*, 2> shown_3d_{};

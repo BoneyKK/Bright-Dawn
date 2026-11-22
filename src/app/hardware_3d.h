@@ -12,10 +12,12 @@
 // The result is a texture of the renderer, drawn in place of the main
 // engine's screen.
 //
-// A display capture of the main engine's picture (nds::Display::
-// frame_capture()) is made the same way, without the master brightness,
-// and kept: the last three are. A screen marked where it shows one is
-// drawn with it put in, as with the scene.
+// A display capture (nds::Display::frame_capture()) is made the same way,
+// without the master brightness, as its recipe says (nds::CaptureRecipe):
+// the main engine's picture with the scene or the scene alone, blended with
+// a bank of video memory or with a capture made before, into a texture laid
+// out as its bank. The last three are kept. A screen marked where it shows
+// one is drawn with it put in, as with the scene.
 //
 // Made for speed, not to be exact: see nds/hardware_scene.h for what is
 // left out. The program's own drawing (nds::PolygonRenderer) stays for
@@ -48,11 +50,11 @@ class Hardware3D {
   bool open(SDL_Renderer* renderer, std::string& error);
   bool is_open() const { return device_ != nullptr; }
 
-  // The capture numbered `number`: `source` (256 * 192 colours with marks)
-  // with `scene` put in, `scale` times as large. False if it could not be
-  // made.
-  bool capture(const nds::HardwareScene& scene, const std::vector<std::uint32_t>& source, std::uint64_t number,
-               int scale);
+  // The capture numbered `number`, made as `recipe` says, `scale` times as
+  // large: its first source is `source` (256 * 192 colours with marks) with
+  // `scene` put in, or `scene` alone. False if it could not be made.
+  bool capture(const nds::HardwareScene& scene, const nds::CaptureRecipe& recipe,
+               const std::vector<std::uint32_t>& source, std::uint64_t number, int scale);
   // A screen (`which`: 0 the top, 1 the bottom; `screen`: 256 * 192
   // colours with marks) with `scene` put in, or the kept capture numbered
   // `capture` if `scene` is null, `scale` times as large, and `brightness`
@@ -61,6 +63,14 @@ class Hardware3D {
   // kept.
   SDL_Texture* draw(int which, const std::vector<std::uint32_t>& screen, const nds::HardwareScene* scene,
                     std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed);
+
+ public:
+  // The compose shader's uniforms, as std140 lays them out.
+  struct ComposeUniforms {
+    float brightness[4];  // 1 towards white, 2 towards black; how far (0 to 1).
+    float options[4];     // 1 for a capture; the lines of the second texture (192, or 256 for a kept capture).
+    std::uint32_t capture[4];  // How a capture is made (shaders/compose.frag).
+  };
 
  private:
   struct Place {
@@ -74,9 +84,12 @@ class Hardware3D {
 
   bool ready(int scale);
   // Puts the scene (drawn first if it is new) or `source` into `screen`
-  // where it is marked, into `target`.
+  // where it is marked, into `target`; or makes a capture there, with
+  // `second` as its second source (`bank` uploaded to bank_ first, if
+  // given), as `uniforms` say.
   bool run(const nds::HardwareScene* scene, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
-           SDL_GPUTexture* target, std::uint16_t brightness);
+           SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
+           const ComposeUniforms& uniforms);
   bool make_targets(int scale);
   void release_targets();
   // A place in the atlas for a texture, or false when it is full.
@@ -94,6 +107,7 @@ class Hardware3D {
   SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
   SDL_GPUTexture* atlas_ = nullptr;
   SDL_GPUTexture* screen_ = nullptr;
+  SDL_GPUTexture* bank_ = nullptr;  // A bank of video memory, 256 by 256, for a capture's second source.
   SDL_GPUTransferBuffer* transfer_ = nullptr;
   std::uint32_t transfer_size_ = 0;
   SDL_GPUBuffer* vertices_ = nullptr;
