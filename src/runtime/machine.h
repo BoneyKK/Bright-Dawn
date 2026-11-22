@@ -116,6 +116,7 @@ struct Gap {
   enum class Why {
     kNoTranslation,  // No translated function starts at this address.
     kOverlayOther,   // One does, for an overlay that was not in memory then.
+    kCodeChanged,    // One does, for code always in memory, which the program has changed.
     kTranslatedNow,  // One does and is usable now (it was not when entered).
   };
   std::uint32_t address = 0;  // Bit 0 set = Thumb.
@@ -165,6 +166,16 @@ class Machine {
   // load at `load_address`), which must outlive the machine. Translations of
   // overlays that were never added are not used.
   void add_overlay(int id, std::uint32_t load_address, const std::uint8_t* image, std::size_t size);
+
+  // The program's code that is always in memory (overlay -1): a block of
+  // `size` bytes at `load_address`, as it is once the start-up code has put
+  // it there (the main program, and what it copies to the instruction
+  // memory, for example). Once any is added, a translation of such code is
+  // used only while the bytes it was made from are in memory, as for
+  // overlays: a program can change its own code as it runs (the game turns
+  // the first instruction of a function into a branch to another), and the
+  // changed code is then interpreted. The image must outlive the machine.
+  void add_program_code(std::uint32_t load_address, const std::uint8_t* image, std::size_t size);
 
   // Must be called after guest memory in an overlay's range is changed other
   // than through this machine (for example when a file is read into memory),
@@ -263,12 +274,25 @@ class Machine {
   System& system() { return system_; }
   // Guest writes made by translated and interpreted code come through here.
   void watch_write(std::uint32_t address) {
-    if (address - watch_start_ < watch_size_) ++page_generation_[(address - watch_start_) >> kPageShift];
+    const std::uint32_t offset = address - watch_start_;
+    if (offset < watch_size_) {
+      ++page_generation_[offset >> kPageShift];
+      if (code_pages_stale_ || !code_pages_[offset >> kCodeShift].empty()) mark_code_written(address, 4);
+    }
   }
 
  private:
   using Function = void (*)(ds::Cpu&);
   static constexpr unsigned kPageShift = 12;
+  // The code of the translations, in pieces of 1 << kCodeShift bytes over
+  // the watched range: what a write must mark as changed.
+  static constexpr unsigned kCodeShift = 8;
+  struct CodeSpan {
+    std::uint32_t start = 0, end = 0;  // Guest addresses, end exclusive.
+    std::uint32_t entry = 0;           // In table_.
+  };
+  void mark_code_written(std::uint32_t address, std::size_t size);
+  void make_code_pages();
   struct Overlay {
     std::uint32_t load_address = 0;
     const std::uint8_t* image = nullptr;
@@ -306,13 +330,16 @@ class Machine {
   System& system_;
   std::vector<TranslatedEntry> table_;  // Sorted by address.
   std::vector<Check> checks_;           // Parallel to table_.
-  std::map<int, Overlay> overlays_;
+  std::map<int, std::vector<Overlay>> overlays_;  // By overlay; -1: the program's code always in memory.
+  void watch_range(std::uint32_t load_address, std::size_t size);
   // Writes are counted per page over the range the overlays span. A
   // translation is compared with memory again only when a page holding its
   // code has been written since the last comparison.
   std::uint32_t watch_start_ = 0;
   std::uint32_t watch_size_ = 0;
   std::vector<std::uint64_t> page_generation_;
+  std::vector<std::vector<CodeSpan>> code_pages_;
+  bool code_pages_stale_ = false;
   bd_arm_core* core_ = nullptr;
   ds::Cpu cpu_;
   Statistics statistics_;

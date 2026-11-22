@@ -38,6 +38,27 @@ std::optional<ModuleParams> find_module_params(ByteSpan arm9) {
   return std::nullopt;
 }
 
+std::vector<Arm9Block> arm9_blocks(ByteSpan arm9, std::uint32_t load_address) {
+  const auto size = static_cast<std::uint32_t>(arm9.size());
+  const std::vector<Arm9Block> whole{{load_address, 0, size}};
+  const auto params = find_module_params(arm9);
+  if (!params) return whole;
+  const std::uint32_t list_start = params->autoload_list_start, list_end = params->autoload_list_end;
+  const std::uint32_t main_size = params->autoload_start - load_address;
+  if (main_size == 0 || main_size > size || list_start > list_end || list_start < load_address ||
+      list_end - load_address > size)
+    return whole;
+  std::vector<Arm9Block> blocks{{load_address, 0, main_size}};
+  std::uint32_t offset = main_size;
+  for (std::uint32_t entry = list_start - load_address; entry + 12 <= list_end - load_address; entry += 12) {
+    const std::uint32_t address = le32(arm9, entry), block_size = le32(arm9, entry + 4);
+    if (block_size > size - offset) break;
+    blocks.push_back({address, offset, block_size});
+    offset += block_size;
+  }
+  return blocks;
+}
+
 Result<std::vector<std::uint8_t>> decompress_arm9(ByteSpan arm9, const CodeSection& section,
                                                   const std::optional<ModuleParams>& params) {
   if (!params || params->compressed_static_end == 0)

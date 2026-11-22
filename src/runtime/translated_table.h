@@ -22,6 +22,12 @@ struct TranslatedEntry {
   // What the translation was made from. Unused when overlay is -1.
   const TranslatedRun* runs;
   ds::u32 run_count;
+  // Set by the run-time when the program writes over the code the
+  // translation was made from. The translated function tests it first, and
+  // while it is set goes through the run-time (ds::jump), which compares the
+  // code again: a translated function is also called directly from other
+  // translated code, which does not look it up. Null: never set.
+  ds::u8* changed = nullptr;
 };
 
 // Sorted by address, and ended by an entry whose function is null.

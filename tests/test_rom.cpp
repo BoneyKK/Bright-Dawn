@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <string>
 
+#include "rom/arm9.h"
 #include "rom/game_id.h"
 #include "rom/rom.h"
 #include "rom_builder.h"
@@ -370,4 +371,30 @@ TEST(rom_survives_random_structural_damage) {
   // Sanity check on the test itself: both outcomes should occur.
   CHECK(accepted > 100);
   CHECK(accepted < 5900);
+}
+
+TEST(rom_arm9_blocks_are_the_main_one_and_the_autoload_list) {
+  // A program loaded at 0x02000000: 0x120 bytes of main block, then a block
+  // for the instruction memory (0x40 bytes) and one for the data memory.
+  Bytes arm9(0x200, 0);
+  std::size_t p = 0x40;
+  for (std::uint32_t word : {0x02000100u, 0x02000118u, 0x02000120u, 0u, 0u, 0u, 0x04020000u, 0xDEC00621u, 0x2106C0DEu}) {
+    bd_test::put_le32(arm9, p, word);
+    p += 4;
+  }
+  // The list, at 0x100: address, size and zero-filled size of each block.
+  p = 0x100;
+  for (std::uint32_t word : {0x01FF8000u, 0x40u, 0u, 0x027E0000u, 0x20u, 0x10u}) {
+    bd_test::put_le32(arm9, p, word);
+    p += 4;
+  }
+  const auto blocks = bd::rom::arm9_blocks(arm9, 0x02000000);
+  REQUIRE(blocks.size() == 3);
+  CHECK(blocks[0].address == 0x02000000 && blocks[0].offset == 0 && blocks[0].size == 0x120);
+  CHECK(blocks[1].address == 0x01FF8000 && blocks[1].offset == 0x120 && blocks[1].size == 0x40);
+  CHECK(blocks[2].address == 0x027E0000 && blocks[2].offset == 0x160 && blocks[2].size == 0x20);
+  // Without the start-up parameters: the whole image is the main block.
+  const auto whole = bd::rom::arm9_blocks(Bytes(0x80, 0), 0x02000000);
+  REQUIRE(whole.size() == 1);
+  CHECK(whole[0].address == 0x02000000 && whole[0].size == 0x80);
 }

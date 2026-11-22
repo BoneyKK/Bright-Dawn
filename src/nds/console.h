@@ -17,6 +17,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "nds/arm9_bus.h"
 #include "nds/arm9_io.h"
@@ -164,6 +165,9 @@ class Console : private runtime::System {
   void stop(std::uint32_t address, const std::string& what);
 
   const Program& program_;
+  // The main program as it is put in memory: what translations of the code
+  // always in memory are checked against (runtime::Machine::add_program_code).
+  std::vector<std::uint8_t> arm9_in_memory_;
   UserSettings user_settings_;
   Arm9Io io_;
   Arm9Bus bus_;

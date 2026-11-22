@@ -31,6 +31,21 @@ struct ModuleParams {
 
 std::optional<ModuleParams> find_module_params(ByteSpan arm9);
 
+// A block of the (decompressed) ARM9 program as the start-up code leaves it
+// in memory: the main block, where the program is loaded, and each block of
+// the autoload list, which the start-up code copies to its own address (the
+// instruction memory, for example).
+struct Arm9Block {
+  std::uint32_t address = 0;  // Where it is in memory once copied.
+  std::uint32_t offset = 0;   // Where it is in the program image.
+  std::uint32_t size = 0;
+};
+
+// The blocks, the main one first; only the main one, the whole image, when
+// the start-up parameters are missing or do not fit the image. The same
+// split as the translator's (tools/translator/translate_game.py).
+std::vector<Arm9Block> arm9_blocks(ByteSpan arm9, std::uint32_t load_address);
+
 // Returns the ARM9 program as it exists in memory after the start-up code has
 // decompressed it. Images that are not compressed are returned unchanged.
 Result<std::vector<std::uint8_t>> decompress_arm9(ByteSpan arm9, const CodeSection& section,

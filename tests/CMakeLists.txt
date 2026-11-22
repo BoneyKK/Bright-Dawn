@@ -9,6 +9,7 @@ add_executable(bd_tests
   test_assets.cpp
   test_audio_feed.cpp
   test_checksum.cpp
+  test_machine_code_changes.cpp
   test_machine_interrupts.cpp
   test_compression.cpp
   test_arm9_bus.cpp

@@ -416,9 +416,15 @@ def lift_function(fn, names: dict, image=None) -> str:
     """C++ source of one function. `image` (arm_analysis.Image) lets constants be read."""
     e = Emitter(fn, names, image)
     kind = "Thumb" if fn.thumb else "ARM"
+    name = names[(fn.addr, fn.thumb)]
+    # Set by the run-time when the program writes over this code (the table
+    # points to it, TranslatedEntry::changed): the code in memory is then
+    # reached through the run-time, which checks it again.
     lines = [f"// {kind} function at 0x{fn.addr:08x}, {len(fn.insns)} instructions"
              + (f" - note: {fn.bad}" if fn.bad else ""),
-             f"void {names[(fn.addr, fn.thumb)]}(Cpu& c) {{"]
+             f"ds::u8 {name}_changed = 0;",
+             f"void {name}(Cpu& c) {{",
+             f"    if ({name}_changed != 0) {{ ds::jump(c, {hexc(fn.addr | (1 if fn.thumb else 0))}); return; }}"]
     prev = None
     addresses = sorted(fn.insns)
     labels = set(fn.labels)

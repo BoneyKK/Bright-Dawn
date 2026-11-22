@@ -102,7 +102,8 @@ Status Console::direct_boot() {
   // The main program. The image is already decompressed, so the field that
   // tells the start-up code where the compressed data ends has to be zero, or
   // that code would run its decompressor over the program a second time.
-  std::vector<std::uint8_t> arm9 = program_.arm9;
+  std::vector<std::uint8_t>& arm9 = arm9_in_memory_;
+  arm9 = program_.arm9;
   if (const auto params = rom::find_module_params(arm9)) {
     const std::size_t field = params->offset + 0x14;
     if (field + 4 <= arm9.size()) arm9[field] = arm9[field + 1] = arm9[field + 2] = arm9[field + 3] = 0;
@@ -139,6 +140,10 @@ Status Console::direct_boot() {
 
   for (const OverlayCode& overlay : program_.overlays)
     machine_.add_overlay(overlay.id, overlay.load_address, overlay.image.data(), overlay.image.size());
+  // The main program, and the blocks its start-up code copies elsewhere: the
+  // game changes some of that code as it runs.
+  for (const rom::Arm9Block& block : rom::arm9_blocks(arm9, program_.arm9_load_address))
+    machine_.add_program_code(block.address, arm9.data() + block.offset, block.size);
 
   // Processor: System mode with interrupts masked, and a stack for each of
   // the three modes a program uses.

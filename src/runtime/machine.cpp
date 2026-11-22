@@ -90,6 +90,8 @@ Machine::Machine(Bus& bus, System& system, const TranslatedEntry* table)
   std::stable_sort(table_.begin(), table_.end(),
                    [](const TranslatedEntry& a, const TranslatedEntry& b) { return a.address < b.address; });
   checks_.resize(table_.size());
+  for (const TranslatedEntry& e : table_)
+    if (e.changed != nullptr) *e.changed = 0;
   const bd_arm_host host = {this,         host_read32,  host_read16,  host_read8, host_write32,
                             host_write16, host_write8,  host_cp_read, host_cp_write};
   core_ = bd_arm_core_create(&host);
@@ -118,8 +120,17 @@ void Machine::reset_cpu() {
 }
 
 void Machine::add_overlay(int id, u32 load_address, const std::uint8_t* image, std::size_t size) {
-  overlays_[id] = Overlay{load_address, image, size};
-  // Watch writes over the whole range the overlays span.
+  overlays_[id] = {Overlay{load_address, image, size}};
+  watch_range(load_address, size);
+}
+
+void Machine::add_program_code(u32 load_address, const std::uint8_t* image, std::size_t size) {
+  overlays_[-1].push_back(Overlay{load_address, image, size});
+  watch_range(load_address, size);
+}
+
+void Machine::watch_range(u32 load_address, std::size_t size) {
+  // Watch writes over the whole range the code that is checked spans.
   u32 start = load_address, end = load_address + static_cast<u32>(size);
   if (watch_size_ != 0) {
     start = std::min(start, watch_start_);
@@ -131,6 +142,34 @@ void Machine::add_overlay(int id, u32 load_address, const std::uint8_t* image, s
   std::uint64_t highest = 0;
   for (std::uint64_t g : page_generation_) highest = std::max(highest, g);
   page_generation_.assign((watch_size_ >> kPageShift) + 1, highest + 1);
+  code_pages_stale_ = true;
+}
+
+void Machine::make_code_pages() {
+  code_pages_stale_ = false;
+  code_pages_.assign((watch_size_ >> kCodeShift) + 1, {});
+  for (std::size_t i = 0; i < table_.size(); ++i) {
+    const TranslatedEntry& e = table_[i];
+    if (e.changed == nullptr) continue;
+    for (u32 r = 0; r < e.run_count; ++r) {
+      const u32 start = e.runs[r].address, end = start + e.runs[r].length;
+      if (e.runs[r].length == 0 || start < watch_start_ || end - watch_start_ > watch_size_) continue;
+      for (u32 page = (start - watch_start_) >> kCodeShift; page <= (end - 1 - watch_start_) >> kCodeShift; ++page)
+        code_pages_[page].push_back(CodeSpan{start, end, static_cast<u32>(i)});
+    }
+  }
+}
+
+// A write of `size` bytes at `address`, in the watched range: the
+// translations whose code it touches are marked as changed.
+void Machine::mark_code_written(u32 address, std::size_t size) {
+  if (code_pages_stale_) make_code_pages();
+  const u32 last = address + static_cast<u32>(size - 1);
+  for (u32 page = (address - watch_start_) >> kCodeShift;
+       page <= std::min<u32>((last - watch_start_) >> kCodeShift, static_cast<u32>(code_pages_.size() - 1)); ++page) {
+    for (const CodeSpan& span : code_pages_[page])
+      if (address < span.end && last >= span.start) *table_[span.entry].changed = 1;
+  }
 }
 
 void Machine::note_memory_written(u32 address, std::size_t size) {
@@ -141,6 +180,10 @@ void Machine::note_memory_written(u32 address, std::size_t size) {
     if ((page << kPageShift) >= watch_start_ && offset < watch_size_) ++page_generation_[offset >> kPageShift];
     if (page == 0xFFFFF) break;
   }
+  // The part of it in the watched range.
+  const u32 from = std::max(address, watch_start_);
+  const std::uint64_t to = std::min<std::uint64_t>(std::uint64_t{address} + size, std::uint64_t{watch_start_} + watch_size_);
+  if (to > from) mark_code_written(from, static_cast<std::size_t>(to - from));
 }
 
 // A value that changes whenever a page holding the entry's code is written.
@@ -162,7 +205,7 @@ bool Machine::in_memory(std::size_t index) {
   const TranslatedEntry& entry = table_[index];
   const auto found = overlays_.find(entry.overlay);
   if (found == overlays_.end() || entry.run_count == 0) return false;
-  const Overlay& overlay = found->second;
+  const std::vector<Overlay>& images = found->second;
 
   Check& check = checks_[index];
   const std::uint64_t stamp = stamp_of(entry);
@@ -172,12 +215,18 @@ bool Machine::in_memory(std::size_t index) {
   bool matches = true;
   for (u32 r = 0; r < entry.run_count && matches; ++r) {
     const TranslatedRun& run = entry.runs[r];
-    if (run.address < overlay.load_address || run.address - overlay.load_address > overlay.size ||
-        run.length > overlay.size - (run.address - overlay.load_address)) {
+    // The image that holds the run.
+    const Overlay* overlay = nullptr;
+    for (const Overlay& o : images) {
+      if (run.address >= o.load_address && run.address - o.load_address <= o.size &&
+          run.length <= o.size - (run.address - o.load_address))
+        overlay = &o;
+    }
+    if (overlay == nullptr) {
       matches = false;  // The table and the image disagree; do not trust the translation.
       break;
     }
-    const std::uint8_t* expected = overlay.image + (run.address - overlay.load_address);
+    const std::uint8_t* expected = overlay->image + (run.address - overlay->load_address);
     for (u32 i = 0; i < run.length; ++i) {
       if (bus_.read8(run.address + i) != expected[i]) {
         matches = false;
@@ -196,8 +245,13 @@ Machine::Function Machine::lookup(u32 address) {
       table_.begin(), table_.end(), address,
       [](const TranslatedEntry& e, u32 a) { return e.address < a; });
   for (; it != table_.end() && it->address == address; ++it) {
-    if (it->overlay < 0) return it->function;
-    if (in_memory(static_cast<std::size_t>(it - table_.begin()))) return it->function;
+    // Without the program's images, or what the translation was made from,
+    // code always in memory is taken to be as it was translated.
+    if ((it->overlay < 0 && (overlays_.count(-1) == 0 || it->run_count == 0)) ||
+        in_memory(static_cast<std::size_t>(it - table_.begin()))) {
+      if (it->changed != nullptr) *it->changed = 0;  // It is the code in memory: calls to it go straight there.
+      return it->function;
+    }
   }
   return nullptr;
 }
@@ -611,7 +665,7 @@ std::vector<Gap> Machine::gaps() {
     if (lookup(address) != nullptr) {
       g.why = Gap::Why::kTranslatedNow;
     } else if (first != table_.end() && first->address == address && first->function != nullptr) {
-      g.why = Gap::Why::kOverlayOther;
+      g.why = first->overlay < 0 ? Gap::Why::kCodeChanged : Gap::Why::kOverlayOther;
     }
     const u32 at = address & ~1u;
     g.readable = bus_.has_code_memory(at);
@@ -628,6 +682,7 @@ const char* gap_reason(Gap::Why why) {
   switch (why) {
     case Gap::Why::kNoTranslation: return "no translated code starts here";
     case Gap::Why::kOverlayOther: return "translated for an overlay that was not in memory";
+    case Gap::Why::kCodeChanged: return "translated, but the program has changed this code since";
     case Gap::Why::kTranslatedNow: return "translated, but not usable when entered";
   }
   return "";
