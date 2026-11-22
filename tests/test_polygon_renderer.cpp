@@ -841,6 +841,27 @@ TEST(renderer_scene_has_shadows_for_the_graphics_hardware) {
   CHECK(shadow.colour[3] == (31 << 2 | 31 >> 4) && shadow.colour[0] == 255 && (shadow.info[2] & Scene::kModeMask) == 0);
 }
 
+TEST(renderer_scene_has_fog_for_the_graphics_hardware) {
+  using Scene = bd::nds::HardwareScene;
+  Fixture f;
+  f.control(PolygonRenderer::kFog | PolygonRenderer::kFogAlphaOnly | 3u << PolygonRenderer::kFogShift);
+  f.io.write(PolygonRenderer::kFogColour, 4, 0x0010001F);  // Red, alpha 16.
+  f.io.write(PolygonRenderer::kFogOffset, 2, 0x1234);
+  f.io.write(PolygonRenderer::kClearColour, 4, 0x8000);  // Takes fog.
+  for (u32 i = 0; i < 32; ++i) f.io.write(PolygonRenderer::kFogTable + i, 1, i * 4);
+  f.rectangle(0, 0, 8, 8, kRed, kOpaque | kFogged);
+  f.rectangle(8, 0, 16, 8, kRed, kOpaque);
+  const Scene& scene = f.r.build_scene(f.frame, f.video);
+  CHECK(scene.fog && scene.fog_alpha_only && scene.clear_fog);
+  CHECK(scene.fog_colour[0] == 1.0f && scene.fog_colour[1] == 0.0f && scene.fog_colour[3] == 16.0f / 31.0f);
+  CHECK(scene.fog_offset == 0x1234 && scene.fog_step == 0x80 && scene.fog_table[31] == 124);
+  // Which polygons take fog.
+  CHECK(scene.vertices.size() == 12 && (scene.vertices[0].info[2] & Scene::kFog) != 0 &&
+        (scene.vertices[6].info[2] & Scene::kFog) == 0);
+  f.control(0);
+  CHECK(!f.r.build_scene(f.frame, f.video).fog);
+}
+
 TEST(renderer_scene_for_the_graphics_hardware) {
   using Scene = bd::nds::HardwareScene;
   Fixture f;

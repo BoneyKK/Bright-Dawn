@@ -119,7 +119,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   SDL_GPUShader* compose_vertex = make_shader(device, shaders::kComposeVert, sizeof shaders::kComposeVert,
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
-                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
+                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1);
   const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment;
 
   // The depth buffer: the most exact format the device has, with a stencil
@@ -149,15 +149,33 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
       using Kind = Scene::Kind;
       const auto kind = static_cast<Kind>(index / 2);
       const bool coloured = kind == Kind::Opaque || kind == Kind::Translucent || kind == Kind::Overlay || kind == Kind::Shadow;
-      // The colour, and the polygon numbers and depths, which only opaque
-      // polygons write.
-      std::array<SDL_GPUColorTargetDescription, 2> targets{};
+      // The colour; the polygon numbers and depths, which only opaque
+      // polygons write; and the depths and fog marks (the depth where the
+      // polygon keeps its depth, the mark times the polygon's: kept where
+      // every polygon drawn on the pixel takes fog).
+      std::array<SDL_GPUColorTargetDescription, 3> targets{};
       SDL_GPUColorTargetDescription& target = targets[0];
-      target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-      targets[1].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+      for (SDL_GPUColorTargetDescription& t : targets) t.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
       if (kind != Kind::Opaque) {
         targets[1].blend_state.enable_color_write_mask = true;
         targets[1].blend_state.color_write_mask = 0;
+      }
+      SDL_GPUColorTargetBlendState& fog = targets[2].blend_state;
+      if (!coloured) {
+        fog.enable_color_write_mask = true;
+        fog.color_write_mask = 0;
+      } else if (kind != Kind::Opaque) {
+        fog.enable_blend = true;
+        fog.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        fog.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+        fog.color_blend_op = SDL_GPU_BLENDOP_ADD;
+        fog.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+        fog.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        fog.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+        if (kind != Kind::Translucent) {
+          fog.enable_color_write_mask = true;
+          fog.color_write_mask = SDL_GPU_COLORCOMPONENT_A;
+        }
       }
       if (!coloured) {
         target.blend_state.enable_color_write_mask = true;
@@ -227,7 +245,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
         info.depth_stencil_state.enable_stencil_test = true;
       }
       info.target_info.color_target_descriptions = targets.data();
-      info.target_info.num_color_targets = 2;
+      info.target_info.num_color_targets = static_cast<Uint32>(targets.size());
       info.target_info.depth_stencil_format = depth_format_;
       info.target_info.has_depth_stencil_target = true;
       scene_pipelines_[index] = SDL_CreateGPUGraphicsPipeline(device, &info);
@@ -289,9 +307,9 @@ void Hardware3D::release_targets() {
     if (k.texture != nullptr) SDL_ReleaseGPUTexture(device_, k.texture);
     k = Kept{};
   }
-  for (SDL_GPUTexture* t : {scene_target_, edges_, depth_})
+  for (SDL_GPUTexture* t : {scene_target_, edges_, fog_marks_, depth_})
     if (t != nullptr) SDL_ReleaseGPUTexture(device_, t);
-  scene_target_ = edges_ = depth_ = nullptr;
+  scene_target_ = edges_ = fog_marks_ = depth_ = nullptr;
   scale_ = 0;
   scene_drawn_ = 0;
 }
@@ -308,6 +326,7 @@ bool Hardware3D::make_targets(int scale) {
   };
   scene_target_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   edges_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+  fog_marks_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   depth_ = make(depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
   // A kept capture is its bank of video memory, 256 by 256.
   for (Kept& k : kept_) k.texture = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour, 256);
@@ -565,7 +584,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
 
   if (new_scene) {
     // 1. The scene, over the clear colour (times its alpha) at the clear depth.
-    std::array<SDL_GPUColorTargetInfo, 2> colours{};
+    std::array<SDL_GPUColorTargetInfo, 3> colours{};
     SDL_GPUColorTargetInfo& colour = colours[0];
     colour.texture = scene_target_;
     const float a = scene.clear_colour[3];
@@ -581,6 +600,11 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
                               static_cast<float>(clear_depth >> 16) / 255.0f,
                               static_cast<float>((clear_depth >> 8) & 255) / 255.0f,
                               static_cast<float>(clear_depth & 255) / 255.0f};
+    // The clear plane's depth, and whether it takes fog.
+    colours[2] = colours[1];
+    colours[2].texture = fog_marks_;
+    colours[2].clear_color = {colours[1].clear_color.g, colours[1].clear_color.b, colours[1].clear_color.a,
+                              scene.clear_fog ? 1.0f : 0.0f};
     SDL_GPUDepthStencilTargetInfo depth{};
     depth.texture = depth_;
     depth.clear_depth = scene.clear_depth;
@@ -590,7 +614,8 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     depth.clear_stencil = 0;
     depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
     depth.cycle = true;
-    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, colours.data(), 2, &depth);
+    SDL_GPURenderPass* pass =
+        SDL_BeginGPURenderPass(commands, colours.data(), static_cast<Uint32>(colours.size()), &depth);
     if (!scene.runs.empty()) {
       const SDL_GPUBufferBinding binding{vertices_, 0};
       SDL_BindGPUVertexBuffers(pass, 0, &binding, 1);
@@ -621,11 +646,12 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 4> sources{{{screen_, nearest_},
+  const std::array<SDL_GPUTextureSamplerBinding, 5> sources{{{screen_, nearest_},
                                                              {source != nullptr ? source : scene_target_, nearest_},
                                                              {second != nullptr ? second : bank_, nearest_},
-                                                             {edges_, nearest_}}};
-  SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), 4);
+                                                             {edges_, nearest_},
+                                                             {fog_marks_, nearest_}}};
+  SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), static_cast<Uint32>(sources.size()));
   // Edge marking where the scene is put in.
   ComposeUniforms uniforms = given_uniforms;
   if (given != nullptr && source == nullptr && scene.edge_marking) {
@@ -636,6 +662,15 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     uniforms.edge[2] = clear_depth_bits(scene);
     uniforms.edge[3] = 1 | (scene.anti_aliasing ? 2u : 0u);
     for (std::size_t i = 0; i < 8; ++i) std::memcpy(uniforms.edge_colours[i], scene.edge_colours[i].data(), sizeof uniforms.edge_colours[i]);
+  }
+  // Fog, the same way.
+  if (given != nullptr && source == nullptr && scene.fog) {
+    uniforms.fog[0] = 1 | (scene.fog_alpha_only ? 2u : 0u);
+    uniforms.fog[1] = scene.fog_offset;
+    uniforms.fog[2] = scene.fog_step;
+    std::memcpy(uniforms.fog_colour, scene.fog_colour.data(), sizeof uniforms.fog_colour);
+    std::memcpy(uniforms.clear_colour, scene.clear_colour.data(), sizeof uniforms.clear_colour);
+    for (std::size_t i = 0; i < scene.fog_table.size(); ++i) uniforms.fog_table[i / 4][i % 4] = scene.fog_table[i];
   }
   SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, sizeof uniforms);
   SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);

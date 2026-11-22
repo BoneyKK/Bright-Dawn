@@ -4,8 +4,8 @@
 // are read from video memory at the same moment.
 //
 // Made for speed, not to be exact: the polygons become triangles with a
-// depth buffer, and fog, anti-aliasing and polygons drawn as lines only are
-// left out.
+// depth buffer, and anti-aliasing and polygons drawn as lines only are left
+// out.
 #pragma once
 
 #include <array>
@@ -41,6 +41,7 @@ struct HardwareScene {
   static constexpr std::uint32_t kRepeatT = 1u << 4;
   static constexpr std::uint32_t kFlipS = 1u << 5;
   static constexpr std::uint32_t kFlipT = 1u << 6;
+  static constexpr std::uint32_t kFog = 1u << 7;      // The polygon takes fog.
 
   // How a run of triangles is drawn.
   enum class Kind : std::uint8_t {
@@ -99,6 +100,18 @@ struct HardwareScene {
   bool anti_aliasing = false;
   std::uint8_t clear_number = 0;
   std::array<std::array<float, 4>, 8> edge_colours{};
+  // Fog, as the DS does it: a pixel whose polygons all take fog (the clear
+  // plane's with clear_fog) is mixed with fog_colour (0 to 1 each, with its
+  // alpha) by a density of its depth (24 bits) / 0x200 - fog_offset: the
+  // 32 entries of fog_table (0 to 127, 127 counting as 128) are
+  // fog_step apart (0x400 >> the shift), the first at one step, with the
+  // values between them in proportion. Only the alpha with fog_alpha_only.
+  bool fog = false;
+  bool fog_alpha_only = false;
+  bool clear_fog = false;
+  std::array<float, 4> fog_colour{};
+  std::uint32_t fog_offset = 0, fog_step = 0;
+  std::array<std::uint8_t, 32> fog_table{};
 };
 
 // How the graphics hardware makes a display capture (nds::Display), as the

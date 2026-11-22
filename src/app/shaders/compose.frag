@@ -12,7 +12,8 @@
 //
 // Where the scene is put in, edge marking as the DS does it: a pixel of an
 // opaque polygon with a pixel of another polygon number further away within
-// u_edge.x pixels across or down takes its number's edge colour.
+// u_edge.x pixels across or down takes its number's edge colour. Then fog,
+// as the DS does it (nds::HardwareScene::fog).
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -22,6 +23,7 @@ layout(set = 2, binding = 0) uniform sampler2D u_screen;  // 256 by 192; alpha: 
 layout(set = 2, binding = 1) uniform sampler2D u_scene;   // Colour times alpha, and alpha.
 layout(set = 2, binding = 2) uniform sampler2D u_second;  // For a capture: the second source's bank.
 layout(set = 2, binding = 3) uniform sampler2D u_edges;   // The scene's polygon numbers and depths (scene.frag).
+layout(set = 2, binding = 4) uniform sampler2D u_fog_marks;  // The scene's depths, and alpha 1 where fog is taken.
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
   // x: 0 a screen, 1 a capture. y: for a screen, the lines u_scene has (192,
@@ -39,10 +41,16 @@ layout(set = 3, binding = 0) uniform Compose {
   // that makes the edge), 32 parts in 63, as the processor does.
   uvec4 u_edge;
   vec4 u_edge_colours[8];
+  // Fog: x: 1 where u_scene is the scene and the frame asks for fog, plus 2
+  // for the alpha only; y: the offset; z: the step.
+  uvec4 u_fog;
+  vec4 u_fog_colour;   // With its alpha.
+  vec4 u_clear_colour; // What a pixel with no alpha in u_scene holds.
+  uvec4 u_fog_table[8];
 };
 
 // The scene's pixel at `inside`, with edge marking.
-vec4 scene_at(vec2 inside) {
+vec4 edged(vec2 inside) {
   vec4 scene = texture(u_scene, inside);
   if (u_edge.w == 0u || u_edge.x == 0u || scene.a < 0.5 / 63.0) return scene;
   ivec2 size = textureSize(u_edges, 0);
@@ -71,6 +79,40 @@ vec4 scene_at(vec2 inside) {
   }
   return scene;
 }
+
+uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
+
+// `scene`, the scene's pixel at `inside`, with fog, by the processor's sums
+// (nds::PolygonRenderer).
+vec4 fogged(vec4 scene, vec2 inside) {
+  if ((u_fog.x & 1u) == 0u) return scene;
+  ivec2 size = textureSize(u_fog_marks, 0);
+  vec4 mark = texelFetch(u_fog_marks, clamp(ivec2(inside * vec2(size)), ivec2(0), size - 1), 0);
+  if (mark.a < 0.5) return scene;
+  uvec3 b = uvec3(mark.rgb * 255.0 + 0.5);
+  int offset = int(b.r << 16 | b.g << 8 | b.b) / 512 - int(u_fog.y);
+  int step = int(u_fog.z);
+  uint density = fog_density(0u);
+  if (step == 0) {
+    if (offset > 0) density = fog_density(31u);
+  } else if (offset >= 0) {
+    int n = offset / step - 1;
+    if (n >= 31) {
+      density = fog_density(31u);
+    } else if (n >= 0) {
+      int m = offset % step;
+      density = (fog_density(uint(n) + 1u) * uint(m) + fog_density(uint(n)) * uint(step - m)) / uint(step);
+    }
+  }
+  if (density == 127u) density = 128u;
+  float k = float(density) / 128.0;
+  vec3 c = scene.a > 0.0 ? scene.rgb / scene.a : u_clear_colour.rgb;
+  float a = mix(scene.a, u_fog_colour.a, k);
+  if ((u_fog.x & 2u) == 0u) c = mix(c, u_fog_colour.rgb, k);
+  return vec4(c * a, a);
+}
+
+vec4 scene_at(vec2 inside) { return fogged(edged(inside), inside); }
 
 vec3 brightened(vec3 c, uint way, float factor) {
   if (way == 2u) return c + (1.0 - c) * factor;

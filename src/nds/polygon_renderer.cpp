@@ -271,6 +271,14 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
     for (unsigned part = 0; part < 3; ++part) scene.edge_colours[i][part] = fraction_of_31(edge_colours_[i] >> (5 * part));
     scene.edge_colours[i][3] = 1;
   }
+  scene.fog = (control_ & kFog) != 0;
+  scene.fog_alpha_only = (control_ & kFogAlphaOnly) != 0;
+  scene.clear_fog = (clear_colour_ & 0x8000) != 0;
+  for (unsigned part = 0; part < 3; ++part) scene.fog_colour[part] = fraction_of_31(fog_colour_ >> (5 * part));
+  scene.fog_colour[3] = fraction_of_31(fog_colour_ >> 16);
+  scene.fog_offset = fog_offset_;
+  scene.fog_step = 0x400u >> ((control_ >> kFogShift) & 0xF);
+  scene.fog_table = fog_table_;
   scene.alpha_threshold = ((control_ & kAlphaTest) != 0 ? static_cast<float>(alpha_reference_ & 0x1F) * 2 + 1.5f : 0.5f) / 63.0f;
 
   // Opaque polygons first, then the translucent ones, each in the order sent.
@@ -295,7 +303,7 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
                                           : Kind::Overlay;
       // A shadow is coloured as a modulated polygon; a mask is not drawn,
       // so nothing of it is left out for its alpha.
-      u32 info[4] = {0, 0, shadow ? 0u : shape.mode, shape.number};
+      u32 info[4] = {0, 0, (shadow ? 0u : shape.mode) | (shape.fog ? HardwareScene::kFog : 0u), shape.number};
       if (shape.format != 0 && !mask) {
         info[0] = scene_texture(shape);
         info[1] = static_cast<u32>(shape.size_s) | static_cast<u32>(shape.size_t_) << 16;

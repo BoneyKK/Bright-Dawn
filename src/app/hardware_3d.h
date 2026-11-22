@@ -72,6 +72,10 @@ class Hardware3D {
     std::uint32_t capture[4];  // How a capture is made (shaders/compose.frag).
     std::uint32_t edge[4];     // Edge marking: width in pixels, clear number, clear depth, 1 with the scene (+2 anti-aliased).
     float edge_colours[8][4];
+    std::uint32_t fog[4];      // Fog: 1 with the scene (+2 alpha only), offset, step.
+    float fog_colour[4];
+    float clear_colour[4];     // The clear colour, as a pixel with no alpha holds it.
+    std::uint32_t fog_table[8][4];
   };
 
  private:
@@ -121,6 +125,7 @@ class Hardware3D {
   int scale_ = 0;
   SDL_GPUTexture* scene_target_ = nullptr;
   SDL_GPUTexture* edges_ = nullptr;  // The scene's polygon numbers and depths, for edge marking.
+  SDL_GPUTexture* fog_marks_ = nullptr;  // The scene's depths, and where fog is taken.
   SDL_GPUTexture* depth_ = nullptr;
   std::array<SDL_GPUTexture*, 2> outputs_{};  // For the top and the bottom screen,
   std::array<SDL_Texture*, 2> shown_{};       // as textures of the renderer.

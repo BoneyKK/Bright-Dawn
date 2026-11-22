@@ -2,7 +2,9 @@
 // texture atlas as the polygon asks (modulated, as a decal, or with the toon
 // table), written with its colour times its alpha; and, for edge marking,
 // its polygon number and depth (24 bits), a byte each (kept for opaque
-// polygons only).
+// polygons only); and, for fog, its depth (24 bits) and whether it takes
+// fog (the pipelines keep the depth where the polygon keeps its depth, and
+// the mark where every polygon drawn on the pixel takes fog).
 #version 450
 
 layout(location = 0) in vec2 v_texel;
@@ -11,6 +13,7 @@ layout(location = 2) flat in uvec4 v_info;
 
 layout(location = 0) out vec4 o_colour;
 layout(location = 1) out vec4 o_edge;
+layout(location = 2) out vec4 o_fog;
 
 layout(set = 2, binding = 0) uniform sampler2D u_atlas;
 layout(set = 3, binding = 0) uniform Scene {
@@ -56,4 +59,5 @@ void main() {
   o_colour = vec4(colour.rgb * colour.a, colour.a);
   uint depth = uint(clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
   o_edge = vec4(uvec4(v_info.w & 63u, depth >> 16, (depth >> 8) & 255u, depth & 255u)) / 255.0;
+  o_fog = vec4(vec3(uvec3(depth >> 16, (depth >> 8) & 255u, depth & 255u)) / 255.0, (flags & 128u) != 0u ? 1.0 : 0.0);
 }
