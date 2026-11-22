@@ -8,6 +8,7 @@
 layout(location = 0) in vec2 v_texel;
 layout(location = 1) in vec4 v_colour;
 layout(location = 2) flat in uvec4 v_info;
+layout(location = 3) in float v_w_depth;
 
 layout(location = 0) out vec4 o_colour;
 layout(location = 1) out vec4 o_fog;
@@ -15,7 +16,12 @@ layout(location = 1) out vec4 o_fog;
 layout(set = 2, binding = 0) uniform sampler2D u_atlas;
 layout(set = 3, binding = 0) uniform Scene {
   vec4 u_toon[32];
-  vec4 u_options;  // x: the alpha under which nothing is drawn; y: 1 for highlight; z: 1 for opaque.
+  // x: the alpha under which nothing is drawn; y: 1 for highlight; z: which
+  // pixels are drawn: 0 all, as they are; 1 all, as opaque ones; 2 those of
+  // less than full alpha; 3 those of full alpha, as opaque ones (the DS
+  // draws those of a translucent polygon so); w: 1 where depths are w
+  // (nds::HardwareScene::depth_is_w).
+  vec4 u_options;
 };
 
 // A texel coordinate inside a texture `size` texels wide: repeated (every
@@ -52,8 +58,15 @@ void main() {
     colour.rgb = highlight ? min(v_colour.rgb + toon, 1.0) : toon;
   }
   if (colour.a < u_options.x) discard;
-  if (u_options.z > 0.5) colour.a = 1.0;
+  int which = int(u_options.z + 0.5);
+  bool full = colour.a >= 1.0 - 0.5 / 63.0;
+  if ((which == 2 && full) || (which == 3 && !full)) discard;
+  if (which == 1 || which == 3) colour.a = 1.0;
   o_colour = vec4(colour.rgb * colour.a, colour.a);
-  uint depth = uint(clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
+  // Depth by z goes in proportion across the screen, as the graphics
+  // hardware takes it; depth by w with perspective.
+  float d = clamp(u_options.w > 0.5 ? v_w_depth : gl_FragCoord.z, 0.0, 1.0);
+  gl_FragDepth = d;
+  uint depth = uint(d * 16777215.0 + 0.5);
   o_fog = vec4(vec3(uvec3(depth >> 16, (depth >> 8) & 255u, depth & 255u)) / 255.0, (flags & 128u) != 0u ? 1.0 : 0.0);
 }

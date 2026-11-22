@@ -136,6 +136,13 @@ the defaults. `--hold` and `--touch` press a button or touch the screen over
 given frames, and `--frames` with `--capture` write the window's last frame to
 a file: together they reproduce a run without a person at the keyboard.
 
+The game's buttons, for such runs: A accepts or interacts, B goes back, X
+opens the menu outside battle, Y switches the top screen between the map and
+the party's stats, and L and R are shortcuts to Psynergy that the player
+chooses. Outside battle the bottom screen always shows the 3D scene. To save
+in the game: X, then Left once to the Travel Log, A, a slot, A, then Left to
+*Yes* and A.
+
 The game's save is kept in `saves` in the user data directory, one file for
 each release (`BO5E.sav`, `BO5P.sav` or `BO5J.sav`): the chip's 256 KiB as
 they are, as many emulators keep a DS save. Beside it, `.sav.backup` is the

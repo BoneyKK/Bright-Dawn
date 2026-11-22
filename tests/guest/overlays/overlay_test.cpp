@@ -44,6 +44,7 @@ constexpr u32 kSlotSize = 0x100;       // Cleared before each load.
 constexpr u32 kSecondA = 0x0201001c;   // Overlay A's exported function.
 constexpr u32 kSecondB = 0x02010014;   // Overlay B's.
 constexpr u32 kPatchOffset = 0x24;     // The "+ 0x11" in overlay A's exported function.
+constexpr u32 kHandler = 0x02000140;   // Reached only through a pointer the program sets.
 
 // What the program computes, from the assembly sources.
 u32 helper(u32 x) { return x * 5 + 9; }
@@ -150,6 +151,7 @@ int main(int argc, char** argv) {
   machine.clear_statistics();
   check(machine.is_translated(kSlot), "A", "the slot's entry has no usable translation");
   check(machine.is_translated(kSecondA), "A", "A's exported function has no usable translation");
+  check(machine.is_translated(kHandler), "A", "the handler the program sets at run time has no translation");
   check(!machine.is_translated(kSecondB), "A", "B's function is treated as present while A is loaded");
   run_all("A", [](u32 a, u32 b) { return (entry_a(a, b) ^ second_a(a, b, 0x11)) + fixed_c(a, b); }, GUEST_PAIR_COUNT);
   check(machine.statistics().interpreter_entries.empty(), "A", "translated code exists but the interpreter was used");

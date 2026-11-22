@@ -161,22 +161,9 @@ def decode_cleanly(image, address: int, thumb: bool):
     Used for call targets that arrive from another module at an address that
     several overlays share. The caller means one of those overlays; in the
     others the same address may hold data or the middle of something else.
-    Reading it as code there would add a meaningless translation. Complete
-    means: every instruction is defined, and every path ends by transferring
-    control and does not run off into bytes that were never decoded.
-
-    Rejecting a real function here costs speed, not correctness: the
-    interpreter runs whatever has no translation.
+    Reading it as code there would add a meaningless translation.
     """
-    fn = arm_analysis.explore(image, address, thumb, set())
-    if fn.bad or not fn.insns:
-        return None
-    for insn in fn.insns.values():
-        if insn.kind == "undef":
-            return None
-        if not arm_lift.ends_flow(insn) and insn.end not in fn.insns:
-            return None
-    return fn
+    return arm_analysis.complete_code(image, address, thumb)
 
 
 def analyse(module: dict) -> dict:
@@ -239,13 +226,9 @@ def code_runs(fn, image) -> list:
     """
     spans = [(a, i.size) for a, i in fn.insns.items()]
     for i in fn.insns.values():
-        f = i.f
-        if i.kind == "mem" and f["load"] and f["rn"] == 15 and f["size"] == "w" and f["off"][0] == "imm" \
-                and f["pre"] and not f["wb"] and f["rd"] != 15:
-            base = i.pc_value & ~3 if i.thumb else i.pc_value
-            address = base + f["off"][1] if f["up"] else base - f["off"][1]
-            if not address & 3 and image.word(address) is not None:
-                spans.append((address, 4))
+        address = arm_analysis.literal_address(i)
+        if address is not None and image.word(address) is not None:
+            spans.append((address, 4))
     spans.sort()
     runs = []
     for address, length in spans:

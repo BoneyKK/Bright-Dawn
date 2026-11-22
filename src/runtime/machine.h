@@ -305,6 +305,7 @@ class Machine {
     bool matches = false;
   };
   Function lookup(std::uint32_t address);
+  bool in_program_images(const TranslatedEntry& entry) const;
   bool in_memory(std::size_t index);
   std::uint64_t stamp_of(const TranslatedEntry& entry) const;
   int waiting_call_site(std::uint32_t address, std::uint32_t stack_pointer) const;

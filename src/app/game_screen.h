@@ -77,9 +77,10 @@ class GameScreen {
   int scale_3d() const;
   // The processor draws the 3D pictures from the next frame on.
   void give_up_hardware(const char* why);
-  // The screens, enlarged to a whole multiple for SharpSmoothEdges, made
-  // again when the multiple changes or the screens do.
-  void prepare_enlarged(int factor);
+  // Screen i's picture `source` (the console's or the graphics hardware's),
+  // enlarged without smoothing to `factor` times the DS screen's size, made
+  // again when the factor changes or the screens do; nothing if it cannot be.
+  SDL_Texture* enlarged(int i, SDL_Texture* source, int factor);
   void draw();
   void capture(bool last);
   // Writes the last 3D scene, as made, to --dump-3d's file.
@@ -98,8 +99,8 @@ class GameScreen {
   SDL_Texture* bottom_ = nullptr;
   gfx::ScreenFilter filter_ = gfx::ScreenFilter::SharpSmoothEdges;
   std::array<SDL_Texture*, 2> enlarged_{};  // Render targets: top, bottom.
-  int enlarged_factor_ = 0;
-  bool enlarged_stale_ = true;
+  std::array<int, 2> enlarged_factor_{};
+  std::array<bool, 2> enlarged_stale_{true, true};
   bool enlarging_failed_ = false;
   int largest_texture_ = 4096;
   // The 3D scenes by the graphics hardware (Settings, Graphics): tried once

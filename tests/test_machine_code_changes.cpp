@@ -16,6 +16,7 @@ using ds::u32;
 constexpr u32 kReturn = 0x2000;  // Where the test's call returns to.
 constexpr u32 kCallee = 0x4000;
 constexpr u32 kCaller = 0x4100;
+constexpr u32 kConsoleCode = 0x8000;  // Code that is in no image of the program: the console's own.
 constexpr u32 kMovR0_1 = 0xE3A00001;  // mov r0, #1
 constexpr u32 kMovR0_2 = 0xE3A00002;  // mov r0, #2
 constexpr u32 kBxLr = 0xE12FFF1E;     // bx lr
@@ -86,11 +87,30 @@ void f_caller(ds::Cpu& c) {
   c.ret_to = c.r[4];
 }
 
+// 0x8000, code of the console's own (as its BIOS is), translated with the
+// program but in none of the program's images:
+//   8000 mov r0, #3
+//   8004 bx lr
+int g_console_code_runs = 0;
+ds::u8 f_console_code_changed = 0;
+void f_console_code(ds::Cpu& c) {
+  if (f_console_code_changed != 0) {
+    ds::jump(c, kConsoleCode);
+    return;
+  }
+  ++g_console_code_runs;
+  c.executed += 2;
+  c.r[0] = 3;
+  c.ret_to = c.r[14];
+}
+
 const TranslatedRun kCalleeRun[] = {{kCallee, 8}};
+const TranslatedRun kConsoleCodeRun[] = {{kConsoleCode, 8}};
 const TranslatedRun kCallerRun[] = {{kCaller, 12}};
 const TranslatedEntry kTable[] = {
     {kCallee, f_callee, -1, kCalleeRun, 1, &f_callee_changed},
     {kCaller, f_caller, -1, kCallerRun, 1, &f_caller_changed},
+    {kConsoleCode, f_console_code, -1, kConsoleCodeRun, 1, &f_console_code_changed},
     {0, nullptr, 0, nullptr, 0},
 };
 
@@ -115,12 +135,15 @@ struct Rig {
   bd::runtime::Machine machine{memory, hardware, kTable};
   Rig() {
     for (u32 i = 0; i < image.size(); ++i) memory.write8(kCallee + i, image[i]);
+    memory.write32(kConsoleCode, 0xE3A00003);  // mov r0, #3
+    memory.write32(kConsoleCode + 4, kBxLr);
     machine.add_program_code(kCallee, image.data(), image.size());
     machine.note_memory_written(kCallee, image.size());  // As the console does when it loads the program.
     ds::Cpu& c = machine.cpu();
     c.r[13] = 0x7000;
     c.cpsr_ctrl = 0x1F;
     g_callee_runs = 0;
+    g_console_code_runs = 0;
   }
   u32 call() {
     machine.call_function(kCaller, kReturn);
@@ -164,4 +187,14 @@ TEST(a_write_next_to_translated_code_leaves_it_alone) {
   rig.machine.cpu().wr32(kCallee + 8, 0x12345678);  // Past the callee's code: data.
   CHECK(f_callee_changed == 0 && f_caller_changed == 0);
   CHECK(rig.call() == 1 && g_callee_runs == 2);
+}
+
+TEST(translated_code_outside_the_program_s_images_runs) {
+  // The console's own code (its BIOS) is translated with the program, but no
+  // image of the program holds it: there is nothing to check it against,
+  // and the program cannot change it.
+  Rig rig;
+  rig.machine.call_function(kConsoleCode, kReturn);
+  CHECK(rig.machine.cpu().r[0] == 3);
+  CHECK(g_console_code_runs == 1 && rig.hardware.unhandled_count == 0 && !rig.machine.stopped());
 }

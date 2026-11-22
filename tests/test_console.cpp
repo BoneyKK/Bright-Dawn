@@ -1,6 +1,7 @@
 // The console runs small hand-assembled programs. The words were produced
 // with the same assembler as the guest tests; the source is beside each.
 #include <cstdint>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -738,4 +739,62 @@ TEST(console_lets_interpreted_code_sleep_with_an_interrupt_it_does_not_take) {
   const bd::nds::RunResult result = console.run(1000000);
   CHECK(result.reason == bd::nds::StopReason::InstructionLimit);
   CHECK(console.sleeps() > 400000);
+}
+
+namespace {
+
+// Code the program copies into its instruction memory at start-up, translated
+// with the program:
+//   01ff8000  mov r0, #3
+//   01ff8004  bx  lr
+constexpr std::uint32_t kFastCode = 0x01FF8000;
+int g_fast_code_runs = 0;
+ds::u8 f_fast_code_changed = 0;
+void f_fast_code(ds::Cpu& c) {
+  if (f_fast_code_changed != 0) {
+    ds::jump(c, kFastCode);
+    return;
+  }
+  ++g_fast_code_runs;
+  c.executed += 2;
+  c.r[0] = 3;
+  c.ret_to = c.r[14];
+}
+const TranslatedRun kFastCodeRun[] = {{kFastCode, 8}};
+const TranslatedEntry kFastCodeTranslated[] = {{kFastCode, f_fast_code, -1, kFastCodeRun, 1, &f_fast_code_changed},
+                                               {0, nullptr, -1, nullptr, 0}};
+
+}  // namespace
+
+TEST(console_interprets_code_the_program_changes_in_its_instruction_memory) {
+  // The game copies a routine that sends 3D commands into its instruction
+  // memory and later changes its first instruction. Run as translated, the
+  // old routine sent the commands out of step: black polygons in Saha Town.
+  //   02000000  ldr r1, =0x01FF8000
+  //   02000004  ldr r2, =0x02000120   the block, in the program image
+  //   02000008  ldm r2, {r3, r4}
+  //   0200000c  stm r1, {r3, r4}      copied, as the start-up code does
+  //   02000010  ldr r3, =0xE3A00005   mov r0, #5
+  //   02000014  str r3, [r1]          the program changes its code
+  //   02000018  blx r1
+  //   0200001c  b   .
+  // The start-up parameters at 0x40, and the autoload list at 0x100 with one
+  // block: 8 bytes for 0x01FF8000, which follow the main block at 0x120.
+  std::vector<std::uint32_t> words(0x128 / 4, 0);
+  const std::uint32_t code[] = {0xE59F1018, 0xE59F2018, 0xE8920018, 0xE8810018, 0xE59F3010, 0xE5813000,
+                                0xE12FFF31, 0xEAFFFFFE, 0x01FF8000, 0x02000120, 0xE3A00005};
+  for (std::size_t i = 0; i < std::size(code); ++i) words[i] = code[i];
+  const std::uint32_t params[] = {0x02000100, 0x0200010C, 0x02000120, 0, 0, 0, 0x04020000, 0xDEC00621, 0x2106C0DE};
+  for (std::size_t i = 0; i < std::size(params); ++i) words[0x40 / 4 + i] = params[i];
+  words[0x100 / 4] = kFastCode;
+  words[0x104 / 4] = 8;
+  words[0x120 / 4] = 0xE3A00003;
+  words[0x124 / 4] = 0xE12FFF1E;
+  const bd::nds::Program program = program_of(words);
+  bd::nds::Console console(program, kFastCodeTranslated);
+  REQUIRE(console.direct_boot().ok());
+  g_fast_code_runs = 0;
+  CHECK(console.run(100).reason == bd::nds::StopReason::InstructionLimit);
+  CHECK(console.machine().cpu().r[0] == 5);
+  CHECK(g_fast_code_runs == 0);
 }

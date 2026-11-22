@@ -3,6 +3,7 @@
 @ og_run(a, b) calls into the overlays three ways: straight into the slot
 @ that two overlays share, through a function pointer the loaded overlay
 @ exports, and straight into an overlay that has an address range to itself.
+@ Then it calls a handler of its own through a pointer it sets.
         .syntax unified
         .arm
         .text
@@ -24,6 +25,11 @@ og_run:
         mov     r1, r5
         bl      fixed_entry             @ the overlay with its own address range
         add     r0, r0, r6
+        ldr     r2, =handler            @ set at run time, as a program sets its
+        ldr     r3, =handler_slot       @ interrupt handler, then called through it
+        str     r2, [r3]
+        ldr     r3, [r3]
+        blx     r3
         pop     {r4, r5, r6, pc}
         .ltorg
 
@@ -38,3 +44,19 @@ main_helper:
         add     r0, r0, r0, lsl #2
         add     r0, r0, #9
         pop     {r4, pc}
+
+@ Reached only through the pointer og_run sets, and saves nothing on the
+@ stack, as an interrupt handler need not. At 0x02000140. It leaves r0 as
+@ it was.
+        .org    0x140
+        .global handler
+        .type handler, %function
+handler:
+        mov     r12, #0x10
+        add     r0, r0, r12
+        sub     r0, r0, r12
+        bx      lr
+
+        .org    0x180
+handler_slot:
+        .word   0

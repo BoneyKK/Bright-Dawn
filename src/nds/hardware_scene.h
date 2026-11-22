@@ -50,6 +50,10 @@ struct HardwareScene {
     Opaque,        // Over what is behind; keeps its depth.
     Translucent,   // Blended by its alpha; keeps its depth.
     Overlay,       // Blended by its alpha; leaves the depth as it was.
+    // The pixels of full alpha of a translucent polygon, drawn as opaque ones
+    // (as the DS draws them), before its other pixels are drawn as
+    // Translucent or Overlay.
+    Solid,
     // Shadow polygons, as the DS draws them, with a mark for each pixel (a
     // stencil buffer). Only Shadow draws a colour; none keeps its depth.
     ShadowClear,   // One triangle over the whole picture: no pixel is marked.
@@ -85,6 +89,10 @@ struct HardwareScene {
   // alpha) at the clear depth (0 to 1).
   std::array<float, 4> clear_colour{};
   float clear_depth = 1;
+  // Depths are w, not z: the DS then takes w across a polygon with
+  // perspective (as 1 / w goes in proportion across the screen), where z
+  // goes in proportion itself.
+  bool depth_is_w = false;
   // The toon table: red, green, blue, 0 to 1, for each of 32 shades.
   std::array<std::array<float, 4>, 32> toon{};
   bool highlight = false;    // The table is added rather than used instead.
