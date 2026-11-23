@@ -48,6 +48,10 @@ class GameScreen {
   ~GameScreen();
 
   bool open(std::string& error);
+  // After the console is reset: the one started anew, in place of the one
+  // before (which may then go). detach() lets go of it.
+  void attach(nds::Console& console);
+  void detach();
   // At each frame (Console::on_frame): the screens shown, the input read,
   // time kept. False when the run is to end; end() says why.
   bool frame();
@@ -100,7 +104,7 @@ class GameScreen {
   void draw_menu();
 
   App& app_;
-  nds::Console& console_;
+  nds::Console* console_;  // Null once detached.
   const bool can_go_back_;
   gfx::LayoutOptions layout_;
   gfx::ScreenLayout screens_;

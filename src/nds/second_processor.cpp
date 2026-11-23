@@ -100,6 +100,10 @@ void SecondProcessor::word_sent(std::uint32_t word) {
     second_slot_word(data);
     return;
   }
+  if (service == kSystemService && ((data >> 8) & 0x7Fu) == kSystemReset) {
+    reset_asked_ = true;
+    return;
+  }
   if (service == SoundDriver::kService && sound_ != nullptr) {
     // Its handler takes no notice of the flag.
     sound_->word(data);

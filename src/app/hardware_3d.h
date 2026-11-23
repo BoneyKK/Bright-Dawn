@@ -95,6 +95,11 @@ class Hardware3D {
   // uploaded, as red, green, blue and the mark (bits 24 to 31 of nds::
   // DisplayEngine's colours) bytes, red lowest, 256 by 192.
   bool read_2d(std::vector<std::uint32_t>& pixels);
+  // The captures kept are no longer the console's (it was started anew, and
+  // numbers its captures from 1 again).
+  void forget_captures() {
+    for (Kept& k : kept_) k.number = 0;
+  }
   // For tests and checks: the last scene as the compute shaders drew it, as
   // the processor would (six bits each of red, green, blue and alpha, plus
   // 1 << 24 where the screen takes it), row after row at the scale drawn.

@@ -518,3 +518,15 @@ TEST(second_processor_takes_only_the_check_as_the_second_slot_s_first_word) {
   f.send(SecondProcessor::word(13, false, 0x02000041));
   CHECK(f.receive() == 0x0000004D);
 }
+
+TEST(second_processor_notes_a_request_to_reset) {
+  // The word the game sends when L, R, Start and Select are held together
+  // (seen in a run): service 12, request 0x10 in bits 8 to 14 of the data.
+  Fixture f;
+  f.send(SecondProcessor::word(12, false, 0x0800));  // Another request: not a reset.
+  CHECK(!f.second.reset_asked());
+  f.send(0x00040000 | 12);
+  CHECK(f.second.reset_asked());
+  CHECK(SecondProcessor::word(12, false, SecondProcessor::kSystemReset << 8) == 0x0004000C);
+  CHECK(f.ipc.waiting_words() == 0);  // Not answered: the console is started anew.
+}

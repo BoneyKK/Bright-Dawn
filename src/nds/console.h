@@ -50,6 +50,7 @@ enum class StopReason {
   InstructionLimit,  // The requested number of interpreted instructions ran.
   FrameLimit,        // The requested number of frames passed.
   Asked,             // on_frame asked for the run to end.
+  Reset,             // The program asked for the console to be reset: it is to be started anew.
   Unhandled,         // The program needs something that is not implemented.
 };
 
@@ -64,6 +65,9 @@ class Console : private runtime::System {
   // The address the entry point "returns" to. A DS program never returns; if
   // it jumps here, to the reset vector, it has ended.
   static constexpr std::uint32_t kResetVector = 0xFFFF0000u;
+  // Where the program leaves a number for itself across a reset (the
+  // parameter it asks for the reset with), in main memory.
+  static constexpr std::uint32_t kResetParameter = 0x027FFC20u;
 
   // `program` and `translated` (a table ending with a null function; may be
   // empty) must outlive the console.
@@ -222,6 +226,7 @@ class Console : private runtime::System {
   std::uint64_t frame_limit_ = 0;
   bool frame_limit_reached_ = false;
   bool asked_to_end_ = false;
+  bool reset_asked_ = false;  // The program asked for a reset (StopReason::Reset).
   Timeline::Time last_wake_ = 0;
   std::uint64_t sleeps_without_time_ = 0;
   std::uint64_t sleeps_ = 0;

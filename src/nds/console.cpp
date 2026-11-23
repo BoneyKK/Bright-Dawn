@@ -74,6 +74,10 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
       asked_to_end_ = true;
       machine_.stop();
     }
+    if (second_processor_.reset_asked() && !reset_asked_) {
+      reset_asked_ = true;
+      machine_.stop();
+    }
     if (frame_limit_ != 0 && video_timing_.frames() >= frame_limit_ && !frame_limit_reached_) {
       frame_limit_reached_ = true;
       machine_.stop();
@@ -183,6 +187,8 @@ RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limi
     result.detail = stop_detail_;
   } else if (asked_to_end_) {
     result.reason = StopReason::Asked;
+  } else if (reset_asked_) {
+    result.reason = StopReason::Reset;
   } else if (frame_limit_reached_) {
     result.reason = StopReason::FrameLimit;
   } else if (machine_.instruction_limit_reached() && instruction_limit != 0) {

@@ -404,130 +404,155 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
               translated_functions == 0 ? ": every instruction is interpreted" : "");
   a.report.code = translated_functions == 0 ? "The interpreter" : "The built game";
   a.native_code = translated_functions != 0;
-  nds::Console console(loaded.value(), translation);
-  if (rom) console.insert_cartridge(rom.value().bytes());
-  nds::UserSettings user = console.user_settings();
-  user.language = ui::game_language(a.settings);
-  console.set_user_settings(user);
-  log::info("game", "the console's language: " + a.settings.value(ui::key::kLanguage));
-
-  // The game's save, kept between runs (nds/save_keeper.h): one file for each
-  // release, as their saves may differ. A run from a code directory has no
-  // cartridge, so no save is kept for it.
-  std::optional<nds::SaveKeeper> keeper;
-  if (rom && !a.user_data.empty()) {
-    const rom::KnownTitle* title = rom::identify_title(rom.value().header());
-    a.report.game_code = title->game_code;
-    keeper.emplace(console.save_memory(), a.user_data / "saves" / (std::string(title->game_code) + ".sav"));
-    if (Status status = keeper->load(); status) {
-      log::info("game", "the save is kept in " + app::utf8(keeper->path()));
-    } else {
-      log::warning("game", status.error().message + "; nothing of this run will be saved");
-      complain(a.window, status.error().message + ".\n\nThe game starts without it, and nothing of this run "
-                         "will be saved. The file is left as it is.");
-    }
-  } else {
-    log::info("game", "no save is kept for this run");
-  }
-  if (auto status = console.direct_boot(); !status) {
-    complain(a.window, status.error().message);
-    played.status = 1;
-    return played;
-  }
-
-  app::GameScreen screen(a, console, can_go_back);
-  std::string error;
-  if (!screen.open(error)) {
-    complain(a.window, error);
-    played.status = 1;
-    return played;
-  }
-  log::info("game", "started");
+  // The console: started anew whenever the game asks for a reset, as a reset
+  // loads the game from the cartridge again; the save is kept in its file
+  // between the two.
+  std::optional<app::GameScreen> screen;
   nds::RunResult result;
-  {
-    // A crash or a hang from here on names where the game's code was.
-    platform::set_crash_guest_address(&console.machine().last_entered());
-    app::HangWatch hang_watch(console.machine().last_entered(), std::chrono::seconds(10));
-    const std::filesystem::path not_native = not_native_path();
-    std::uint64_t frames_to_report = kNotNativeEvery;
-    console.on_frame = [&screen, &hang_watch, &keeper, &console, &not_native, &frames_to_report] {
-      bd::frame_log::Scope frame_log_scope(bd::frame_log::kHost);
-      hang_watch.pause();
-      if (keeper)
-        if (Status status = keeper->frame(); !status) log::warning("game", status.error().message);
-      if (--frames_to_report == 0) {
-        frames_to_report = kNotNativeEvery;
-        write_not_native(console, not_native);
+  std::uint64_t frames_shown = 0;
+  std::uint32_t reset_parameter = 0;
+  bool reset = false;
+  for (;;) {
+    nds::Console console(loaded.value(), translation);
+    if (rom) console.insert_cartridge(rom.value().bytes());
+    nds::UserSettings user = console.user_settings();
+    user.language = ui::game_language(a.settings);
+    console.set_user_settings(user);
+    log::info("game", "the console's language: " + a.settings.value(ui::key::kLanguage));
+
+    // The game's save, kept between runs (nds/save_keeper.h): one file for each
+    // release, as their saves may differ. A run from a code directory has no
+    // cartridge, so no save is kept for it.
+    std::optional<nds::SaveKeeper> keeper;
+    if (rom && !a.user_data.empty()) {
+      const rom::KnownTitle* title = rom::identify_title(rom.value().header());
+      a.report.game_code = title->game_code;
+      keeper.emplace(console.save_memory(), a.user_data / "saves" / (std::string(title->game_code) + ".sav"));
+      if (Status status = keeper->load(); status) {
+        log::info("game", "the save is kept in " + app::utf8(keeper->path()));
+      } else {
+        log::warning("game", status.error().message + "; nothing of this run will be saved");
+        complain(a.window, status.error().message + ".\n\nThe game starts without it, and nothing of this run "
+                           "will be saved. The file is left as it is.");
       }
-      const bool go_on = screen.frame();
-      screen.log_frame();
-      hang_watch.resume();
-      return go_on;
-    };
-    hang_watch.resume();
-    result = console.run(0, a.options.frames);
-    hang_watch.pause();
-    console.on_frame = nullptr;
-    platform::set_crash_guest_address(nullptr);
-    write_not_native(console, not_native);
-    if (!not_native.empty() && console.machine().has_translations())
-      log::info("game", "the places not run natively are listed in " + app::utf8(not_native));
-  }
-  if (keeper) {
-    if (Status status = keeper->flush(); !status) {
-      log::warning("game", status.error().message);
-      complain(a.window, "The game's save could not be written: " + status.error().message);
+    } else {
+      log::info("game", "no save is kept for this run");
     }
-    log::writef(log::Level::Info, "game", "the save file was written %" PRIu64 " times", keeper->writes());
-  }
-  const std::uint64_t frames = console.display().statistics().frames;
-  std::printf("%" PRIu64 " frames shown\n", frames);
-  const runtime::Statistics& stats = console.machine().statistics();
-  log::writef(log::Level::Info, "game",
-              "ended after %" PRIu64 " frames: %" PRIu64 " instructions interpreted, %zu places interpreted, %" PRIu64
-              " interrupts taken, %" PRIu64 " sleeps",
-              frames, stats.interpreted_instructions, stats.interpreter_entries.size(), stats.interrupts_taken,
-              console.sleeps());
-  // Where the time went: translated code, the interpreter behind it, and the
-  // places the interpreter was entered most (gaps in the translation).
-  log::writef(log::Level::Info, "game",
-              "%" PRIu64 " instructions run by translated code; from the interpreter %" PRIu64
-              " calls and %" PRIu64 " jumps back into it; %" PRIu64 " overlay translations checked, %" PRIu64
-              " rejected",
-              stats.translated_instructions, stats.native_calls_from_interpreter, stats.native_jumps_from_interpreter,
-              stats.translations_checked, stats.translations_rejected);
-  {
-    std::vector<std::pair<std::uint64_t, std::uint32_t>> entries;
-    for (const auto& [address, count] : stats.interpreter_entries) entries.emplace_back(count, address);
-    const std::size_t shown = std::min<std::size_t>(entries.size(), 10);
-    std::partial_sort(entries.begin(), entries.begin() + static_cast<std::ptrdiff_t>(shown), entries.end(),
-                      std::greater<>());
-    for (std::size_t i = 0; i < shown; ++i)
-      log::writef(log::Level::Info, "game", "interpreter entered at 0x%08" PRIX32 " %" PRIu64 " times",
-                  entries[i].second, entries[i].first);
-  }
-  if (stats.nesting_dropped != 0)
+    if (auto status = console.direct_boot(); !status) {
+      complain(a.window, status.error().message);
+      played.status = 1;
+      return played;
+    }
+    if (reset) {
+      // What the game left for itself before the reset.
+      console.bus().main_write(nds::Console::kResetParameter, 4, reset_parameter);
+      log::info("game", "started again, as the game asked for a reset");
+    }
+
+    if (!screen) {
+      screen.emplace(a, console, can_go_back);
+      std::string error;
+      if (!screen->open(error)) {
+        complain(a.window, error);
+        screen.reset();  // Before the console it holds.
+        played.status = 1;
+        return played;
+      }
+      log::info("game", "started");
+    } else {
+      screen->attach(console);
+    }
+    {
+      // A crash or a hang from here on names where the game's code was.
+      platform::set_crash_guest_address(&console.machine().last_entered());
+      app::HangWatch hang_watch(console.machine().last_entered(), std::chrono::seconds(10));
+      const std::filesystem::path not_native = not_native_path();
+      std::uint64_t frames_to_report = kNotNativeEvery;
+      console.on_frame = [&screen, &hang_watch, &keeper, &console, &not_native, &frames_to_report] {
+        bd::frame_log::Scope frame_log_scope(bd::frame_log::kHost);
+        hang_watch.pause();
+        if (keeper)
+          if (Status status = keeper->frame(); !status) log::warning("game", status.error().message);
+        if (--frames_to_report == 0) {
+          frames_to_report = kNotNativeEvery;
+          write_not_native(console, not_native);
+        }
+        const bool go_on = screen->frame();
+        screen->log_frame();
+        hang_watch.resume();
+        return go_on;
+      };
+      hang_watch.resume();
+      // --frames counts the frames of every start.
+      result = console.run(0, a.options.frames == 0 ? 0 : a.options.frames - frames_shown);
+      hang_watch.pause();
+      console.on_frame = nullptr;
+      platform::set_crash_guest_address(nullptr);
+      write_not_native(console, not_native);
+      if (!not_native.empty() && console.machine().has_translations())
+        log::info("game", "the places not run natively are listed in " + app::utf8(not_native));
+    }
+    if (keeper) {
+      if (Status status = keeper->flush(); !status) {
+        log::warning("game", status.error().message);
+        complain(a.window, "The game's save could not be written: " + status.error().message);
+      }
+      log::writef(log::Level::Info, "game", "the save file was written %" PRIu64 " times", keeper->writes());
+    }
+    const std::uint64_t frames = console.display().statistics().frames;
+    frames_shown += frames;
+    const runtime::Statistics& stats = console.machine().statistics();
     log::writef(log::Level::Info, "game",
-                "call sites that were never returned to were let go of %" PRIu64 " times (%u deep each time)",
-                stats.nesting_dropped, runtime::Machine::kDeepestNesting);
-  for (const auto& [what, count] : console.polygon_renderer().notes())
-    log::writef(log::Level::Info, "game", "asked of the 3D hardware and not done: %s (%" PRIu64 " frames)", what.c_str(),
-                count);
-  {
-    const nds::SoundDriver& sound = console.sound_driver();
-    for (std::uint32_t n = 0; n < nds::SoundDriver::kCommands; ++n)
-      if (sound.statistics().commands[n] != 0)
-        log::writef(log::Level::Debug, "sound", "\"%s\": %" PRIu64 " times", nds::SoundDriver::command_name(n),
-                    sound.statistics().commands[n]);
-    for (const auto& [what, count] : sound.sequences().notes())
-      log::writef(log::Level::Info, "sound", "the sequence player: %s (%" PRIu64 " times)", what.c_str(), count);
-    for (const auto& [what, count] : sound.not_carried_out())
-      log::writef(log::Level::Info, "sound", "asked of the sound program and not done: %s (%" PRIu64 " times)",
-                  what.c_str(), count);
+                "ended after %" PRIu64 " frames: %" PRIu64 " instructions interpreted, %zu places interpreted, %" PRIu64
+                " interrupts taken, %" PRIu64 " sleeps",
+                frames, stats.interpreted_instructions, stats.interpreter_entries.size(), stats.interrupts_taken,
+                console.sleeps());
+    // Where the time went: translated code, the interpreter behind it, and the
+    // places the interpreter was entered most (gaps in the translation).
+    log::writef(log::Level::Info, "game",
+                "%" PRIu64 " instructions run by translated code; from the interpreter %" PRIu64
+                " calls and %" PRIu64 " jumps back into it; %" PRIu64 " overlay translations checked, %" PRIu64
+                " rejected",
+                stats.translated_instructions, stats.native_calls_from_interpreter, stats.native_jumps_from_interpreter,
+                stats.translations_checked, stats.translations_rejected);
+    {
+      std::vector<std::pair<std::uint64_t, std::uint32_t>> entries;
+      for (const auto& [address, count] : stats.interpreter_entries) entries.emplace_back(count, address);
+      const std::size_t shown = std::min<std::size_t>(entries.size(), 10);
+      std::partial_sort(entries.begin(), entries.begin() + static_cast<std::ptrdiff_t>(shown), entries.end(),
+                        std::greater<>());
+      for (std::size_t i = 0; i < shown; ++i)
+        log::writef(log::Level::Info, "game", "interpreter entered at 0x%08" PRIX32 " %" PRIu64 " times",
+                    entries[i].second, entries[i].first);
+    }
+    if (stats.nesting_dropped != 0)
+      log::writef(log::Level::Info, "game",
+                  "call sites that were never returned to were let go of %" PRIu64 " times (%u deep each time)",
+                  stats.nesting_dropped, runtime::Machine::kDeepestNesting);
+    for (const auto& [what, count] : console.polygon_renderer().notes())
+      log::writef(log::Level::Info, "game", "asked of the 3D hardware and not done: %s (%" PRIu64 " frames)", what.c_str(),
+                  count);
+    {
+      const nds::SoundDriver& sound = console.sound_driver();
+      for (std::uint32_t n = 0; n < nds::SoundDriver::kCommands; ++n)
+        if (sound.statistics().commands[n] != 0)
+          log::writef(log::Level::Debug, "sound", "\"%s\": %" PRIu64 " times", nds::SoundDriver::command_name(n),
+                      sound.statistics().commands[n]);
+      for (const auto& [what, count] : sound.sequences().notes())
+        log::writef(log::Level::Info, "sound", "the sequence player: %s (%" PRIu64 " times)", what.c_str(), count);
+      for (const auto& [what, count] : sound.not_carried_out())
+        log::writef(log::Level::Info, "sound", "asked of the sound program and not done: %s (%" PRIu64 " times)",
+                    what.c_str(), count);
+    }
+    for (const auto& [number, count] : console.software_interrupts())
+      log::writef(log::Level::Debug, "game", "BIOS call 0x%02" PRIX32 ": %" PRIu64 " times", number, count);
+    reset = result.reason == nds::StopReason::Reset;
+    if (reset) reset_parameter = console.bus().main_read(nds::Console::kResetParameter, 4);
+    screen->detach();
+    if (!reset || (a.options.frames != 0 && frames_shown >= a.options.frames)) break;
   }
-  for (const auto& [number, count] : console.software_interrupts())
-    log::writef(log::Level::Debug, "game", "BIOS call 0x%02" PRIX32 ": %" PRIu64 " times", number, count);
-  played.end = screen.end() == app::GameEnd::Running ? app::GameEnd::Quit : screen.end();
+  std::printf("%" PRIu64 " frames shown\n", frames_shown);
+  played.end = screen->end() == app::GameEnd::Running ? app::GameEnd::Quit : screen->end();
   switch (result.reason) {
     case nds::StopReason::Unhandled: {
       char where[16];
@@ -545,9 +570,10 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
       break;
     case nds::StopReason::FrameLimit: log::info("game", "the frames asked for were run"); break;
     case nds::StopReason::Asked: break;
+    case nds::StopReason::Reset: break;  // Not left with: started anew.
     case nds::StopReason::InstructionLimit: log::info("game", "the instructions asked for were run"); break;
   }
-  if (!a.options.capture.empty() && !screen.captured()) played.status = 1;
+  if (!a.options.capture.empty() && !screen->captured()) played.status = 1;
   return played;
 }
 

@@ -18,7 +18,7 @@ namespace bd::app {
 namespace key = ui::key;
 
 GameScreen::GameScreen(App& app, nds::Console& console, bool can_go_back)
-    : app_(app), console_(console), can_go_back_(can_go_back) {}
+    : app_(app), console_(&console), can_go_back_(can_go_back) {}
 
 GameScreen::~GameScreen() {
   if (app_.options.check_2d)
@@ -26,12 +26,30 @@ GameScreen::~GameScreen() {
                 differed_2d_, checked_2d_);
   frame_log::set_enabled(false);
   frame_log::state().sync = false;
-  console_.sound_hardware().on_output = nullptr;
+  detach();
   for (SDL_Gamepad* pad : gamepads_) SDL_CloseGamepad(pad);
   if (top_ != nullptr) SDL_DestroyTexture(top_);
   if (bottom_ != nullptr) SDL_DestroyTexture(bottom_);
   for (SDL_Texture* t : enlarged_)
     if (t != nullptr) SDL_DestroyTexture(t);
+}
+
+void GameScreen::detach() {
+  if (console_ != nullptr) console_->sound_hardware().on_output = nullptr;
+  console_ = nullptr;
+}
+
+void GameScreen::attach(nds::Console& console) {
+  detach();
+  console_ = &console;
+  console_->sound_hardware().on_output = [this](nds::SoundHardware::Output o) { sound_.add(o.left, o.right); };
+  // What was kept of the console before: its captures are numbered anew.
+  capture_kept_ = 0;
+  shown_3d_ = {};
+  hardware_.forget_captures();
+  apply_settings(false);
+  log_executed_ = console_->machine().executed();
+  log_interpreted_ = console_->machine().statistics().interpreted_instructions;
 }
 
 bool GameScreen::open(std::string& error) {
@@ -45,7 +63,7 @@ bool GameScreen::open(std::string& error) {
     // Opaque: drawn over what is there, not blended.
     SDL_SetTextureBlendMode(*texture, SDL_BLENDMODE_NONE);
   }
-  console_.sound_hardware().on_output = [this](nds::SoundHardware::Output o) { sound_.add(o.left, o.right); };
+  console_->sound_hardware().on_output = [this](nds::SoundHardware::Output o) { sound_.add(o.left, o.right); };
   if (!app_.options.record_sound.empty()) {
     std::string why;
     if (sound_.record(app_.options.record_sound, why))
@@ -87,8 +105,8 @@ bool GameScreen::open(std::string& error) {
   if (frame_log_) {
     // From here the console runs the game's code until the first frame ends.
     frame_log::restart(frame_log::kArm9);
-    log_executed_ = console_.machine().executed();
-    log_interpreted_ = console_.machine().statistics().interpreted_instructions;
+    log_executed_ = console_->machine().executed();
+    log_interpreted_ = console_->machine().statistics().interpreted_instructions;
   }
   second_started_ = SDL_GetTicksNS();
   clock_.tick(second_started_);
@@ -139,17 +157,17 @@ void GameScreen::apply_settings(bool first) {
   }
   const bool wanted = hardware;
   hardware = hardware && hardware_.is_open() && !hardware_failed_;
-  if (wanted && !hardware) console_.display().hardware_3d_failed(hardware_problem_);
-  else console_.display().set_hardware_3d(hardware);
+  if (wanted && !hardware) console_->display().hardware_3d_failed(hardware_problem_);
+  else console_->display().set_hardware_3d(hardware);
   // The 2D pictures: by the graphics hardware too, unless asked otherwise.
-  console_.display().set_hardware_2d(hardware && !s.toggle(key::kProcessor2D));
-  console_.display().set_check_2d(app_.options.check_2d);
+  console_->display().set_hardware_2d(hardware && !s.toggle(key::kProcessor2D));
+  console_->display().set_check_2d(app_.options.check_2d);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
-  console_.polygon_renderer().set_edge_marking(ui::edge_marking(s));
-  console_.polygon_renderer().keep_inputs(!app_.options.dump_3d.empty());
+  console_->polygon_renderer().set_edge_marking(ui::edge_marking(s));
+  console_->polygon_renderer().keep_inputs(!app_.options.dump_3d.empty());
   const bool smooth = ui::smooth_textures(s);
-  console_.polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
+  console_->polygon_renderer().set_texture_filter(smooth ? nds::PolygonRenderer::TextureFilter::Bilinear
                                                         : nds::PolygonRenderer::TextureFilter::Nearest);
   // Vsync: adaptive where the system has it (a late picture is shown at
   // once rather than a whole refresh later), else plain. Without it the
@@ -200,7 +218,7 @@ bool GameScreen::frame() {
   if (app_.settings.revision() != settings_seen_) apply_settings(false);
   read_input();
   // The scene is made during the frame, for the resolution it is drawn at.
-  console_.polygon_renderer().set_fine_positions(app_.settings.toggle(key::kFineCoordinates) && scale_3d() > 1);
+  console_->polygon_renderer().set_fine_positions(app_.settings.toggle(key::kFineCoordinates) && scale_3d() > 1);
   const bool capture_last = app_.options.frames != 0 && frames_run_ == app_.options.frames && !app_.options.capture.empty();
   const bool capture_now = capture_last || (app_.options.capture_every != 0 && !app_.options.capture.empty() &&
                                             frames_run_ % app_.options.capture_every == 0);
@@ -268,7 +286,7 @@ void GameScreen::log_frame() {
   frame_log::State& s = frame_log::state();
   frame_log::switch_to(s.current);  // The times up to now.
   const double per_us = frame_log_->ticks_per_us();
-  const nds::Display& display = console_.display();
+  const nds::Display& display = console_->display();
   const bool hardware = hardware_.is_open() && !hardware_failed_ && ui::hardware_3d(app_.settings);
   if (!frame_log_->started()) {
     std::vector<std::string> names{"frame", "total_us"};
@@ -320,8 +338,8 @@ void GameScreen::log_frame() {
   for (std::uint64_t t : s.spent) total += static_cast<double>(t);
   v.push_back(total / per_us);
   for (std::uint64_t t : s.spent) v.push_back(static_cast<double>(t) / per_us);
-  const std::uint64_t executed = console_.machine().executed();
-  const std::uint64_t interpreted = console_.machine().statistics().interpreted_instructions;
+  const std::uint64_t executed = console_->machine().executed();
+  const std::uint64_t interpreted = console_->machine().statistics().interpreted_instructions;
   const std::uint64_t all = executed - log_executed_, by_interpreter = interpreted - log_interpreted_;
   log_executed_ = executed;
   log_interpreted_ = interpreted;
@@ -331,7 +349,7 @@ void GameScreen::log_frame() {
                           c.screen_bytes, c.video_bytes, c.vertex_bytes, c.bank_bytes, c.raster_bytes, c.gpu_captures, c.pictures,
                           s.switches})
     v.push_back(static_cast<double>(n));
-  nds::DisplayEngine& main = console_.display().main_engine();
+  nds::DisplayEngine& main = console_->display().main_engine();
   const bool main_on_top = (display.power_control() & nds::Display::kMainOnTop) != 0;
   const std::uint32_t control = main.control();
   const bool main_3d = (control & 0x108u) == 0x108u && ((control >> 16) & 3) == 1;
@@ -475,7 +493,7 @@ void GameScreen::read_input() {
     if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >= input::kTriggerThreshold)
       held |= input::bit(input::DsButton::R);
   }
-  if (held != console_.keypad().held()) console_.keypad().set_held(held);
+  if (held != console_->keypad().held()) console_->keypad().set_held(held);
 
   // The stylus: the left button, on the touch screen, while the window has
   // the mouse. Off the screen is not touching it.
@@ -499,7 +517,7 @@ void GameScreen::read_input() {
   if (touching != touching_ || (touching && (at.x != touch_at_.x || at.y != touch_at_.y))) {
     touching_ = touching;
     touch_at_ = at;
-    console_.set_touch(touching, static_cast<unsigned>(at.x), static_cast<unsigned>(at.y));
+    console_->set_touch(touching, static_cast<unsigned>(at.x), static_cast<unsigned>(at.y));
   }
 }
 
@@ -511,7 +529,7 @@ void GameScreen::upload_screens() {
     gfx::to_rgba_bytes(screen.data(), screen.size(), pixels_.data());
     SDL_UpdateTexture(texture, nullptr, pixels_.data(), gfx::kScreenWidth * 4);
   };
-  const nds::Display& display = console_.display();
+  const nds::Display& display = console_->display();
   // Each screen with what the graphics hardware puts in where it is marked
   // (the frame's scene, or a capture it made), at the resolution for the
   // screens as they were last laid out.
@@ -535,7 +553,7 @@ void GameScreen::upload_screens() {
     }
     bool failed = false;
     SDL_Texture* t = hardware_.draw(i, picture,
-                                    fill.fill == nds::Display::Fill::kScene ? &console_.polygon_renderer().scene() : nullptr,
+                                    fill.fill == nds::Display::Fill::kScene ? &console_->polygon_renderer().scene() : nullptr,
                                     fill.capture, fill.brightness, scale_3d(), failed);
     if (failed) {
       give_up_hardware(lines.by_hardware ? "draw a 2D picture" : "draw a 3D scene");
@@ -552,7 +570,7 @@ void GameScreen::upload_screens() {
 }
 
 void GameScreen::check_2d(int i, bool with_marks) {
-  const nds::Display& display = console_.display();
+  const nds::Display& display = console_->display();
   std::vector<std::uint32_t> pixels;
   if (!hardware_.read_2d(pixels)) return;
   const std::vector<std::uint32_t>& drawn = i == 0 ? display.top_screen() : display.bottom_screen();
@@ -578,11 +596,11 @@ void GameScreen::check_2d(int i, bool with_marks) {
 }
 
 void GameScreen::keep_capture() {
-  const nds::Display& display = console_.display();
+  const nds::Display& display = console_->display();
   const std::uint64_t number = display.frame_capture();
   if (number == 0 || number == capture_kept_ || !hardware_.is_open() || hardware_failed_) return;
   capture_kept_ = number;
-  if (!hardware_.capture(console_.polygon_renderer().scene(), display.capture_recipe(), display.capture_source(), number,
+  if (!hardware_.capture(console_->polygon_renderer().scene(), display.capture_recipe(), display.capture_source(), number,
                          scale_3d()))
     give_up_hardware("make a display capture");
 }
@@ -597,7 +615,7 @@ void GameScreen::give_up_hardware(const char* why) {
   hardware_failed_ = true;
   shown_3d_ = {};
   hardware_problem_ = std::string("the graphics hardware failed to ") + why;
-  console_.display().hardware_3d_failed(hardware_problem_);
+  console_->display().hardware_3d_failed(hardware_problem_);
 }
 
 SDL_Texture* GameScreen::enlarged(int i, SDL_Texture* source, int factor) {
@@ -663,11 +681,11 @@ void GameScreen::draw() {
 }
 
 void GameScreen::dump_3d() {
-  const nds::Display& display = console_.display();
+  const nds::Display& display = console_->display();
   nds::SceneDump dump;
-  dump.inputs = console_.polygon_renderer().kept_inputs();
-  dump.edge_marking = console_.polygon_renderer().edge_marking();
-  dump.fine_positions = console_.polygon_renderer().fine_positions();
+  dump.inputs = console_->polygon_renderer().kept_inputs();
+  dump.edge_marking = console_->polygon_renderer().edge_marking();
+  dump.fine_positions = console_->polygon_renderer().fine_positions();
   dump.scale = scale_3d();
   for (int i = 0; i < 2; ++i) {
     const nds::Display::ScreenFill& fill = display.frame_fill(i);
@@ -740,10 +758,10 @@ bool GameScreen::run_menu() {
   log::info("game", "paused: the menu is open");
   menu_page_ = MenuPage::Main;
   // Nothing held while the menu is open.
-  console_.keypad().set_held(0);
+  console_->keypad().set_held(0);
   if (touching_) {
     touching_ = false;
-    console_.set_touch(false, 0, 0);
+    console_->set_touch(false, 0, 0);
   }
   while (menu_open_) {
     SDL_Event event;

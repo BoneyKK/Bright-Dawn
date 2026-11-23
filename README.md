@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (23 November 2026): The graphics hardware draws the two 2D engines' pictures too, with the 3D: the processor only records each line's registers and what changed in memory, and the pictures are the processor's, pixel for pixel. The processor's part of the 2D costs about a tenth of drawing it.
+**Last change** (23 November 2026): L, R, Start and Select together reset the game again, as on the DS: the console starts anew at the title, with the save kept. Before, the game stopped on white screens.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 

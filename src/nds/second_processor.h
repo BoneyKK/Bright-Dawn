@@ -34,6 +34,10 @@
 // - Service 13, the console's second cartridge slot (the one for Game Boy
 //   Advance cartridges): the check for a cartridge there is answered as for
 //   an empty slot.
+// - Service 12, the system: the main program's request to reset the console
+//   (the buttons L, R, Start and Select together, in this game) is only
+//   noted (reset_asked()); the console is then started again by whoever
+//   runs it, as a reset loads the game from the cartridge anew.
 //
 // Words for the other services the program handles are recorded and not
 // answered. An answer is sent the moment the request arrives; on a console
@@ -99,6 +103,12 @@ class SecondProcessor : public IpcPeer {
     const unsigned service = group == 0 ? 6u : group == 1 ? 4u : group == 2 ? 9u : 8u;
     return word(service, false, kPieceFirst | kPieceLast | (((request & 0xFFu) | 0x80u) << 8) | (result & 0xFFu));
   }
+
+  static constexpr unsigned kSystemService = 12;
+  // A request on the system service: the request in bits 8 to 14 of the
+  // word's data. "Reset the console": the main program then waits for the
+  // second processor to answer, and loads the game anew.
+  static constexpr std::uint32_t kSystemReset = 0x10;
 
   static constexpr unsigned kSecondSlotService = 13;
   // The one request the program waits for on this service, once: "look at
@@ -202,6 +212,8 @@ class SecondProcessor : public IpcPeer {
   const std::vector<std::uint32_t>& first_words() const { return first_words_; }
   // Of those, the words for services that have no stand-in yet.
   const std::map<unsigned, std::uint64_t>& unanswered_by_service() const { return unanswered_by_service_; }
+  // Whether the main program asked for the console to be reset.
+  bool reset_asked() const { return reset_asked_; }
   // Requests to a service that has a stand-in which could not be carried
   // out, in words, with how often each came. Nothing was answered to these.
   const std::map<std::string, std::uint64_t>& not_carried_out() const { return not_carried_out_; }
@@ -232,6 +244,7 @@ class SecondProcessor : public IpcPeer {
   SoundDriver* sound_ = nullptr;
   bool second_slot_checked_ = false;
   bool handshake_done_ = false;
+  bool reset_asked_ = false;
   // The touch screen service: the pieces of the request being received.
   std::uint16_t touch_pieces_[16] = {};
   bool touched_ = false;
