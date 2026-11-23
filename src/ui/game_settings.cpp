@@ -151,6 +151,10 @@ std::vector<SettingDef> game_setting_definitions() {
                         "With the frame log: waits for the graphics hardware after each of its passes, so that "
                         "the log has each pass's real time. The game runs slower.",
                         false));
+  defs.push_back(toggle(key::kProcessor2D, "", "2D by the processor",
+                        "Draws the 2D pictures (backgrounds, sprites, text) with the processor, in place of the "
+                        "graphics hardware, to compare the two. The game runs slower.",
+                        false));
   // The bindings: not in a chapter of their own, as the Controls page draws
   // them; their defaults are input's.
   const auto bound_by_default = [](const Control& c, bool keyboard) {

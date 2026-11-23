@@ -79,6 +79,9 @@ class GameScreen {
   void upload_screens();
   // The graphics hardware's capture of the frame just run, if it made one.
   void keep_capture();
+  // --check-2d: the 2D picture the graphics hardware drew of screen `i`
+  // against the processor's.
+  void check_2d(int i, bool with_marks);
   // The scale of the graphics hardware's 3D for the screens as laid out.
   int scale_3d() const;
   // The processor draws the 3D pictures from the next frame on.
@@ -114,6 +117,7 @@ class GameScreen {
   // frame last shown, or null when the frame was drawn here.
   Hardware3D hardware_;
   bool hardware_tried_ = false, hardware_failed_ = false;
+  std::uint64_t checked_2d_ = 0, differed_2d_ = 0;  // --check-2d: pictures checked, and those that differ.
   std::string hardware_problem_;  // Why the graphics hardware cannot draw, when it is asked for.
   // The screens as the graphics hardware drew them (top, bottom), where it
   // did, and the last capture it made.

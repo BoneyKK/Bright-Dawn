@@ -8,6 +8,7 @@
 #include "app/hardware_shaders.h"
 #include "debug/frame_log.h"
 #include "nds/polygon_renderer.h"
+#include "nds/video_memory.h"
 #include "core/log.h"
 
 namespace bd::app {
@@ -139,6 +140,7 @@ Hardware3D::~Hardware3D() {
   for (SDL_GPUGraphicsPipeline* p : scene_pipelines_)
     if (p != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, p);
   if (compose_pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, compose_pipeline_);
+  if (engine2d_pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, engine2d_pipeline_);
   for (SDL_GPUComputePipeline* p : {raster_pipeline_, finish_pipeline_})
     if (p != nullptr) SDL_ReleaseGPUComputePipeline(device_, p);
   if (nearest_ != nullptr) SDL_ReleaseGPUSampler(device_, nearest_);
@@ -146,7 +148,7 @@ Hardware3D::~Hardware3D() {
   if (screen_ != nullptr) SDL_ReleaseGPUTexture(device_, screen_);
   if (bank_ != nullptr) SDL_ReleaseGPUTexture(device_, bank_);
   if (transfer_ != nullptr) SDL_ReleaseGPUTransferBuffer(device_, transfer_);
-  for (SDL_GPUBuffer* b : {vertices_, corners_, polygons_})
+  for (SDL_GPUBuffer* b : {vertices_, corners_, polygons_, video_, layout_, lines_, palettes_, sprite_copies_, changes_})
     if (b != nullptr) SDL_ReleaseGPUBuffer(device_, b);
 }
 
@@ -175,7 +177,9 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
                                                 SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1, 1);
-  const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment;
+  SDL_GPUShader* engine2d_fragment = make_shader(device, shaders::kEngine2dFrag, sizeof shaders::kEngine2dFrag,
+                                                 SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 1, 6);
+  const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment && engine2d_fragment;
 
   // The depth buffer: the most exact format the device has, with a stencil
   // buffer if it can.
@@ -318,10 +322,12 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     info.target_info.color_target_descriptions = &target;
     info.target_info.num_color_targets = 1;
     compose_pipeline_ = SDL_CreateGPUGraphicsPipeline(device, &info);
+    info.fragment_shader = engine2d_fragment;
+    engine2d_pipeline_ = SDL_CreateGPUGraphicsPipeline(device, &info);
     raster_pipeline_ = make_compute(device, shaders::kRasterComp, sizeof shaders::kRasterComp, 1, 2, 1);
     finish_pipeline_ = make_compute(device, shaders::kFinishComp, sizeof shaders::kFinishComp, 0, 1, 1);
   }
-  for (SDL_GPUShader* s : {scene_vertex, scene_fragment, compose_vertex, compose_fragment})
+  for (SDL_GPUShader* s : {scene_vertex, scene_fragment, compose_vertex, compose_fragment, engine2d_fragment})
     if (s != nullptr) SDL_ReleaseGPUShader(device, s);
 
   bool made = shaders_made;
@@ -331,7 +337,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     error = "the graphics device has no depth buffer format";
     made = false;
   } else if (std::count(std::begin(scene_pipelines_), std::end(scene_pipelines_), nullptr) != 0 || !compose_pipeline_ ||
-             !raster_pipeline_ || !finish_pipeline_) {
+             !raster_pipeline_ || !finish_pipeline_ || !engine2d_pipeline_) {
     made = fail("3D pipelines");
   }
   if (made) {
@@ -342,8 +348,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     sampler.address_mode_u = sampler.address_mode_v = sampler.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     nearest_ = SDL_CreateGPUSampler(device, &sampler);
     atlas_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, kAtlasSize, kAtlasSize);
-    screen_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, kScreenWidth,
-                           kScreenHeight);
+    screen_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                           SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET, kScreenWidth, kScreenHeight);
     bank_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, 256);
     if (nearest_ == nullptr || atlas_ == nullptr || screen_ == nullptr || bank_ == nullptr) made = fail("3D textures");
   }
@@ -463,11 +469,11 @@ bool Hardware3D::ensure_vertex_buffer(std::uint32_t bytes) {
   return vertices_ != nullptr;
 }
 
-bool Hardware3D::ensure_storage(SDL_GPUBuffer*& buffer, std::uint32_t& size, std::uint32_t bytes) {
+bool Hardware3D::ensure_storage(SDL_GPUBuffer*& buffer, std::uint32_t& size, std::uint32_t bytes, bool graphics) {
   if (buffer != nullptr && size >= bytes) return true;
   if (buffer != nullptr) SDL_ReleaseGPUBuffer(device_, buffer);
   SDL_GPUBufferCreateInfo info{};
-  info.usage = SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+  info.usage = graphics ? SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ : SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
   info.size = std::max({bytes, size * 2, std::uint32_t{1} << 12});
   buffer = SDL_CreateGPUBuffer(device_, &info);
   size = buffer != nullptr ? info.size : 0;
@@ -505,17 +511,20 @@ bool Hardware3D::capture(const nds::HardwareScene& scene, const nds::CaptureReci
   log_compose_column_ = frame_log::kCaptureGpu;
   ++frame_log::state().counts.gpu_captures;
   const std::vector<std::uint32_t>* bank = second == bank_ ? &recipe.second_pixels : nullptr;
-  if (!run(&scene, source, nullptr, second, bank, oldest->texture, uniforms)) return false;
+  Picture picture;
+  picture.pixels = &source;
+  if (!run(&scene, picture, nullptr, second, bank, oldest->texture, uniforms)) return false;
   oldest->number = number;
   return true;
 }
 
-SDL_Texture* Hardware3D::draw(int which, const std::vector<std::uint32_t>& screen, const nds::HardwareScene* scene,
-                              std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed) {
+SDL_Texture* Hardware3D::draw(int which, const Picture& picture, const nds::HardwareScene* scene, std::uint64_t capture,
+                              std::uint16_t brightness, int scale, bool& failed) {
   failed = true;
   if (!ready(scale)) return nullptr;
   SDL_GPUTexture* source = nullptr;
-  if (scene == nullptr) {
+  const bool nothing_put_in = scene == nullptr && capture == 0;
+  if (scene == nullptr && !nothing_put_in) {
     for (const Kept& k : kept_)
       if (k.number == capture && capture != 0) source = k.texture;
     if (source == nullptr) {
@@ -529,7 +538,8 @@ SDL_Texture* Hardware3D::draw(int which, const std::vector<std::uint32_t>& scree
   uniforms.brightness[1] = static_cast<float>(std::min(brightness & 0x1F, 16)) / 16.0f;
   uniforms.options[1] = source != nullptr ? 256.0f : static_cast<float>(kScreenHeight);
   log_compose_column_ = (which & 1) == 0 ? frame_log::kComposeTop : frame_log::kComposeBottom;
-  if (!run(scene, screen, source, nullptr, nullptr, outputs_[static_cast<std::size_t>(which & 1)], uniforms))
+  if (!run(scene, picture, source, nullptr, nullptr, outputs_[static_cast<std::size_t>(which & 1)], uniforms,
+           !nothing_put_in))
     return nullptr;
   failed = false;
   return shown_[static_cast<std::size_t>(which & 1)];
@@ -539,6 +549,12 @@ bool Hardware3D::read_raster(std::vector<std::uint32_t>& pixels) {
   if (scale_ == 0 || !rasterized_) return false;
   pixels.resize(static_cast<std::size_t>(kScreenWidth) * scale_ * kScreenHeight * scale_);
   return download(nullptr, 0, 0, finished_, static_cast<std::uint32_t>(pixels.size() * 4), pixels.data());
+}
+
+bool Hardware3D::read_2d(std::vector<std::uint32_t>& pixels) {
+  if (screen_ == nullptr) return false;
+  pixels.resize(static_cast<std::size_t>(kScreenWidth) * kScreenHeight);
+  return download(screen_, kScreenWidth, kScreenHeight, nullptr, kScreenBytes, pixels.data());
 }
 
 bool Hardware3D::read_screen(int which, std::vector<std::uint32_t>& pixels) {
@@ -591,10 +607,19 @@ bool Hardware3D::download(SDL_GPUTexture* texture, int width, int height, SDL_GP
   return done;
 }
 
-bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
+bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SDL_GPUTexture* source,
                      SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
-                     const ComposeUniforms& given_uniforms) {
-  if (screen.size() != std::size_t{kScreenWidth} * kScreenHeight) return false;
+                     const ComposeUniforms& given_uniforms, bool marks) {
+  // The 2D picture: drawn here from its lines, or the processor's.
+  const nds::Frame2D* lines = picture.video != nullptr ? picture.lines : nullptr;
+  if (lines != nullptr) {
+    const nds::Video2D& video = *picture.video;
+    if (video.memory.size() != nds::VideoMemory::kAllSize || video.versions.size() != nds::VideoMemory::kAllPages ||
+        video.layout.size() != nds::VideoMemory::kLayoutEntries || lines->palettes.empty() || lines->sprites.empty())
+      return false;
+  } else if (picture.pixels == nullptr || picture.pixels->size() != std::size_t{kScreenWidth} * kScreenHeight) {
+    return false;
+  }
   // The frame log's times. In sync mode the GPU is idle before the passes,
   // and each pass is handed over and waited for on its own.
   frame_log::Scope frame_log_scope(frame_log::kUpload);
@@ -656,7 +681,38 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   const std::uint32_t polygon_bytes =
       rasterize ? static_cast<std::uint32_t>(raster.polygons.size() * sizeof(Scene::Raster::Polygon)) : 0;
   const std::uint32_t bank_bytes = bank != nullptr ? kBankBytes : 0;
-  std::uint32_t bytes = kScreenBytes + aligned(vertex_bytes) + bank_bytes + aligned(corner_bytes) + aligned(polygon_bytes);
+  // For the 2D picture: the pages of video memory that changed since they
+  // went up, where the engines' pages are, the lines, and the copies of
+  // palette and sprite attribute memory.
+  const std::uint32_t screen_bytes = lines != nullptr ? 0 : kScreenBytes;
+  std::vector<unsigned> video_pages;
+  std::uint32_t layout_bytes = 0, lines_bytes = 0, palette_bytes = 0, sprite_bytes = 0, changes_bytes = 0;
+  if (lines != nullptr) {
+    const nds::Video2D& video = *picture.video;
+    const bool all = video_ == nullptr || video_versions_.size() != video.versions.size();
+    if (!ensure_storage(video_, video_size_, nds::VideoMemory::kAllSize, true)) return false;
+    if (all) video_versions_.assign(video.versions.size(), 0);
+    for (unsigned page = 0; page < video.versions.size(); ++page)
+      if (all || video_versions_[page] != video.versions[page]) video_pages.push_back(page);
+    layout_bytes = static_cast<std::uint32_t>(video.layout.size() * 4);
+    lines_bytes = static_cast<std::uint32_t>(lines->lines.size() * 4);
+    palette_bytes = static_cast<std::uint32_t>(lines->palettes.size());
+    sprite_bytes = static_cast<std::uint32_t>(lines->sprites.size());
+    changes_bytes = static_cast<std::uint32_t>(video.changes.size() * 4 + video.changed.size());
+    if (!ensure_storage(layout_, layout_size_, layout_bytes, true) ||
+        !ensure_storage(lines_, lines_size_, lines_bytes, true) ||
+        !ensure_storage(palettes_, palettes_size_, palette_bytes, true) ||
+        !ensure_storage(sprite_copies_, sprite_copies_size_, sprite_bytes, true) ||
+        !ensure_storage(changes_, changes_size_, changes_bytes, true)) {
+      log::warning("3d", std::string("cannot make the buffers for a 2D picture: ") + SDL_GetError());
+      return false;
+    }
+  }
+  const std::uint32_t video_bytes = static_cast<std::uint32_t>(video_pages.size()) * nds::VideoMemory::kPageSize;
+  const std::uint32_t picture_bytes = video_bytes + aligned(layout_bytes) + aligned(lines_bytes) +
+                                      aligned(palette_bytes) + aligned(sprite_bytes) + aligned(changes_bytes);
+  std::uint32_t bytes = screen_bytes + picture_bytes + aligned(vertex_bytes) + bank_bytes + aligned(corner_bytes) +
+                        aligned(polygon_bytes);
   for (std::uint32_t i : pending_)
     bytes += aligned(static_cast<std::uint32_t>(scene.textures[i].width * scene.textures[i].height * 4));
   if (!ensure_transfer(bytes) || (vertex_bytes != 0 && !ensure_vertex_buffer(vertex_bytes)) ||
@@ -667,7 +723,8 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   }
   {
     frame_log::Counts& c = frame_log::state().counts;
-    c.screen_bytes += kScreenBytes;
+    c.screen_bytes += screen_bytes + layout_bytes + lines_bytes + palette_bytes + sprite_bytes;
+    c.video_bytes += video_bytes + changes_bytes;
     c.vertex_bytes += vertex_bytes;
     c.bank_bytes += bank_bytes;
     c.raster_bytes += std::uint64_t{corner_bytes} + polygon_bytes;
@@ -677,15 +734,41 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   auto* mapped = static_cast<std::uint8_t*>(SDL_MapGPUTransferBuffer(device_, transfer_, true));
   if (mapped == nullptr) return false;
   // The screen: colours, with the marks (bits 24 to 31) as the alpha.
-  for (std::size_t i = 0; i < screen.size(); ++i) {
-    const std::uint32_t p = screen[i];
-    const auto eight = [](std::uint32_t six) { return static_cast<std::uint8_t>((six & 0x3F) << 2 | (six & 0x3F) >> 4); };
-    mapped[4 * i + 0] = eight(p);
-    mapped[4 * i + 1] = eight(p >> 6);
-    mapped[4 * i + 2] = eight(p >> 12);
-    mapped[4 * i + 3] = static_cast<std::uint8_t>(p >> 24);
+  if (lines == nullptr) {
+    const std::vector<std::uint32_t>& screen = *picture.pixels;
+    for (std::size_t i = 0; i < screen.size(); ++i) {
+      const std::uint32_t p = screen[i];
+      const auto eight = [](std::uint32_t six) { return static_cast<std::uint8_t>((six & 0x3F) << 2 | (six & 0x3F) >> 4); };
+      mapped[4 * i + 0] = eight(p);
+      mapped[4 * i + 1] = eight(p >> 6);
+      mapped[4 * i + 2] = eight(p >> 12);
+      mapped[4 * i + 3] = marks ? static_cast<std::uint8_t>(p >> 24) : 0;
+    }
   }
-  std::uint32_t at = kScreenBytes;
+  std::uint32_t at = screen_bytes;
+  // Or what the 2D picture is drawn from.
+  const std::uint32_t picture_at = at;
+  if (lines != nullptr) {
+    const nds::Video2D& video = *picture.video;
+    for (unsigned page : video_pages) {
+      std::memcpy(mapped + at, video.memory.data() + std::size_t{page} * nds::VideoMemory::kPageSize,
+                  nds::VideoMemory::kPageSize);
+      at += nds::VideoMemory::kPageSize;
+    }
+    std::memcpy(mapped + at, video.layout.data(), layout_bytes);
+    at += aligned(layout_bytes);
+    std::memcpy(mapped + at, lines->lines.data(), lines_bytes);
+    at += aligned(lines_bytes);
+    std::memcpy(mapped + at, lines->palettes.data(), palette_bytes);
+    at += aligned(palette_bytes);
+    std::memcpy(mapped + at, lines->sprites.data(), sprite_bytes);
+    at += aligned(sprite_bytes);
+    if (!video.changes.empty()) {
+      std::memcpy(mapped + at, video.changes.data(), video.changes.size() * 4);
+      std::memcpy(mapped + at + video.changes.size() * 4, video.changed.data(), video.changed.size());
+    }
+    at += aligned(changes_bytes);
+  }
   const std::uint32_t bank_at = at;
   if (bank != nullptr) {
     for (std::size_t i = 0; i < 0x10000; ++i) {
@@ -764,7 +847,31 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   to.w = kScreenWidth;
   to.h = kScreenHeight;
   to.d = 1;
-  SDL_UploadToGPUTexture(copy, &from, &to, true);
+  if (lines == nullptr) {
+    SDL_UploadToGPUTexture(copy, &from, &to, true);
+  } else {
+    std::uint32_t from_at = picture_at;
+    const auto upload = [&](SDL_GPUBuffer* buffer, std::uint32_t offset, std::uint32_t size, bool cycle) {
+      const SDL_GPUTransferBufferLocation location{transfer_, from_at};
+      const SDL_GPUBufferRegion region{buffer, offset, size};
+      SDL_UploadToGPUBuffer(copy, &location, &region, cycle);
+    };
+    const nds::Video2D& video = *picture.video;
+    for (unsigned page : video_pages) {
+      upload(video_, page * nds::VideoMemory::kPageSize, nds::VideoMemory::kPageSize, false);
+      video_versions_[page] = video.versions[page];
+      from_at += nds::VideoMemory::kPageSize;
+    }
+    upload(layout_, 0, layout_bytes, true);
+    from_at += aligned(layout_bytes);
+    upload(lines_, 0, lines_bytes, true);
+    from_at += aligned(lines_bytes);
+    upload(palettes_, 0, palette_bytes, true);
+    from_at += aligned(palette_bytes);
+    upload(sprite_copies_, 0, sprite_bytes, true);
+    from_at += aligned(sprite_bytes);
+    if (changes_bytes != 0) upload(changes_, 0, changes_bytes, true);
+  }
   if (bank != nullptr) {
     from.offset = bank_at;
     to.texture = bank_;
@@ -797,6 +904,29 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     SDL_UploadToGPUTexture(copy, &from, &to, false);
   }
   SDL_EndGPUCopyPass(copy);
+  if (lines != nullptr) {
+    // The 2D picture, drawn into screen_ as the processor would have
+    // uploaded it.
+    if (!frame_log_pass(frame_log::kDisplayGpu)) return false;
+    SDL_GPUColorTargetInfo colour{};
+    colour.texture = screen_;
+    colour.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    colour.store_op = SDL_GPU_STOREOP_STORE;
+    colour.cycle = true;
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, engine2d_pipeline_);
+    const std::array<SDL_GPUBuffer*, 6> buffers{video_, layout_, lines_, palettes_, sprite_copies_, changes_};
+    SDL_BindGPUFragmentStorageBuffers(pass, 0, buffers.data(), static_cast<Uint32>(buffers.size()));
+    const nds::Video2D& video = *picture.video;
+    const std::uint32_t changes = video.changes.empty()
+                                      ? 0
+                                      : static_cast<std::uint32_t>(video.changes.size() -
+                                                                   2 * (nds::VideoMemory::kAllSize / nds::Video2D::kBlockSize));
+    const std::uint32_t engine[4] = {lines->second_engine ? 1u : 0u, marks ? 0u : 1u, changes, 0};
+    SDL_PushGPUFragmentUniformData(commands, 0, engine, sizeof engine);
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+  }
   if (!frame_log_pass(new_scene ? frame_log::kScenePass : log_compose_column_)) return false;
 
   if (new_scene) {

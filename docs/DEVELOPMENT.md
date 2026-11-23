@@ -118,7 +118,12 @@ The log says which one is used. With Vulkan, the graphics hardware also draws
 the 3D scenes, at *3D resolution* (Settings, Graphics; `--3d-resolution`)
 times the DS's, by default the least that fills the screen as shown; *3D
 drawing* or `--3d processor` has the processor draw them as the DS does,
-256 by 192, and it does where the graphics hardware cannot. Above 1x,
+256 by 192, and it does where the graphics hardware cannot. The graphics
+hardware then draws the two 2D engines' pictures too, as the processor would,
+except in frames where a display capture needs the processor's; *2D by the
+processor* (the launcher's Debug page) or `--processor-2d` leaves them to the
+processor, and `--check-2d` has the processor draw them as well and logs the
+frames whose pictures differ. Above 1x,
 *High-resolution coordinates* (Settings, Graphics; on by default) places
 vertices between the DS's pixels, as the geometry engine computes them, so
 that slowly moving models do not jump from pixel to pixel. *Outlines*

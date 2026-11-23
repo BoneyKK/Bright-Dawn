@@ -46,6 +46,7 @@ inline constexpr std::string_view kLogsKept = "log.kept";
 // The launcher's Debug page: not in the settings book.
 inline constexpr std::string_view kFrameLog = "debug.frame_log";
 inline constexpr std::string_view kFrameLogSync = "debug.frame_log_sync";
+inline constexpr std::string_view kProcessor2D = "debug.processor_2d";
 }  // namespace key
 
 std::vector<platform::SettingDef> game_setting_definitions();

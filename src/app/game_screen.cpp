@@ -21,6 +21,9 @@ GameScreen::GameScreen(App& app, nds::Console& console, bool can_go_back)
     : app_(app), console_(console), can_go_back_(can_go_back) {}
 
 GameScreen::~GameScreen() {
+  if (app_.options.check_2d)
+    log::writef(log::Level::Info, "2d", "check: %" PRIu64 " of %" PRIu64 " 2D pictures drawn by the graphics hardware differ",
+                differed_2d_, checked_2d_);
   frame_log::set_enabled(false);
   frame_log::state().sync = false;
   console_.sound_hardware().on_output = nullptr;
@@ -138,6 +141,9 @@ void GameScreen::apply_settings(bool first) {
   hardware = hardware && hardware_.is_open() && !hardware_failed_;
   if (wanted && !hardware) console_.display().hardware_3d_failed(hardware_problem_);
   else console_.display().set_hardware_3d(hardware);
+  // The 2D pictures: by the graphics hardware too, unless asked otherwise.
+  console_.display().set_hardware_2d(hardware && !s.toggle(key::kProcessor2D));
+  console_.display().set_check_2d(app_.options.check_2d);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
   console_.polygon_renderer().set_edge_marking(ui::edge_marking(s));
@@ -269,7 +275,7 @@ void GameScreen::log_frame() {
     for (const char* n : frame_log::kColumnNames) names.emplace_back(n);
     for (const char* n : {"arm9_instructions", "interpreted_instructions", "polygons", "vertices", "gpu_vertices", "scene_draws",
                           "scene_textures", "textures_decoded", "decoded_bytes", "textures_uploaded", "texture_bytes",
-                          "screen_bytes", "vertex_bytes", "bank_bytes", "raster_bytes", "gpu_captures", "pictures",
+                          "screen_bytes", "video_bytes", "vertex_bytes", "bank_bytes", "raster_bytes", "gpu_captures", "pictures",
                           "timer_switches", "shown", "gpu_3d", "3d_top", "3d_bottom", "capture_made", "capture_shown",
                           "raster_ran", "edge_marking", "anti_aliasing", "fog", "scale", "main_on_top"})
       names.emplace_back(n);
@@ -322,7 +328,7 @@ void GameScreen::log_frame() {
   const frame_log::Counts& c = s.counts;
   for (std::uint64_t n : {all - std::min(all, by_interpreter), by_interpreter, c.polygons, c.vertices, c.gpu_vertices, c.scene_draws,
                           c.scene_textures, c.textures_decoded, c.decoded_bytes, c.textures_uploaded, c.texture_bytes,
-                          c.screen_bytes, c.vertex_bytes, c.bank_bytes, c.raster_bytes, c.gpu_captures, c.pictures,
+                          c.screen_bytes, c.video_bytes, c.vertex_bytes, c.bank_bytes, c.raster_bytes, c.gpu_captures, c.pictures,
                           s.switches})
     v.push_back(static_cast<double>(n));
   nds::DisplayEngine& main = console_.display().main_engine();
@@ -509,19 +515,33 @@ void GameScreen::upload_screens() {
   // Each screen with what the graphics hardware puts in where it is marked
   // (the frame's scene, or a capture it made), at the resolution for the
   // screens as they were last laid out.
+  // A screen whose 2D picture the processor did not draw is drawn by the
+  // graphics hardware from its lines (nds/frame_2d.h), with nothing put in
+  // where nothing is.
   for (int i = 0; i < 2; ++i) {
     shown_3d_[static_cast<std::size_t>(i)] = nullptr;
     const nds::Display::ScreenFill& fill = display.frame_fill(i);
+    const nds::Frame2D& lines = display.screen_2d(i);
     const gfx::Rect& place = i == 0 ? screens_.top : screens_.bottom;
-    if (fill.fill == nds::Display::Fill::kNone || !hardware_.is_open() || hardware_failed_ || place.h <= 0) continue;
+    if ((fill.fill == nds::Display::Fill::kNone && !lines.by_hardware) || !hardware_.is_open() || hardware_failed_ ||
+        place.h <= 0)
+      continue;
+    Hardware3D::Picture picture;
+    if (lines.by_hardware) {
+      picture.lines = &lines;
+      picture.video = &display.video_2d();
+    } else {
+      picture.pixels = i == 0 ? &display.top_screen() : &display.bottom_screen();
+    }
     bool failed = false;
-    SDL_Texture* t = hardware_.draw(i, i == 0 ? display.top_screen() : display.bottom_screen(),
+    SDL_Texture* t = hardware_.draw(i, picture,
                                     fill.fill == nds::Display::Fill::kScene ? &console_.polygon_renderer().scene() : nullptr,
                                     fill.capture, fill.brightness, scale_3d(), failed);
     if (failed) {
-      give_up_hardware("draw a 3D scene");
+      give_up_hardware(lines.by_hardware ? "draw a 2D picture" : "draw a 3D scene");
       break;
     }
+    if (lines.by_hardware && app_.options.check_2d) check_2d(i, fill.fill != nds::Display::Fill::kNone);
     if (t != nullptr)
       SDL_SetTextureScaleMode(t, filter_ == gfx::ScreenFilter::Sharp ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
     shown_3d_[static_cast<std::size_t>(i)] = t;
@@ -529,6 +549,32 @@ void GameScreen::upload_screens() {
   if (shown_3d_[0] == nullptr) upload(top_, display.top_screen());
   if (shown_3d_[1] == nullptr) upload(bottom_, display.bottom_screen());
   enlarged_stale_ = {true, true};
+}
+
+void GameScreen::check_2d(int i, bool with_marks) {
+  const nds::Display& display = console_.display();
+  std::vector<std::uint32_t> pixels;
+  if (!hardware_.read_2d(pixels)) return;
+  const std::vector<std::uint32_t>& drawn = i == 0 ? display.top_screen() : display.bottom_screen();
+  const auto eight = [](std::uint32_t six) { return (six & 63) << 2 | (six & 63) >> 4; };
+  std::size_t differ = 0, first = 0;
+  for (std::size_t n = 0; n < pixels.size() && n < drawn.size(); ++n) {
+    const std::uint32_t c = drawn[n];
+    const std::uint32_t wanted = eight(c) | eight(c >> 6) << 8 | eight(c >> 12) << 16 | (with_marks ? c >> 24 << 24 : 0);
+    if (pixels[n] == wanted) continue;
+    if (differ++ == 0) first = n;
+  }
+  ++checked_2d_;
+  if (differ == 0) return;
+  if (++differed_2d_ > 20) return;
+  const std::uint32_t* w = &display.screen_2d(i).lines[first / 256 * nds::Frame2D::kWords];
+  const std::uint32_t c = drawn[first];
+  const std::uint32_t wanted = eight(c) | eight(c >> 6) << 8 | eight(c >> 12) << 16 | (with_marks ? c >> 24 << 24 : 0);
+  log::writef(log::Level::Warning, "2d",
+              "check: frame %" PRIu64 ", %s screen: %zu pixels differ; the first at (%zu, %zu): %08x, not %08x; "
+              "control %08x, backgrounds %08x %08x, blend %08x, brightness %08x",
+              frames_run_, i == 0 ? "top" : "bottom", differ, first % 256, first / 256, pixels[first], wanted, w[0],
+              w[1], w[2], w[19], w[20]);
 }
 
 void GameScreen::keep_capture() {

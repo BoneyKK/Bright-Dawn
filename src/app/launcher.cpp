@@ -970,6 +970,8 @@ void Launcher::draw_debug() {
   ImGui::Spacing();
   draw_toggle(ui::key::kFrameLogSync);
   ImGui::Spacing();
+  draw_toggle(ui::key::kProcessor2D);
+  ImGui::Spacing();
   const std::filesystem::path file = frame_log_path();
   ImGui::TextWrapped("The frame log: %s", utf8(file).c_str());
   std::error_code ec;

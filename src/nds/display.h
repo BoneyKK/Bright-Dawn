@@ -37,6 +37,7 @@
 
 #include "nds/arm9_io.h"
 #include "nds/display_engine.h"
+#include "nds/frame_2d.h"
 #include "nds/geometry_engine.h"
 #include "nds/polygon_renderer.h"
 #include "nds/video_memory.h"
@@ -117,6 +118,23 @@ class Display {
   // for, by reason.
   const std::map<std::string, std::uint64_t>& fallbacks() const { return fallbacks_; }
 
+  // The 2D pictures drawn by the graphics hardware where they can be
+  // (nds/frame_2d.h): with the 3D drawn by it too, an engine's lines are
+  // then recorded in place of drawn, unless the processor needs its
+  // picture: the main engine's in a frame with a display capture, and both
+  // while a recent capture of the graphics hardware may be on a screen.
+  void set_hardware_2d(bool on) { hardware_2d_wanted_ = on; }
+  // For checks: the processor draws the pictures the graphics hardware
+  // draws too.
+  void set_check_2d(bool on) { check_2d_ = on; }
+  // Of the frame last completed: screen 0 (top) or 1 (bottom), as the
+  // graphics hardware draws it; by_hardware is false where the processor
+  // drew it (top_screen(), bottom_screen()).
+  const Frame2D& screen_2d(int screen) const { return frames_2d_[(screen & 1) == (main_on_top_ ? 0 : 1) ? 0 : 1]; }
+  // Video memory as it was when the frame last completed began, for the
+  // engines the graphics hardware draws.
+  const Video2D& video_2d() const { return video_2d_.video_2d(); }
+
   // What the graphics hardware puts in where a screen is marked.
   enum class Fill : std::uint8_t { kNone, kScene, kCapture };
   struct ScreenFill {
@@ -160,7 +178,11 @@ class Display {
     std::vector<std::uint32_t> pixels;
   };
 
+  // Records this frame's line of each engine the graphics hardware draws.
+  void record_lines(unsigned line);
   VideoMemory& video_;
+  const std::uint8_t* const palette_;  // Both engines' palette memory, the main engine's first,
+  const std::uint8_t* const sprites_;  // and their sprite attribute memory.
   const GeometryEngine& geometry_;
   PolygonRenderer& renderer_;
   DisplayEngine main_, second_;
@@ -181,6 +203,14 @@ class Display {
   std::vector<std::uint32_t> capture_source_;
   std::uint64_t frame_capture_ = 0;
   std::array<ScreenFill, 2> frame_fills_{};
+  // The 2D pictures by the graphics hardware: wanted, and this frame's, by
+  // engine (the main engine first); the frame being drawn and the one last
+  // completed.
+  bool hardware_2d_wanted_ = false, check_2d_ = false;
+  std::array<bool, 2> by_hardware_{};
+  std::array<Frame2D, 2> recording_, frames_2d_;
+  bool main_on_top_ = false;
+  Video2DRecorder video_2d_;
   std::vector<std::uint32_t> top_, bottom_;
   Statistics statistics_;
   std::map<std::string, std::uint64_t> notes_;

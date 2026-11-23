@@ -16,6 +16,12 @@
 // The result is a texture of the renderer, drawn in place of the main
 // engine's screen.
 //
+// The 2D picture of a screen is the processor's, uploaded, or is drawn
+// here too, before step 2, from the lines the processor recorded
+// (nds/frame_2d.h) by shaders/engine2d.frag, which draws each pixel as
+// nds::DisplayEngine does. A screen with nothing put in is then step 2
+// alone, without the marks.
+//
 // A display capture (nds::Display::frame_capture()) is made the same way,
 // without the master brightness, as its recipe says (nds::CaptureRecipe):
 // the main engine's picture with the scene or the scene alone, blended with
@@ -36,6 +42,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "nds/frame_2d.h"
 #include "nds/hardware_scene.h"
 
 namespace bd::app {
@@ -59,18 +66,35 @@ class Hardware3D {
   // `scene` put in, or `scene` alone. False if it could not be made.
   bool capture(const nds::HardwareScene& scene, const nds::CaptureRecipe& recipe,
                const std::vector<std::uint32_t>& source, std::uint64_t number, int scale);
-  // A screen (`which`: 0 the top, 1 the bottom; `screen`: 256 * 192
-  // colours with marks) with `scene` put in, or the kept capture numbered
-  // `capture` if `scene` is null, `scale` times as large, and `brightness`
-  // (the master brightness register) on what is put in. The texture to
-  // show; null if it could not be made (`failed`) or that capture is not
-  // kept.
+  // A screen's 2D picture: the processor's (`pixels`: 256 * 192 colours
+  // with marks), or the lines the graphics hardware draws it from.
+  struct Picture {
+    const std::vector<std::uint32_t>* pixels = nullptr;
+    const nds::Frame2D* lines = nullptr;
+    const nds::Video2D* video = nullptr;
+  };
+  // A screen (`which`: 0 the top, 1 the bottom) with `scene` put in, or
+  // the kept capture numbered `capture` if `scene` is null, or (both null
+  // and 0) nothing put in, `scale` times as large, and `brightness` (the
+  // master brightness register) on what is put in. The texture to show;
+  // null if it could not be made (`failed`) or that capture is not kept.
+  SDL_Texture* draw(int which, const Picture& picture, const nds::HardwareScene* scene, std::uint64_t capture,
+                    std::uint16_t brightness, int scale, bool& failed);
+  // The same with the processor's picture.
   SDL_Texture* draw(int which, const std::vector<std::uint32_t>& screen, const nds::HardwareScene* scene,
-                    std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed);
+                    std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed) {
+    Picture picture;
+    picture.pixels = &screen;
+    return draw(which, picture, scene, capture, brightness, scale, failed);
+  }
   // For tests and checks: the last picture draw() made of screen `which`,
   // as red, green, blue and alpha bytes (red lowest), row after row, 256 *
   // scale by 192 * scale. False if it cannot be read.
   bool read_screen(int which, std::vector<std::uint32_t>& pixels);
+  // For tests and checks: the last 2D picture of a screen, drawn or
+  // uploaded, as red, green, blue and the mark (bits 24 to 31 of nds::
+  // DisplayEngine's colours) bytes, red lowest, 256 by 192.
+  bool read_2d(std::vector<std::uint32_t>& pixels);
   // For tests and checks: the last scene as the compute shaders drew it, as
   // the processor would (six bits each of red, green, blue and alpha, plus
   // 1 << 24 where the screen takes it), row after row at the scale drawn.
@@ -110,9 +134,11 @@ class Hardware3D {
   // where it is marked, into `target`; or makes a capture there, with
   // `second` as its second source (`bank` uploaded to bank_ first, if
   // given), as `uniforms` say.
-  bool run(const nds::HardwareScene* scene, const std::vector<std::uint32_t>& screen, SDL_GPUTexture* source,
-           SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
-           const ComposeUniforms& uniforms);
+  // Without `marks`, the 2D picture's marks are left out (nothing is put
+  // in).
+  bool run(const nds::HardwareScene* scene, const Picture& picture, SDL_GPUTexture* source, SDL_GPUTexture* second,
+           const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target, const ComposeUniforms& uniforms,
+           bool marks = true);
   // Draws the scene's polygons as the DS does (shaders/raster.comp), then
   // finishes them (shaders/finish.comp), into finished_.
   void rasterize_scene(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene);
@@ -122,8 +148,9 @@ class Hardware3D {
   bool allocate(int width, int height, Place& place);
   bool ensure_transfer(std::uint32_t bytes);
   bool ensure_vertex_buffer(std::uint32_t bytes);
-  // A storage buffer for the rasterizer of at least `bytes`.
-  bool ensure_storage(SDL_GPUBuffer*& buffer, std::uint32_t& size, std::uint32_t bytes);
+  // A storage buffer of at least `bytes`: for the rasterizer, or (`graphics`)
+  // for a fragment shader.
+  bool ensure_storage(SDL_GPUBuffer*& buffer, std::uint32_t& size, std::uint32_t bytes, bool graphics = false);
   // Copies `bytes` from `texture` (its whole, `width` by `height`) or from
   // `buffer` into `out`, waiting for the graphics hardware.
   bool download(SDL_GPUTexture* texture, int width, int height, SDL_GPUBuffer* buffer, std::uint32_t bytes, void* out);
@@ -138,6 +165,7 @@ class Hardware3D {
   SDL_GPUGraphicsPipeline* compose_pipeline_ = nullptr;
   SDL_GPUComputePipeline* raster_pipeline_ = nullptr;  // shaders/raster.comp
   SDL_GPUComputePipeline* finish_pipeline_ = nullptr;  // shaders/finish.comp
+  SDL_GPUGraphicsPipeline* engine2d_pipeline_ = nullptr;  // shaders/engine2d.frag
   SDL_GPUSampler* nearest_ = nullptr;
   SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
   SDL_GPUTexture* atlas_ = nullptr;
@@ -152,6 +180,21 @@ class Hardware3D {
   std::uint32_t corners_size_ = 0;
   SDL_GPUBuffer* polygons_ = nullptr;
   std::uint32_t polygons_size_ = 0;
+  // For the 2D pictures: video memory, where the engines' pages are in it,
+  // and an engine's lines, palette copies and sprite attribute copies.
+  SDL_GPUBuffer* video_ = nullptr;
+  std::uint32_t video_size_ = 0;
+  std::vector<std::uint32_t> video_versions_;  // nds::Video2D::versions of what video_ holds.
+  SDL_GPUBuffer* layout_ = nullptr;
+  std::uint32_t layout_size_ = 0;
+  SDL_GPUBuffer* lines_ = nullptr;
+  std::uint32_t lines_size_ = 0;
+  SDL_GPUBuffer* palettes_ = nullptr;
+  std::uint32_t palettes_size_ = 0;
+  SDL_GPUBuffer* sprite_copies_ = nullptr;
+  std::uint32_t sprite_copies_size_ = 0;
+  SDL_GPUBuffer* changes_ = nullptr;  // nds::Video2D::changes, then nds::Video2D::changed.
+  std::uint32_t changes_size_ = 0;
 
   // At the scale in use.
   int scale_ = 0;

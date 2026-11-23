@@ -1,6 +1,7 @@
 #include "nds/display.h"
 
 #include <algorithm>
+#include <cstring>
 #include <utility>
 
 #include "debug/frame_log.h"
@@ -27,6 +28,8 @@ constexpr unsigned kCaptureSizes[4][2] = {{128, 128}, {256, 64}, {256, 128}, {25
 Display::Display(VideoMemory& video, const std::uint8_t* palette, const std::uint8_t* sprites,
                  const GeometryEngine& geometry, PolygonRenderer& renderer)
     : video_(video),
+      palette_(palette),
+      sprites_(sprites),
       geometry_(geometry),
       renderer_(renderer),
       main_(DisplayEngine::kMain, video, palette, sprites),
@@ -77,6 +80,23 @@ void Display::line_begins(unsigned line) {
       }
     }
     main_.set_hardware_3d(scene_this_frame_);
+    // Which engines' pictures the graphics hardware draws. The processor
+    // draws the main engine's where a capture takes it, and both while a
+    // recent capture may be on a screen (find_capture() compares them).
+    bool recent_capture = false;
+    for (const Kept& kept : kept_)
+      if (kept.number != 0 && statistics_.frames + 1 - kept.number <= 3) recent_capture = true;
+    const bool by_hardware = hardware_2d_wanted_ && hardware_3d_ && !recent_capture && video_2d_.place(video_);
+    by_hardware_[0] = by_hardware && !capture;
+    by_hardware_[1] = by_hardware;
+    for (Frame2D& f : recording_) {
+      f.palettes.clear();
+      f.sprites.clear();
+    }
+    // Video memory as the frame begins: the game changes it at the vertical
+    // blank, and can use a bank shown as a place to work while the lines
+    // are drawn.
+    if (by_hardware) video_2d_.begin(video_, by_hardware_[0], by_hardware_[1]);
     if (scene_this_frame_) {
       if (swaps != swaps_built_) {
         swaps_built_ = swaps;
@@ -106,11 +126,12 @@ void Display::line_begins(unsigned line) {
 
 void Display::line_done(unsigned line) {
   if (line >= static_cast<unsigned>(kHeight)) return;
-  {
+  if (by_hardware_[0] || by_hardware_[1]) record_lines(line);
+  if (!by_hardware_[0] || check_2d_) {
     frame_log::Scope frame_log_scope(frame_log::kDisplayMain);
     main_.draw_line(static_cast<int>(line));
   }
-  {
+  if (!by_hardware_[1] || check_2d_) {
     frame_log::Scope frame_log_scope(frame_log::kDisplaySub);
     second_.draw_line(static_cast<int>(line));
   }
@@ -120,6 +141,29 @@ void Display::line_done(unsigned line) {
   if (capturing_) {
     frame_log::Scope frame_log_scope(frame_log::kCaptureCpu);
     capture_line(line);
+  }
+}
+
+void Display::record_lines(unsigned line) {
+  {
+    frame_log::Scope frame_log_scope(frame_log::kDisplayMain);
+    video_2d_.line(video_, line);
+  }
+  for (unsigned e = 0; e < 2; ++e) {
+    if (!by_hardware_[e]) continue;
+    frame_log::Scope frame_log_scope(e == 0 ? frame_log::kDisplayMain : frame_log::kDisplaySub);
+    Frame2D& f = recording_[e];
+    // A copy of palette and sprite attribute memory where it changed since
+    // the line before.
+    const auto copy = [](std::vector<std::uint8_t>& copies, const std::uint8_t* memory) {
+      const std::size_t n = copies.size();
+      if (n == 0 || std::memcmp(copies.data() + n - Frame2D::kCopySize, memory, Frame2D::kCopySize) != 0)
+        copies.insert(copies.end(), memory, memory + Frame2D::kCopySize);
+      return static_cast<std::uint32_t>(copies.size() / Frame2D::kCopySize - 1);
+    };
+    const std::uint32_t palette = copy(f.palettes, palette_ + e * Frame2D::kCopySize);
+    const std::uint32_t sprites = copy(f.sprites, sprites_ + e * Frame2D::kCopySize);
+    (e == 0 ? main_ : second_).record_line(static_cast<int>(line), f, palette, sprites, !check_2d_);
   }
 }
 
@@ -244,8 +288,21 @@ void Display::vertical_blank() {
   frame_log::Scope frame_log_scope(frame_log::kCaptureCpu);
   // The frame is complete: each engine's picture goes to its screen.
   const bool main_on_top = (power_control_ & kMainOnTop) != 0;
-  top_ = main_on_top ? main_.screen() : second_.screen();
-  bottom_ = main_on_top ? second_.screen() : main_.screen();
+  main_on_top_ = main_on_top;
+  // The pictures the processor drew; the lines the graphics hardware is to
+  // draw.
+  if (!by_hardware_[0] || check_2d_) (main_on_top ? top_ : bottom_) = main_.screen();
+  if (!by_hardware_[1] || check_2d_) (main_on_top ? bottom_ : top_) = second_.screen();
+  for (unsigned e = 0; e < 2; ++e) {
+    recording_[e].by_hardware = by_hardware_[e];
+    recording_[e].second_engine = e == 1;
+    std::swap(frames_2d_[e], recording_[e]);
+  }
+  if (by_hardware_[0] || by_hardware_[1]) {
+    if (const std::uint64_t left_out = video_2d_.finish(); left_out != 0)
+      notes_["video memory changed while the lines were drawn, beyond what the graphics hardware is given (blocks)"] +=
+          left_out;
+  }
   frame_capture_ = hardware_capture_ ? kept_[kept_at_].number : 0;
   if (frame_capture_ != 0) std::swap(frame_recipe_, recipe_);
   ScreenFill& main_fill = frame_fills_[main_on_top ? 0 : 1];
@@ -253,9 +310,9 @@ void Display::vertical_blank() {
   main_fill = second_fill = ScreenFill{};
   if (scene_this_frame_ && have_scene_ && ((main_.control() >> 16) & 3) == 1)
     main_fill = {Fill::kScene, 0, main_.master_brightness()};
-  else
+  else if (!by_hardware_[0])
     find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
-  find_capture(second_, main_on_top ? bottom_ : top_, second_fill);
+  if (!by_hardware_[1]) find_capture(second_, main_on_top ? bottom_ : top_, second_fill);
   ++statistics_.frames;
 }
 

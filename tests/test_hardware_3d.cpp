@@ -584,3 +584,179 @@ TEST(hardware_captures_as_the_processor_at_1x) {
   std::printf("    %d of %zu pixels differ\n", differ, wanted.size());
   CHECK(differ == 0);
 }
+
+// The 2D pictures the graphics hardware draws (nds/frame_2d.h,
+// shaders/engine2d.frag) against the processor's
+// (nds::DisplayEngine::draw_line()): pixel for pixel, with the marks for
+// the 3D scene. Video memory, palettes, sprites and registers at random,
+// the registers and the palette changed from line to line.
+namespace {
+
+// How many colours the frame has, and how many pixels are marked for the
+// scene.
+struct Held {
+  std::ptrdiff_t colours = 0, marked = 0;
+  std::size_t blocks_changed = 0;  // Of video memory, while the lines were drawn.
+};
+
+Held random_2d_frame(bool second, std::mt19937& random, std::uint32_t version) {
+  using bd::nds::DisplayEngine;
+  VideoMemory video;
+  // Every bank as plain memory, filled at random, then placed for the
+  // engine: no page with two banks.
+  for (unsigned b = 0; b < VideoMemory::kBanks; ++b)
+    video.set_control(static_cast<VideoMemory::Bank>(b), VideoMemory::kEnable);
+  for (u32 at = 0; at < VideoMemory::kAllSize; at += 4) video.write(0x06800000 + at, 4, static_cast<u32>(random()));
+  const auto place = [&](VideoMemory::Bank bank, unsigned use, unsigned offset) {
+    video.set_control(bank, static_cast<std::uint8_t>(VideoMemory::kEnable | use | offset << 3));
+  };
+  if (!second) {
+    place(VideoMemory::kA, 1, 0);
+    place(VideoMemory::kB, 1, 1);
+    place(VideoMemory::kC, 1, 2);
+    place(VideoMemory::kE, 2, 0);
+    place(VideoMemory::kF, 4, 0);  // Extended palettes of backgrounds 0 and 1,
+    if (random() % 2 != 0) place(VideoMemory::kG, 4, 1);  // of 2 and 3,
+    else place(VideoMemory::kG, 5, 0);                   // or of the sprites.
+  } else {
+    place(VideoMemory::kC, 4, 0);
+    place(VideoMemory::kD, 4, 0);
+    place(VideoMemory::kH, 2, 0);
+    place(VideoMemory::kI, 3, 0);
+  }
+  std::array<std::uint8_t, 0x400> palette{}, sprites{};
+  for (auto& b : palette) b = static_cast<std::uint8_t>(random());
+  for (auto& b : sprites) b = static_cast<std::uint8_t>(random());
+
+  // One engine draws, the other records; both are given the same writes.
+  const auto which = second ? DisplayEngine::kSub : DisplayEngine::kMain;
+  bd::nds::Arm9Io io_drawn, io_recorded;
+  DisplayEngine drawn(which, video, palette.data(), sprites.data()), recorded(which, video, palette.data(), sprites.data());
+  drawn.attach(io_drawn);
+  recorded.attach(io_recorded);
+  drawn.set_hardware_3d(true);
+  recorded.set_hardware_3d(true);
+  const u32 base = DisplayEngine::kBases[which];
+  const auto reg = [&](u32 offset, unsigned size, u32 value) {
+    io_drawn.write(base + offset, size, value);
+    io_recorded.write(base + offset, size, value);
+  };
+  const auto control = [&] {
+    u32 c = static_cast<u32>(random());
+    if (random() % 4 != 0) c = (c & ~(3u << 16)) | 1u << 16;  // Mostly the picture.
+    reg(DisplayEngine::kControl, 4, c);
+  };
+  const auto point = [&] { return static_cast<u32>(static_cast<int>(random() % 0x40000) - 0x20000); };
+  const auto some_registers = [&](bool all) {
+    const auto maybe = [&] { return all || random() % 6 == 0; };
+    if (maybe()) control();
+    for (u32 n = 0; n < 4; ++n) {
+      if (maybe()) reg(DisplayEngine::kBackgroundControl + 2 * n, 2, random());
+      if (maybe()) reg(DisplayEngine::kScroll + 4 * n, 4, random());
+    }
+    for (u32 n = 0; n < 2; ++n) {
+      const u32 at = DisplayEngine::kMatrix + 0x10 * n;
+      if (maybe()) reg(at, 4, random());
+      if (maybe()) reg(at + 4, 4, random());
+      if (maybe()) reg(at + 8, 4, point());
+      if (maybe()) reg(at + 12, 4, point());
+    }
+    if (maybe()) reg(DisplayEngine::kWindowAcross, 4, random());
+    if (maybe()) reg(DisplayEngine::kWindowAcross + 4, 4, random() & 0xBFBFBFBF);
+    if (maybe()) reg(DisplayEngine::kWindowInside, 4, random());
+    if (maybe()) reg(DisplayEngine::kMosaic, 2, random());
+    if (maybe()) reg(DisplayEngine::kBlendControl, 4, random());
+    if (maybe()) reg(DisplayEngine::kBlendBrightness, 2, random());
+    if (maybe()) reg(DisplayEngine::kMasterBrightness, 2, random() % 3 == 0 ? random() : 0);
+  };
+
+  bd::nds::Frame2D frame;
+  frame.by_hardware = true;
+  frame.second_engine = second;
+  const auto copy = [](std::vector<std::uint8_t>& copies, const std::uint8_t* memory) {
+    const std::size_t n = copies.size();
+    if (n == 0 || !std::equal(memory, memory + 0x400, copies.end() - 0x400)) copies.insert(copies.end(), memory, memory + 0x400);
+    return static_cast<u32>(copies.size() / 0x400 - 1);
+  };
+  some_registers(true);
+  drawn.start_frame();
+  recorded.start_frame();
+  // Video memory as the frame begins, and as it changes while the lines are
+  // drawn: runs of 256 bytes or fewer, where the engine reads.
+  bd::nds::Video2DRecorder recorder;
+  REQUIRE(recorder.place(video));
+  recorder.begin(video, !second, second);
+  const u32 shown_memory = second ? 0x06200000 : 0x06000000;
+  for (int line = 0; line < kHeight; ++line) {
+    drawn.start_line(line);
+    recorded.start_line(line);
+    if (line != 0 && random() % 8 == 0) some_registers(false);
+    if (random() % 16 == 0) palette[random() % 0x400] = static_cast<std::uint8_t>(random());
+    if (random() % 4 == 0) {
+      const u32 at = shown_memory + (static_cast<u32>(random()) % 0x20000 & ~3u);
+      for (u32 n = 0, words = 1 + random() % 64; n < words; ++n) video.write(at + 4 * n, 4, static_cast<u32>(random()));
+    }
+    recorder.line(video, static_cast<unsigned>(line));
+    drawn.draw_line(line);
+    const u32 p = copy(frame.palettes, palette.data()), s = copy(frame.sprites, sprites.data());
+    recorded.record_line(line, frame, p, s);
+  }
+
+  REQUIRE(recorder.finish() == 0);
+  // A new number for every page: the memory is new.
+  bd::nds::Video2D video_2d = recorder.video_2d();
+  video_2d.versions.assign(VideoMemory::kAllPages, version);
+
+  // Drawn with an empty scene to put in, so that the marks stay.
+  Hardware3D& h = hardware();
+  Frame empty;
+  static std::uint64_t last_serial = 0;
+  const bd::nds::HardwareScene* scene = nullptr;
+  do scene = &empty.r.build_scene(empty.frame, empty.video);
+  while (scene->serial <= last_serial);
+  last_serial = scene->serial;
+  Hardware3D::Picture picture;
+  picture.lines = &frame;
+  picture.video = &video_2d;
+  bool failed = false;
+  REQUIRE(h.draw(0, picture, scene, 0, 0, 1, failed) != nullptr);
+  std::vector<u32> pixels;
+  REQUIRE(h.read_2d(pixels));
+  int differ = 0;
+  const auto eight = [](u32 six) { return (six & 63) << 2 | (six & 63) >> 4; };
+  for (std::size_t i = 0; i < pixels.size(); ++i) {
+    const u32 c = drawn.screen()[i];
+    const u32 wanted = eight(c) | eight(c >> 6) << 8 | eight(c >> 12) << 16 | (c >> 24) << 24;
+    if (pixels[i] == wanted) continue;
+    if (differ++ < 5)
+      std::printf("    (%zu, %zu): %08x, not %08x (control %08x)\n", i % 256, i / 256, pixels[i], wanted,
+                  frame.lines[i / 256 * bd::nds::Frame2D::kWords]);
+  }
+  std::vector<u32> colours(drawn.screen());
+  std::sort(colours.begin(), colours.end());
+  const auto marked = std::count_if(colours.begin(), colours.end(), [](u32 c) { return c >> 24 != 0; });
+  const auto kinds = std::unique(colours.begin(), colours.end()) - colours.begin();
+  const std::size_t blocks_changed = video_2d.changed.size() / bd::nds::Video2D::kBlockSize;
+  std::printf("    %s engine: %d of %zu pixels differ (%td colours, %td pixels marked, %zu palettes, %zu blocks changed)\n",
+              second ? "second" : "main", differ, pixels.size(), kinds, marked, frame.palettes.size() / 0x400,
+              blocks_changed);
+  CHECK(differ == 0);
+  return {kinds, marked, blocks_changed};
+}
+
+}  // namespace
+
+TEST(hardware_2d_pictures_as_the_processor_draws_them) {
+  hardware();
+  std::mt19937 random(2203);
+  // That the frames have much in them: colours, marks for the scene, and
+  // video memory changed while the lines were drawn.
+  int full = 0, with_marks = 0, with_changes = 0;
+  for (std::uint32_t n = 1; n <= 36; ++n) {
+    const Held held = random_2d_frame(n % 3 == 0, random, n);
+    full += held.colours > 100 ? 1 : 0;
+    with_marks += held.marked != 0 ? 1 : 0;
+    with_changes += held.blocks_changed >= 20 ? 1 : 0;
+  }
+  CHECK(full >= 30 && with_marks >= 3 && with_changes >= 30);
+}

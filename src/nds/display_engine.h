@@ -45,6 +45,7 @@
 #include <vector>
 
 #include "nds/arm9_io.h"
+#include "nds/frame_2d.h"
 #include "nds/video_memory.h"
 
 namespace bd::nds {
@@ -110,6 +111,16 @@ class DisplayEngine {
   void start_line(int line);
   // Draws a visible line (0 to 191).
   void draw_line(int line);
+  // In place of draw_line(), for the graphics hardware (nds/frame_2d.h):
+  // records into `frame` what the line would be drawn with, naming the
+  // copies of palette and sprite attribute memory it reads, and moves on
+  // as draw_line() does. screen() and the rest are then not drawn. Before
+  // draw_line() for the same line (for checks), with `move_on` false.
+  void record_line(int line, Frame2D& frame, std::uint32_t palette_copy, std::uint32_t sprite_copy,
+                   bool move_on = true);
+  // Which backgrounds go through a matrix on a line drawn with `control`:
+  // bit 0 for background 2, bit 1 for background 3.
+  static unsigned matrix_backgrounds(std::uint32_t control);
 
   // The screen as shown: kWidth * kHeight colours of six bits a part.
   const std::vector<std::uint32_t>& screen() const { return screen_; }

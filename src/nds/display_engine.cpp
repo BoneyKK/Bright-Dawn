@@ -245,6 +245,53 @@ void DisplayEngine::draw_line(int line) {
     for (std::size_t x = 0; x < static_cast<std::size_t>(kWidth); ++x) shown_line[x] |= marks_[x];
 }
 
+unsigned DisplayEngine::matrix_backgrounds(std::uint32_t control) {
+  const unsigned mode = control & 7;
+  const auto shown = [&](unsigned background) { return (control & (kShowBackground0 << background)) != 0; };
+  unsigned matrix = 0;
+  if (shown(2) && (mode == 2 || mode == 4 || mode == 5 || mode == 6)) matrix |= 1;
+  if (shown(3) && mode >= 1 && mode <= 5) matrix |= 2;
+  return matrix;
+}
+
+void DisplayEngine::record_line(int line, Frame2D& frame, std::uint32_t palette_copy, std::uint32_t sprite_copy,
+                                bool move_on) {
+  u32* w = &frame.lines[static_cast<std::size_t>(line) * Frame2D::kWords];
+  const auto pair = [](u32 low, u32 high) { return (low & 0xFFFF) | (high & 0xFFFF) << 16; };
+  w[0] = control_;
+  w[1] = pair(background_control_[0], background_control_[1]);
+  w[2] = pair(background_control_[2], background_control_[3]);
+  for (unsigned n = 0; n < 4; ++n) w[3 + n] = pair(scroll_x_[n], scroll_y_[n]);
+  for (unsigned n = 0; n < 2; ++n) {
+    w[7 + 2 * n] = pair(static_cast<std::uint16_t>(pa_[n]), static_cast<std::uint16_t>(pb_[n]));
+    w[8 + 2 * n] = pair(static_cast<std::uint16_t>(pc_[n]), static_cast<std::uint16_t>(pd_[n]));
+    w[11 + 2 * n] = static_cast<u32>(line_x_[n]);
+    w[12 + 2 * n] = static_cast<u32>(line_y_[n]);
+  }
+  w[15] = u32{window_x1_[0]} | u32{window_x2_[0]} << 8 | u32{window_x1_[1]} << 16 | u32{window_x2_[1]} << 24;
+  w[16] = (window_on_line_[0] ? 1u : 0u) | (window_on_line_[1] ? 2u : 0u) | (window_flipped_[0] ? 4u : 0u) |
+          (window_flipped_[1] ? 8u : 0u) | (hardware_3d_ ? 1u << 16 : 0u);
+  w[17] = pair(window_inside_, window_outside_);
+  w[18] = mosaic_;
+  w[19] = pair(blend_control_, blend_alpha_);
+  w[20] = pair(blend_brightness_, master_brightness_);
+  w[21] = palette_copy;
+  w[22] = sprite_copy;
+  w[23] = 0;
+  if (!move_on) return;
+  // As draw_line(): the matrix backgrounds drawn move on a line, and what
+  // is not carried out is noted.
+  const unsigned matrix = matrix_backgrounds(control_);
+  for (unsigned n = 0; n < 2; ++n) {
+    if ((matrix & (1u << n)) == 0) continue;
+    line_x_[n] += pb_[n];
+    line_y_[n] += pd_[n];
+  }
+  if ((control_ & 7) == 7) ++notes_["background mode 7, which is none"];
+  if (((control_ >> kDisplayModeShift) & 3) == 3) ++notes_["the display fed from main memory"];
+  marked_ = false;
+}
+
 void DisplayEngine::draw_sprites(int line, bool window_pass) {
   const u32 memory = which_ == kMain ? 0x06400000 : 0x06600000;
   const bool second = which_ == kSub;

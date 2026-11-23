@@ -123,6 +123,8 @@ constexpr const char* kUsage =
     "                        next to the program\n"
     "  --frame-log-sync      the same, waiting for the graphics hardware after each\n"
     "                        pass, so that the log has each pass's real time\n"
+    "  --processor-2d        draw the 2D pictures with the processor, not the\n"
+    "                        graphics hardware (to compare the two)\n"
     "\n"
     "Other options:\n"
     "  --no-settings         use the default settings, and do not keep any changes\n"
@@ -137,6 +139,8 @@ constexpr const char* kUsage =
     "  --capture-every N     with --capture, also write every Nth frame, to FILE-N.bmp\n"
     "  --dump-3d FILE        with --frames, write the 3D scene of the last frame to FILE,\n"
     "                        to find faults in its drawing (it holds the game's textures)\n"
+    "  --check-2d            draw the 2D pictures with the processor too, and log where\n"
+    "                        the graphics hardware's differ\n"
     "  --record-sound FILE   keep the game's sound in FILE (WAV, 16-bit stereo)\n"
     "  --interpret-only      do not use the translated code (bright-dawn-game only)\n"
     "  --video-drivers       list the window systems this build can use, and stop\n"
@@ -692,6 +696,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--frame-log-sync") {
       cl.overrides.emplace_back(ui::key::kFrameLog, "on");
       cl.overrides.emplace_back(ui::key::kFrameLogSync, "on");
+    } else if (arg == "--processor-2d") {
+      cl.overrides.emplace_back(ui::key::kProcessor2D, "on");
     } else if (arg == "--mute") {
       cl.overrides.emplace_back(ui::key::kSound, "off");
     } else if (arg == "--language" && has_value) {
@@ -732,6 +738,8 @@ int main(int argc, char** argv) {
       options.record_sound = argv[++i];
     } else if (arg == "--capture" && has_value) {
       options.capture = argv[++i];
+    } else if (arg == "--check-2d") {
+      options.check_2d = true;
     } else if (arg == "--dump-3d" && has_value) {
       options.dump_3d = app::from_utf8(argv[++i]);
     } else if (arg == "--side-by-side") {

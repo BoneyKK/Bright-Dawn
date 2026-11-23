@@ -35,13 +35,14 @@ enum Column : int {
   kGeometry,       // The geometry engine's commands, and the DMA copies that feed it.
   kBuildScene,     // PolygonRenderer::build_scene: the scene for the graphics hardware.
   kProcessor3D,    // PolygonRenderer::draw: the 3D picture drawn by the processor.
-  kDisplayMain,    // 2D display engine A (main): its lines.
-  kDisplaySub,     // 2D display engine B (sub): its lines.
+  kDisplayMain,    // 2D display engine A (main): its lines, or what they are drawn with (for the GPU).
+  kDisplaySub,     // 2D display engine B (sub): the same.
   kCaptureCpu,     // Display captures by the processor; finding captures on the screens.
   kHost,           // Window events, input, sound out, the menu, the save.
   kUpload,         // Upload to the GPU: the transfer buffer filled, the copy pass.
   kScenePass,      // The 3D scene pass (the triangles).
   kRaster,         // The rasterizer at 1x (compute), when it runs.
+  kDisplayGpu,     // The 2D pictures drawn by the GPU (shaders/engine2d.frag).
   kComposeTop,     // Compose of the top screen.
   kComposeBottom,  // Compose of the bottom screen.
   kCaptureGpu,     // Display captures by the GPU (their compose).
@@ -54,11 +55,11 @@ enum Column : int {
 };
 
 inline constexpr const char* kColumnNames[kColumns] = {
-    "arm9_us",         "interpreter_us",    "arm7_us",          "dma_us",           "other_hw_us",
-    "geometry_us",     "build_scene_us",    "processor_3d_us",  "2d_main_us",       "2d_sub_us",
-    "capture_cpu_us",  "host_us",           "upload_us",        "scene_pass_us",    "raster_1x_us",
-    "compose_top_us",  "compose_bottom_us", "capture_gpu_us",   "filter_us",        "vsync_wait_us",
-    "present_us",      "present_gpu_us",    "pace_wait_us"};
+    "arm9_us",        "interpreter_us", "arm7_us",           "dma_us",         "other_hw_us",
+    "geometry_us",    "build_scene_us", "processor_3d_us",   "2d_main_us",     "2d_sub_us",
+    "capture_cpu_us", "host_us",        "upload_us",         "scene_pass_us",  "raster_1x_us",
+    "2d_gpu_us",      "compose_top_us", "compose_bottom_us", "capture_gpu_us", "filter_us",
+    "vsync_wait_us",  "present_us",     "present_gpu_us",    "pace_wait_us"};
 
 // What else a frame's row has: counts and flags.
 struct Counts {
@@ -67,6 +68,7 @@ struct Counts {
   std::uint64_t scene_textures = 0, textures_decoded = 0, decoded_bytes = 0;
   std::uint64_t textures_uploaded = 0, texture_bytes = 0;  // New textures sent to the GPU's atlas.
   std::uint64_t screen_bytes = 0, vertex_bytes = 0, bank_bytes = 0, raster_bytes = 0;
+  std::uint64_t video_bytes = 0;  // Video memory sent for the 2D pictures the GPU draws.
   std::uint64_t gpu_captures = 0, pictures = 0;
   // Of the scene last made: they stay from frame to frame.
   bool edge_marking = false, anti_aliasing = false, fog = false;

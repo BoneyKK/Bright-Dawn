@@ -68,6 +68,12 @@ class VideoMemory {
                                                              0x04000246, 0x04000248, 0x04000249};
 
   static constexpr std::uint32_t kPageSize = 0x4000;
+  // Where each bank is when all nine are laid one after another, 656 KiB in
+  // all: a whole number of pages each.
+  static constexpr std::uint32_t kBankStarts[kBanks] = {0x00000, 0x20000, 0x40000, 0x60000, 0x80000,
+                                                        0x90000, 0x94000, 0x98000, 0xA0000};
+  static constexpr std::uint32_t kAllSize = 0xA4000;
+  static constexpr unsigned kAllPages = kAllSize / kPageSize;
 
   struct Statistics {
     std::uint64_t reads_with_no_bank = 0;
@@ -115,6 +121,21 @@ class VideoMemory {
   // A bank's own contents, wherever it is placed.
   const std::vector<std::uint8_t>& contents(Bank bank) const { return banks_[bank]; }
 
+  // For each page of all the banks laid one after another (kBankStarts): a
+  // count of the writes to it, so that a copy can tell what changed.
+  const std::array<std::uint32_t, kAllPages>& page_writes() const { return page_writes_; }
+
+  // What the 2D display hardware reads, for the graphics hardware
+  // (nds/frame_2d.h): for each page of 16 KiB of the backgrounds of the main
+  // screen (32), of the second screen (8), of the sprites of the main screen
+  // (16), of the second screen (8) and of plain memory (64), then for each
+  // extended palette slot of 8 KiB (five of the main screen, five of the
+  // second): where it is in all the banks laid one after another, in steps
+  // of 8 KiB, plus 1; 0 where no bank is. False where a page has two or
+  // more banks at once (they read ORed together), which this cannot say.
+  static constexpr unsigned kLayoutEntries = 32 + 8 + 16 + 8 + 64 + 2 * kExtendedPaletteSlots;
+  bool layout_2d(std::uint32_t* layout) const;
+
   const Statistics& statistics() const { return statistics_; }
 
  private:
@@ -122,8 +143,12 @@ class VideoMemory {
   // banks (all but H and I can be backgrounds of the main screen at once).
   struct Page {
     std::array<std::uint8_t*, 7> memory{};
+    std::array<std::uint32_t, 7> all_at{};  // Where each is in all the banks laid one after another.
     unsigned count = 0;
-    void add(std::uint8_t* at) { memory[count++] = at; }
+    void add(std::uint8_t* at, std::uint32_t at_in_all) {
+      all_at[count] = at_in_all;
+      memory[count++] = at;
+    }
   };
   static constexpr unsigned kMainBackgroundPages = 32, kSubBackgroundPages = 8, kMainSpritePages = 16,
                             kSubSpritePages = 8, kPlainPages = 64, kTexturePages = 32, kTexturePalettePages = 6;
@@ -139,6 +164,7 @@ class VideoMemory {
   const Page& page_at(std::uint32_t address) const { return const_cast<VideoMemory*>(this)->page_at(address); }
 
   std::array<std::vector<std::uint8_t>, kBanks> banks_;
+  std::array<std::uint32_t, kAllPages> page_writes_{};
   std::array<std::uint8_t, kBanks> control_{};
   std::array<Page, kMainBackgroundPages> main_backgrounds_{};
   std::array<Page, kSubBackgroundPages> sub_backgrounds_{};
