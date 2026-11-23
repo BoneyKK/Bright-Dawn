@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "debug/frame_log.h"
+
 namespace bd::nds {
 
 namespace {
@@ -323,6 +325,8 @@ void GeometryEngine::vertical_blank() {
 }
 
 void GeometryEngine::run() {
+  if (stopped_ || queue_.empty()) return;
+  frame_log::Scope frame_log_scope(frame_log::kGeometry);
   while (!stopped_ && !queue_.empty()) {
     const unsigned command = queue_.front().command;
     const unsigned entries = std::max(1u, parameters(command));
@@ -759,6 +763,7 @@ void GeometryEngine::place_vertices() {
 }
 
 void GeometryEngine::hand_over_frame() {
+  frame_log::Scope frame_log_scope(frame_log::kGeometry);
   forget_loose_vertices();
   place_vertices();
   placed_ = 0;

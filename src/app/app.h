@@ -69,6 +69,10 @@ void complain(SDL_Window* window, const std::string& message);
 // Opens a folder in the system's file manager, making it first if need be.
 void open_folder(const std::filesystem::path& folder);
 
+// Where the frame log is written (launcher, Debug page): next to the
+// program.
+std::filesystem::path frame_log_path();
+
 // "Report a problem": opens the project's bug form in the browser, with what
 // is known of this run filled in, and the folder of the logs, so that the
 // log can be attached.

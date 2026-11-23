@@ -28,6 +28,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "app/app.h"
 #include "app/build_tools.h"
@@ -55,7 +56,7 @@ class Launcher {
   LauncherChoice run();
 
  private:
-  enum class Page { Play, Build, Settings, Log };
+  enum class Page { Play, Build, Settings, Log, Debug };
   struct RomCheck {
     bool ok = false;
     std::string text;  // What it is, or what is wrong with it.
@@ -113,6 +114,10 @@ class Launcher {
   // Everything the build printed, in what is left of the page.
   void draw_build_output();
   void draw_log();
+  // Tools to find out what is slow or wrong: the frame log.
+  void draw_debug();
+  // A setting that is on or off, in either look.
+  void draw_toggle(std::string_view key);
 
   // Pieces of the pages, in either look.
   void heading(const char* text) const;

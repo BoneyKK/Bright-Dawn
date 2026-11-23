@@ -93,6 +93,24 @@ version, system, renderer, game code and built game or interpreter filled in
 (`src/ui/problem_report.h`), and the logs folder. `--log-level debug` (or Settings,
 Log) records more.
 
+To find out what makes a frame slow, switch on the *Frame log* on the
+launcher's Debug page (or start with `--frame-log`). From the next start of
+the game, `bright-dawn-frames.csv` next to the program has a line for each
+frame: the time of each part in microseconds (the game's code, the geometry
+engine, making the scene, the 2D engines, each upload and pass for the
+graphics hardware, the screen filter, present and the waits), which add up to
+the frame's time; the polygons, textures and bytes sent; and what the frame
+had (3D on which screen, a display capture, outlines, edge smoothing, fog,
+the 3D resolution). Its first line names the graphics hardware and its
+driver, the window, the 3D resolution, the screen filter and the mode; its
+end, the average and the 95th percentile of each column, and the costliest
+one. In the normal mode the times are the processor's own: the graphics
+hardware's work is waited for where the program waits for it (mostly at
+present). *Sync mode* (or `--frame-log-sync`) waits for the graphics hardware
+after each of its passes, so that each has its real time, and the game runs
+slower. The Debug page opens the folder the file is in
+(`src/debug/frame_log.h`).
+
 Bright Dawn draws through Vulkan where the computer has it, and through the
 system's own renderer (Direct3D on Windows, OpenGL elsewhere) where it does
 not: *Drawing* (Settings, Display) or `--renderer system` chooses the latter.
@@ -302,6 +320,7 @@ src/nds        The console around the processor: memory, registers, interrupts, 
 src/gfx        Where the screens go in a window; their pixels for the window system
 src/input      Bindings of keys and controller buttons, scripted input
 src/ui         Bright Dawn's settings, described; following the game builder
+src/debug      The frame log: what each frame costs, part by part
 src/app        bright-dawn: the window (SDL 3), launcher, settings book, game screen
 tools/gamebuilder  Builds bright-dawn-game from the user's ROM
 tools/translator   Machine code to C++

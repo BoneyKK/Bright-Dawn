@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "interp/arm_core.h"
+#include "../debug/frame_log.h"
 
 namespace bd::runtime {
 namespace {
@@ -513,6 +514,7 @@ void Machine::store_from_interpreter(const bd_arm_state& state) {
 // with its address in *continue_at and the model up to date).
 bool Machine::interpret(u32 start, u32* continue_at) {
   last_entered_.store(start, std::memory_order_relaxed);
+  frame_log::Scope frame_log_scope(frame_log::kInterpreter);
   ++statistics_.interpreter_entries[start];
   // However it ends, what was interpreted counts for `start`.
   struct Counting {
@@ -650,7 +652,10 @@ bool Machine::interpret(u32 start, u32* continue_at) {
       // interpreted code is the call site, so it registers like one.
       ++statistics_.native_calls_from_interpreter;
       ds::enter(cpu_, next);
-      function(cpu_);
+      {
+        frame_log::Scope frame_log_native(frame_log::kArm9);
+        function(cpu_);
+      }
       if (ds::leave(cpu_, next)) return true;  // Control went to an outer call site.
       restart_at(next);
       continue;

@@ -39,6 +39,11 @@ void open_folder(const std::filesystem::path& folder) {
   if (!SDL_OpenURL(url.c_str())) log::warning("app", std::string("cannot open the folder: ") + SDL_GetError());
 }
 
+std::filesystem::path frame_log_path() {
+  const char* base = SDL_GetBasePath();
+  return from_utf8(base != nullptr ? base : "") / "bright-dawn-frames.csv";
+}
+
 void report_problem(const App& app) {
   const std::string url = ui::problem_report_url(app.report);
   log::info("app", "report a problem: " + url);

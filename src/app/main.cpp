@@ -36,6 +36,7 @@
 #include "app/window_icon.h"
 #include "core/log.h"
 #include "core/version.h"
+#include "debug/frame_log.h"
 #include "game_library_host.h"
 #include "gfx/screen_layout.h"
 #include "input/bindings.h"
@@ -118,6 +119,10 @@ constexpr const char* kUsage =
     "  --renderer WAY        drawing the window: vulkan (the default; the system's own\n"
     "                        where Vulkan cannot be used) or system\n"
     "  --log-level LEVEL     error, warning, info or debug\n"
+    "  --frame-log           write what each frame costs to bright-dawn-frames.csv,\n"
+    "                        next to the program\n"
+    "  --frame-log-sync      the same, waiting for the graphics hardware after each\n"
+    "                        pass, so that the log has each pass's real time\n"
     "\n"
     "Other options:\n"
     "  --no-settings         use the default settings, and do not keep any changes\n"
@@ -442,6 +447,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
     const std::filesystem::path not_native = not_native_path();
     std::uint64_t frames_to_report = kNotNativeEvery;
     console.on_frame = [&screen, &hang_watch, &keeper, &console, &not_native, &frames_to_report] {
+      bd::frame_log::Scope frame_log_scope(bd::frame_log::kHost);
       hang_watch.pause();
       if (keeper)
         if (Status status = keeper->frame(); !status) log::warning("game", status.error().message);
@@ -450,6 +456,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
         write_not_native(console, not_native);
       }
       const bool go_on = screen.frame();
+      screen.log_frame();
       hang_watch.resume();
       return go_on;
     };
@@ -680,6 +687,11 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kScreenFilter, argv[++i]);
     } else if (arg == "--renderer" && has_value) {
       cl.overrides.emplace_back(ui::key::kRenderer, argv[++i]);
+    } else if (arg == "--frame-log") {
+      cl.overrides.emplace_back(ui::key::kFrameLog, "on");
+    } else if (arg == "--frame-log-sync") {
+      cl.overrides.emplace_back(ui::key::kFrameLog, "on");
+      cl.overrides.emplace_back(ui::key::kFrameLogSync, "on");
     } else if (arg == "--mute") {
       cl.overrides.emplace_back(ui::key::kSound, "off");
     } else if (arg == "--language" && has_value) {

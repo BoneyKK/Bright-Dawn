@@ -15,12 +15,15 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "app/app.h"
 #include "app/audio_out.h"
+#include "app/build_tools.h"
+#include "debug/frame_log_file.h"
 #include "app/hardware_3d.h"
 #include "app/settings_book.h"
 #include "gfx/screen_layout.h"
@@ -49,6 +52,9 @@ class GameScreen {
   // time kept. False when the run is to end; end() says why.
   bool frame();
   GameEnd end() const { return end_; }
+  // The frame log's row for the frame just run (Console::on_frame), when
+  // the log is on (debug/frame_log.h).
+  void log_frame();
   bool captured() const { return captured_; }
 
  private:
@@ -138,6 +144,9 @@ class GameScreen {
   MenuPage menu_page_ = MenuPage::Main;
   SettingsBook book_;
   GameEnd end_ = GameEnd::Running;
+  // The frame log, when it is on (debug/frame_log.h).
+  std::unique_ptr<frame_log::File> frame_log_;
+  std::uint64_t log_executed_ = 0, log_interpreted_ = 0;
 };
 
 }  // namespace bd::app

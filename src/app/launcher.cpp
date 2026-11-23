@@ -419,7 +419,8 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
   const struct {
     Page page;
     const char* name;
-  } pages[] = {{Page::Play, "Play"}, {Page::Build, "Build the game"}, {Page::Settings, "Settings"}, {Page::Log, "Log"}};
+  } pages[] = {{Page::Play, "Play"}, {Page::Build, "Build the game"}, {Page::Settings, "Settings"}, {Page::Log, "Log"},
+               {Page::Debug, "Debug"}};
   for (const auto& p : pages) {
     if (p.page == Page::Build && app_.translated_build) continue;
     if (ImGui::Selectable(p.name, page_ == p.page)) {
@@ -435,6 +436,7 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
     case Page::Build: draw_build(); break;
     case Page::Settings: app_.settings_changed(book_.draw(app_.settings)); break;
     case Page::Log: draw_log(); break;
+    case Page::Debug: draw_debug(); break;
   }
   ImGui::EndChild();
   ImGui::End();
@@ -588,7 +590,8 @@ void Launcher::draw_pages_dressed() {
   } pages[] = {{Page::Play, "Play", "Back to the first page, to play."},
                {Page::Build, "Build", "Build the game from your ROM, so that its code runs natively."},
                {Page::Settings, "Settings", "How the game is shown and played, and how it is built."},
-               {Page::Log, "Log", "Where this run's log is, for when something goes wrong."}};
+               {Page::Log, "Log", "Where this run's log is, for when something goes wrong."},
+               {Page::Debug, "Debug", "The frame log: what each frame of the game costs."}};
   for (const auto& p : pages) {
     if (p.page == Page::Build && app_.translated_build) continue;
     if (menu::choice_button(look(), p.name, page_ == p.page, ImVec2(-1.0f, em * 1.7f))) {
@@ -613,6 +616,7 @@ void Launcher::draw_pages_dressed() {
     case Page::Build: draw_build(); break;
     case Page::Settings: break;
     case Page::Log: draw_log(); break;
+    case Page::Debug: draw_debug(); break;
   }
   end_paper();
 }
@@ -675,6 +679,7 @@ std::string Launcher::standing_hint() const {
     case Page::Build: return "The game is built from your ROM, and its code then runs natively.";
     case Page::Settings: return "Point at a setting to see what it does.";
     case Page::Log: return "Attach the log when you report a problem.";
+    case Page::Debug: return "Point at a switch to see what it does.";
   }
   return name;
 }
@@ -929,6 +934,53 @@ void Launcher::draw_log() {
   }
   explain("Open the form for a problem report on GitHub, filled in with this computer and version, and the "
           "log folder. Attach the log; never the ROM, saves or other game files.");
+}
+
+void Launcher::draw_toggle(std::string_view key) {
+  const platform::SettingDef* def = app_.settings.find(key);
+  if (def == nullptr) return;
+  ImGui::PushID(def->key.c_str());
+  bool on = app_.settings.toggle(key);
+  bool clicked = false;
+  if (look() != nullptr) {
+    ImGui::AlignTextToFramePadding();
+    menu::label(look(), def->label.c_str());
+    explain(def->help.c_str());
+    ImGui::SameLine(ImGui::GetFontSize() * 9);  // The buttons of each switch one under the other.
+    if (menu::choice_button(look(), "On", on) && !on) clicked = true;
+    explain(def->help.c_str());
+    ImGui::SameLine();
+    if (menu::choice_button(look(), "Off", !on) && on) clicked = true;
+    explain(def->help.c_str());
+  } else {
+    clicked = ImGui::Checkbox(def->label.c_str(), &on);
+    note(def->help);
+    on = !on;  // As it was before the click.
+  }
+  if (clicked) app_.set_setting(key, on ? "off" : "on");
+  ImGui::PopID();
+}
+
+void Launcher::draw_debug() {
+  heading("Debug");
+  note("The frame log writes what each frame of the game costs, part by part, a line a frame; at its end, the "
+       "average and the 95th percentile of each part. It starts with the game, the next time the game starts.");
+  ImGui::Spacing();
+  draw_toggle(ui::key::kFrameLog);
+  ImGui::Spacing();
+  draw_toggle(ui::key::kFrameLogSync);
+  ImGui::Spacing();
+  const std::filesystem::path file = frame_log_path();
+  ImGui::TextWrapped("The frame log: %s", utf8(file).c_str());
+  std::error_code ec;
+  if (!std::filesystem::exists(file, ec)) note("There is none yet.");
+  if (button("Open the frame log's folder")) open_folder(file.parent_path());
+  explain("Open the folder the frame log is in, next to the program. Send bright-dawn-frames.csv with a report "
+          "on how the game runs.");
+  if (const std::filesystem::path log_file = log::file_path(); !log_file.empty()) {
+    if (button("Open the log folder")) open_folder(log_file.parent_path());
+    explain("Open the folder the run logs are in. The newest log is this run's.");
+  }
 }
 
 }  // namespace bd::app

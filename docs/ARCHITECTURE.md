@@ -38,6 +38,7 @@ in them, not before.
 | Module | Responsibility | May depend on |
 | --- | --- | --- |
 | `core` | Errors, byte access, checksums, the log | nothing |
+| `debug` | The frame log: each moment of a frame given to one part, and the file it is written to | `core` |
 | `platform` | Files, paths, windowing, devices, the settings file, crashes noted in the log | `core` |
 | `rom` | The only code that reads the user's ROM: validation, file system, decompression | `core` |
 | `assets` | Decodes original formats into neutral descriptions: screen-sized pictures, as the menus' backgrounds are kept (built); textures, meshes, skeletons, sequences; asset identifiers; cache in the user data directory (to come) | `core`, `rom` |

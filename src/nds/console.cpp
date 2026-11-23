@@ -1,5 +1,6 @@
 #include "nds/console.h"
 
+#include "debug/frame_log.h"
 #include "nds/bios_rom.h"
 #include "rom/arm9.h"
 
@@ -194,6 +195,7 @@ RunResult Console::run(std::uint64_t instruction_limit, std::uint64_t frame_limi
 }
 
 void Console::catch_up() {
+  frame_log::Scope frame_log_scope(frame_log::kOtherHardware);
   const std::uint64_t instructions = machine_.executed();
   const std::uint64_t passed = instructions - accounted_instructions_;
   accounted_instructions_ = instructions;
@@ -214,6 +216,7 @@ void Console::set_alarm() {
 void Console::alarm() { catch_up(); }
 
 void Console::wait_for_interrupt() {
+  frame_log::Scope frame_log_scope(frame_log::kOtherHardware);
   ++sleeps_;
   catch_up();
   const Timeline::Time began = timeline_.now();
@@ -247,6 +250,7 @@ void Console::wait_for_interrupt() {
 }
 
 void Console::wait_for_geometry_room() {
+  frame_log::Scope frame_log_scope(frame_log::kOtherHardware);
   catch_up();
   const Timeline::Time began = timeline_.now();
   // Room comes when the engine goes on after a swap, at the vertical blank.

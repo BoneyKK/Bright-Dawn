@@ -7,6 +7,7 @@
 
 #include "core/log.h"
 #include "core/version.h"
+#include "debug/frame_log.h"
 #include "gfx/screen_image.h"
 #include "imgui.h"
 #include "nds/scene_dump.h"
@@ -20,6 +21,8 @@ GameScreen::GameScreen(App& app, nds::Console& console, bool can_go_back)
     : app_(app), console_(console), can_go_back_(can_go_back) {}
 
 GameScreen::~GameScreen() {
+  frame_log::set_enabled(false);
+  frame_log::state().sync = false;
   console_.sound_hardware().on_output = nullptr;
   for (SDL_Gamepad* pad : gamepads_) SDL_CloseGamepad(pad);
   if (top_ != nullptr) SDL_DestroyTexture(top_);
@@ -62,7 +65,28 @@ bool GameScreen::open(std::string& error) {
             : app_.translated_build    ? " (translated)"
                                        : " (built game)");
   SDL_SetWindowTitle(app_.window, title_.c_str());
+  // The frame log (launcher, Debug page), when it is on: each frame from
+  // here on is a row.
+  if (app_.settings.toggle(ui::key::kFrameLog)) {
+    const std::filesystem::path path = frame_log_path();
+    frame_log_ = std::make_unique<frame_log::File>(path);
+    if (frame_log_->is_open()) {
+      frame_log::state().sync = app_.settings.toggle(ui::key::kFrameLogSync);
+      frame_log::set_enabled(true);
+      log::info("frames", "the frame log is written to " + utf8(path) +
+                              (frame_log::state().sync ? " (sync mode)" : " (normal mode)"));
+    } else {
+      log::warning("frames", "the frame log cannot be written to " + utf8(path));
+      frame_log_.reset();
+    }
+  }
   apply_settings(true);
+  if (frame_log_) {
+    // From here the console runs the game's code until the first frame ends.
+    frame_log::restart(frame_log::kArm9);
+    log_executed_ = console_.machine().executed();
+    log_interpreted_ = console_.machine().statistics().interpreted_instructions;
+  }
   second_started_ = SDL_GetTicksNS();
   clock_.tick(second_started_);
   return true;
@@ -193,13 +217,33 @@ bool GameScreen::frame() {
   }
   upload_screens();
   for (bool first = true;; first = false) {
-    draw();
+    // With the frame log on, the filter passes are recorded and the wait
+    // for the swapchain is made before the picture is presented, so that
+    // each has a time of its own.
+    {
+      frame_log::Scope frame_log_scope(frame_log::kFilter);
+      draw();
+      if (frame_log::enabled()) SDL_FlushRenderer(app_.renderer);
+    }
     if (first && capture_now) capture(capture_last);
-    SDL_RenderPresent(app_.renderer);
+    if (frame_log::enabled() && app_.gpu != nullptr) {
+      frame_log::Scope frame_log_scope(frame_log::kVsyncWait);
+      SDL_WaitForGPUSwapchain(app_.gpu, app_.window);
+    }
+    {
+      frame_log::Scope frame_log_scope(frame_log::kPresent);
+      SDL_RenderPresent(app_.renderer);
+    }
+    if (frame_log::state().sync && app_.gpu != nullptr) {
+      frame_log::Scope frame_log_scope(frame_log::kPresentGpu);
+      SDL_WaitForGPUIdle(app_.gpu);
+    }
+    ++frame_log::state().counts.pictures;
     count_rates(first, true);
     if (app_.options.unthrottled) break;
     if (!vsync_) {
       const std::uint64_t wait = clock_.until_due();
+      frame_log::Scope frame_log_scope(frame_log::kPaceWait);
       if (wait != 0) SDL_DelayPrecise(wait);
     }
     clock_.tick(SDL_GetTicksNS());
@@ -209,6 +253,99 @@ bool GameScreen::frame() {
     if (menu_open_) break;
   }
   return true;
+}
+
+// The frame log's row: the times since the last row (they add
+// up to total_us), then counts, then flags.
+void GameScreen::log_frame() {
+  if (!frame_log_) return;
+  frame_log::State& s = frame_log::state();
+  frame_log::switch_to(s.current);  // The times up to now.
+  const double per_us = frame_log_->ticks_per_us();
+  const nds::Display& display = console_.display();
+  const bool hardware = hardware_.is_open() && !hardware_failed_ && ui::hardware_3d(app_.settings);
+  if (!frame_log_->started()) {
+    std::vector<std::string> names{"frame", "total_us"};
+    for (const char* n : frame_log::kColumnNames) names.emplace_back(n);
+    for (const char* n : {"arm9_instructions", "interpreted_instructions", "polygons", "vertices", "gpu_vertices", "scene_draws",
+                          "scene_textures", "textures_decoded", "decoded_bytes", "textures_uploaded", "texture_bytes",
+                          "screen_bytes", "vertex_bytes", "bank_bytes", "raster_bytes", "gpu_captures", "pictures",
+                          "timer_switches", "shown", "gpu_3d", "3d_top", "3d_bottom", "capture_made", "capture_shown",
+                          "raster_ran", "edge_marking", "anti_aliasing", "fog", "scale", "main_on_top"})
+      names.emplace_back(n);
+    std::string driver = "none", device = "none", version;
+    if (app_.gpu != nullptr) {
+      if (const char* d = SDL_GetGPUDeviceDriver(app_.gpu)) driver = d;
+      const SDL_PropertiesID props = SDL_GetGPUDeviceProperties(app_.gpu);
+      if (const char* n = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, nullptr)) device = n;
+      const char* dn = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, nullptr);
+      const char* dv = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, nullptr);
+      const char* di = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING, nullptr);
+      version = std::string(dn != nullptr ? dn : "") + (dv != nullptr ? std::string(" ") + dv : "") +
+                (di != nullptr ? std::string(" (") + di + ")" : "");
+    }
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(app_.window, &w, &h);
+    const int scale = scale_3d();
+    const char* filter = filter_ == gfx::ScreenFilter::SharpSmoothEdges ? "sharp pixels, smooth edges"
+                         : filter_ == gfx::ScreenFilter::Smooth         ? "smooth"
+                                                                        : "sharp";
+    char line[1024];
+    std::snprintf(line, sizeof line,
+                  "Bright Dawn frame log | GPU driver: %s, %s | device: %s | window: %d x %d | 3D resolution: %dx "
+                  "(%d x %d, setting %s) | screen filter: %s | renderer: %s, 3D by %s | mode: %s",
+                  driver.c_str(), version.empty() ? "version unknown" : version.c_str(), device.c_str(), w, h, scale,
+                  256 * scale, 192 * scale, app_.settings.choice(ui::key::k3DResolution).c_str(), filter,
+                  SDL_GetRendererName(app_.renderer) != nullptr ? SDL_GetRendererName(app_.renderer) : "none",
+                  hardware ? "the graphics hardware" : "the processor",
+                  s.sync ? "sync (each GPU pass is waited for: its time is its GPU time; the frame rate is lower)"
+                         : "normal (CPU times only: GPU passes are not waited for)");
+    char second[512];
+    std::snprintf(second, sizeof second,
+                  "times in microseconds, each frame split so that the times add up to total_us; the timer costs "
+                  "about %.0f ns a switch (timer_switches); vsync %s; game code: %s",
+                  frame_log_->ns_per_switch(), vsync_ ? "on" : "off", title_.c_str());
+    frame_log_->start({line, second}, names);
+  }
+  std::vector<double> v;
+  v.reserve(80);
+  v.push_back(static_cast<double>(frames_run_));
+  double total = 0;
+  for (std::uint64_t t : s.spent) total += static_cast<double>(t);
+  v.push_back(total / per_us);
+  for (std::uint64_t t : s.spent) v.push_back(static_cast<double>(t) / per_us);
+  const std::uint64_t executed = console_.machine().executed();
+  const std::uint64_t interpreted = console_.machine().statistics().interpreted_instructions;
+  const std::uint64_t all = executed - log_executed_, by_interpreter = interpreted - log_interpreted_;
+  log_executed_ = executed;
+  log_interpreted_ = interpreted;
+  const frame_log::Counts& c = s.counts;
+  for (std::uint64_t n : {all - std::min(all, by_interpreter), by_interpreter, c.polygons, c.vertices, c.gpu_vertices, c.scene_draws,
+                          c.scene_textures, c.textures_decoded, c.decoded_bytes, c.textures_uploaded, c.texture_bytes,
+                          c.screen_bytes, c.vertex_bytes, c.bank_bytes, c.raster_bytes, c.gpu_captures, c.pictures,
+                          s.switches})
+    v.push_back(static_cast<double>(n));
+  nds::DisplayEngine& main = console_.display().main_engine();
+  const bool main_on_top = (display.power_control() & nds::Display::kMainOnTop) != 0;
+  const std::uint32_t control = main.control();
+  const bool main_3d = (control & 0x108u) == 0x108u && ((control >> 16) & 3) == 1;
+  const auto filled = [&](int i) { return display.frame_fill(i).fill != nds::Display::Fill::kNone; };
+  const auto captured = [&](int i) { return display.frame_fill(i).fill == nds::Display::Fill::kCapture; };
+  const bool top_3d = filled(0) || (main_on_top && main_3d), bottom_3d = filled(1) || (!main_on_top && main_3d);
+  for (bool f : {c.pictures != 0, hardware, top_3d, bottom_3d, c.capture_made, captured(0) || captured(1), c.raster_ran,
+                 c.edge_marking, c.anti_aliasing, c.fog})
+    v.push_back(f ? 1 : 0);
+  v.push_back(hardware ? scale_3d() : 1);
+  v.push_back(main_on_top ? 1 : 0);
+  frame_log_->row(v);
+  // The next row: times from now; the scene's flags stay until the next scene.
+  for (std::uint64_t& t : s.spent) t = 0;
+  s.switches = 0;
+  const frame_log::Counts kept = s.counts;
+  s.counts = frame_log::Counts{};
+  s.counts.edge_marking = kept.edge_marking;
+  s.counts.anti_aliasing = kept.anti_aliasing;
+  s.counts.fog = kept.fog;
 }
 
 void GameScreen::switch_bottom_screen_only() {
@@ -363,6 +500,8 @@ void GameScreen::read_input() {
 void GameScreen::upload_screens() {
   const auto upload = [&](SDL_Texture* texture, const std::vector<std::uint32_t>& screen) {
     if (screen.size() != std::size_t{gfx::kScreenWidth} * gfx::kScreenHeight) return;
+    frame_log::Scope frame_log_scope(frame_log::kUpload);
+    frame_log::state().counts.screen_bytes += screen.size() * 4;
     gfx::to_rgba_bytes(screen.data(), screen.size(), pixels_.data());
     SDL_UpdateTexture(texture, nullptr, pixels_.data(), gfx::kScreenWidth * 4);
   };

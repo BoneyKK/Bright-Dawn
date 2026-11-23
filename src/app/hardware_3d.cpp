@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "app/hardware_shaders.h"
+#include "debug/frame_log.h"
 #include "nds/polygon_renderer.h"
 #include "core/log.h"
 
@@ -501,6 +502,8 @@ bool Hardware3D::capture(const nds::HardwareScene& scene, const nds::CaptureReci
   uniforms.capture[2] = recipe.width | recipe.height << 16;
   uniforms.capture[3] = (recipe.write_start & 0xFFFF) | (recipe.read_start & 0xFFFF) << 16;
   if (recipe.source != 0 && second == nullptr) uniforms.capture[0] = recipe.only_3d ? 4u : 0u;
+  log_compose_column_ = frame_log::kCaptureGpu;
+  ++frame_log::state().counts.gpu_captures;
   const std::vector<std::uint32_t>* bank = second == bank_ ? &recipe.second_pixels : nullptr;
   if (!run(&scene, source, nullptr, second, bank, oldest->texture, uniforms)) return false;
   oldest->number = number;
@@ -525,6 +528,7 @@ SDL_Texture* Hardware3D::draw(int which, const std::vector<std::uint32_t>& scree
   uniforms.brightness[0] = direction == 1 || direction == 2 ? static_cast<float>(direction) : 0.0f;
   uniforms.brightness[1] = static_cast<float>(std::min(brightness & 0x1F, 16)) / 16.0f;
   uniforms.options[1] = source != nullptr ? 256.0f : static_cast<float>(kScreenHeight);
+  log_compose_column_ = (which & 1) == 0 ? frame_log::kComposeTop : frame_log::kComposeBottom;
   if (!run(scene, screen, source, nullptr, nullptr, outputs_[static_cast<std::size_t>(which & 1)], uniforms))
     return nullptr;
   failed = false;
@@ -591,6 +595,13 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
                      SDL_GPUTexture* second, const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target,
                      const ComposeUniforms& given_uniforms) {
   if (screen.size() != std::size_t{kScreenWidth} * kScreenHeight) return false;
+  // The frame log's times. In sync mode the GPU is idle before the passes,
+  // and each pass is handed over and waited for on its own.
+  frame_log::Scope frame_log_scope(frame_log::kUpload);
+  if (frame_log::state().sync) {
+    frame_log::Scope wait(frame_log::kPresentGpu);
+    SDL_WaitForGPUIdle(device_);
+  }
   static const nds::HardwareScene kNoScene;
   const nds::HardwareScene& scene = given != nullptr ? *given : kNoScene;
   const bool new_scene = given != nullptr && scene.serial != scene_drawn_;
@@ -653,6 +664,15 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
                      !ensure_storage(polygons_, polygons_size_, polygon_bytes)))) {
     log::warning("3d", std::string("cannot make the buffers for a 3D scene: ") + SDL_GetError());
     return false;
+  }
+  {
+    frame_log::Counts& c = frame_log::state().counts;
+    c.screen_bytes += kScreenBytes;
+    c.vertex_bytes += vertex_bytes;
+    c.bank_bytes += bank_bytes;
+    c.raster_bytes += std::uint64_t{corner_bytes} + polygon_bytes;
+    c.textures_uploaded += pending_.size();
+    for (std::uint32_t i : pending_) c.texture_bytes += scene.textures[i].pixels->size() * 4;
   }
   auto* mapped = static_cast<std::uint8_t*>(SDL_MapGPUTransferBuffer(device_, transfer_, true));
   if (mapped == nullptr) return false;
@@ -722,6 +742,20 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
 
   SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(device_);
   if (commands == nullptr) return false;
+  // For the frame log: the pass recorded so far is done; the next one
+  // begins. In sync mode the recorded one is handed over and waited for.
+  const auto frame_log_pass = [&](int next) -> bool {
+    if (frame_log::state().sync) {
+      SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+      if (fence == nullptr) return false;
+      SDL_WaitForGPUFences(device_, true, &fence, 1);
+      SDL_ReleaseGPUFence(device_, fence);
+      commands = SDL_AcquireGPUCommandBuffer(device_);
+      if (commands == nullptr) return false;
+    }
+    if (frame_log::enabled()) frame_log::switch_to(next);
+    return true;
+  };
   SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
   SDL_GPUTextureTransferInfo from{};
   from.transfer_buffer = transfer_;
@@ -763,6 +797,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     SDL_UploadToGPUTexture(copy, &from, &to, false);
   }
   SDL_EndGPUCopyPass(copy);
+  if (!frame_log_pass(new_scene ? frame_log::kScenePass : log_compose_column_)) return false;
 
   if (new_scene) {
     // 1. The scene, over the clear colour (times its alpha) at the clear depth.
@@ -818,7 +853,12 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
     SDL_EndGPURenderPass(pass);
     scene_drawn_ = scene.serial;
     rasterized_ = rasterize;
-    if (rasterize) rasterize_scene(commands, scene);
+    if (rasterize) {
+      if (!frame_log_pass(frame_log::kRaster)) return false;
+      frame_log::state().counts.raster_ran = true;
+      rasterize_scene(commands, scene);
+    }
+    if (!frame_log_pass(log_compose_column_)) return false;
   }
 
   // 2. The screen with the scene (or the kept capture) put in.
@@ -866,6 +906,16 @@ bool Hardware3D::run(const nds::HardwareScene* given, const std::vector<std::uin
   SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, sizeof uniforms);
   SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
   SDL_EndGPURenderPass(pass);
+  if (frame_log::state().sync) {
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+    if (fence == nullptr) {
+      log::warning("3d", std::string("cannot hand a 3D scene to the graphics hardware: ") + SDL_GetError());
+      return false;
+    }
+    SDL_WaitForGPUFences(device_, true, &fence, 1);
+    SDL_ReleaseGPUFence(device_, fence);
+    return true;
+  }
   if (!SDL_SubmitGPUCommandBuffer(commands)) {
     log::warning("3d", std::string("cannot hand a 3D scene to the graphics hardware: ") + SDL_GetError());
     return false;

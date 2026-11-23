@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <utility>
 
+#include "debug/frame_log.h"
+
 namespace bd::nds {
 
 namespace {
@@ -189,6 +191,14 @@ const PolygonRenderer::Image& PolygonRenderer::draw(const GeometryEngine::Frame&
   w_buffer_ = frame.depth_is_w;
   if ((control_ & kRearBitmap) != 0) ++notes_["the rear plane as a picture"];
   make_shapes(frame);
+  {
+    frame_log::Counts& c = frame_log::state().counts;
+    c.polygons = frame.polygons.size();
+    c.vertices = frame.vertices.size();
+    c.edge_marking = (control_ & kEdgeMarking) != 0 && edge_marking_ != EdgeMarking::Off;
+    c.anti_aliasing = (control_ & kAntiAliasing) != 0;
+    c.fog = (control_ & kFog) != 0;
+  }
 
   const std::size_t pixels = static_cast<std::size_t>(kWidth) * kHeight;
   for (std::vector<Pixel>& layer : layers_) layer.assign(pixels, Pixel{});
@@ -256,6 +266,8 @@ std::uint32_t PolygonRenderer::scene_texture(const Shape& shape) {
       }
     }
     decoded_bytes_ += std::size_t{texels} * 4;
+    ++frame_log::state().counts.textures_decoded;
+    frame_log::state().counts.decoded_bytes += std::size_t{texels} * 4;
     found = decoded_.emplace(hash, Decoded{std::move(pixels), shape.size_s, shape.size_t_, 0}).first;
   }
   found->second.last_used = scene_.serial;
@@ -270,6 +282,14 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   frame_ = &frame;
   video_ = &video;
   make_shapes(frame);
+  {
+    frame_log::Counts& c = frame_log::state().counts;
+    c.polygons = frame.polygons.size();
+    c.vertices = frame.vertices.size();
+    c.edge_marking = (control_ & kEdgeMarking) != 0 && edge_marking_ != EdgeMarking::Off;
+    c.anti_aliasing = (control_ & kAntiAliasing) != 0;
+    c.fog = (control_ & kFog) != 0;
+  }
   HardwareScene& scene = scene_;
   ++scene.serial;
   scene.vertices.clear();
@@ -456,6 +476,9 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
       }
     }
   }
+  frame_log::state().counts.scene_textures = scene.textures.size();
+  frame_log::state().counts.gpu_vertices = scene.vertices.size();
+  frame_log::state().counts.scene_draws = scene.runs.size();
   frame_ = nullptr;
   video_ = nullptr;
   return scene;

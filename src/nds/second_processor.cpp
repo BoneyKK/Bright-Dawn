@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "debug/frame_log.h"
+
 namespace bd::nds {
 
 namespace {
@@ -75,6 +77,7 @@ void SecondProcessor::sync_written(unsigned value) {
 void SecondProcessor::interrupt_requested() { ++interrupts_requested_; }
 
 void SecondProcessor::word_sent(std::uint32_t word) {
+  frame_log::Scope frame_log_scope(frame_log::kArm7);
   const unsigned service = word & 0x1Fu;
   const bool flag = (word & 0x20u) != 0;
   const std::uint32_t data = word >> 6;

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "debug/frame_log.h"
+
 namespace bd::nds {
 
 namespace {
@@ -47,8 +49,14 @@ void Display::attach(Arm9Io& io) {
 
 void Display::line_begins(unsigned line) {
   if (line == 0) {
-    main_.start_frame();
-    second_.start_frame();
+    {
+      frame_log::Scope frame_log_scope(frame_log::kDisplayMain);
+      main_.start_frame();
+    }
+    {
+      frame_log::Scope frame_log_scope(frame_log::kDisplaySub);
+      second_.start_frame();
+    }
     // The polygons handed over at the last vertical blank, if there are new
     // ones, make this frame's 3D picture (or scene).
     const std::uint64_t swaps = geometry_.statistics().swaps;
@@ -58,6 +66,7 @@ void Display::line_begins(unsigned line) {
     const bool from_main_memory = ((capture_control_ >> 29) & 3) != 0 && (capture_control_ & kCaptureFromMainMemory) != 0;
     hardware_capture_ = hardware_3d_ && capture && !from_main_memory;
     if (hardware_capture_) start_hardware_capture();
+    if (capture) frame_log::state().counts.capture_made = true;
     scene_this_frame_ = hardware_3d_;
     if (hardware_wanted_ && swaps != 0) {
       if (scene_this_frame_) {
@@ -71,30 +80,47 @@ void Display::line_begins(unsigned line) {
     if (scene_this_frame_) {
       if (swaps != swaps_built_) {
         swaps_built_ = swaps;
+        frame_log::Scope frame_log_scope(frame_log::kBuildScene);
         renderer_.build_scene(geometry_.finished(), video_);
         have_scene_ = true;
         ++statistics_.pictures_3d;
       }
     } else if (swaps != swaps_drawn_) {
       swaps_drawn_ = swaps;
-      renderer_.draw(geometry_.finished(), video_);
+      {
+        frame_log::Scope frame_log_scope(frame_log::kProcessor3D);
+        renderer_.draw(geometry_.finished(), video_);
+      }
       have_3d_ = true;
       ++statistics_.pictures_3d;
       main_.set_3d_picture(&renderer_.image());
     }
   }
-  main_.start_line(static_cast<int>(line));
+  {
+    frame_log::Scope frame_log_scope(frame_log::kDisplayMain);
+    main_.start_line(static_cast<int>(line));
+  }
+  frame_log::Scope frame_log_scope(frame_log::kDisplaySub);
   second_.start_line(static_cast<int>(line));
 }
 
 void Display::line_done(unsigned line) {
   if (line >= static_cast<unsigned>(kHeight)) return;
-  main_.draw_line(static_cast<int>(line));
-  second_.draw_line(static_cast<int>(line));
+  {
+    frame_log::Scope frame_log_scope(frame_log::kDisplayMain);
+    main_.draw_line(static_cast<int>(line));
+  }
+  {
+    frame_log::Scope frame_log_scope(frame_log::kDisplaySub);
+    second_.draw_line(static_cast<int>(line));
+  }
   // A capture switched on is made during the next frame, from its first
   // line.
   if (line == 0 && (capture_control_ & kCaptureOn) != 0) capturing_ = true;
-  if (capturing_) capture_line(line);
+  if (capturing_) {
+    frame_log::Scope frame_log_scope(frame_log::kCaptureCpu);
+    capture_line(line);
+  }
 }
 
 void Display::start_hardware_capture() {
@@ -215,6 +241,7 @@ void Display::capture_line(unsigned line) {
 }
 
 void Display::vertical_blank() {
+  frame_log::Scope frame_log_scope(frame_log::kCaptureCpu);
   // The frame is complete: each engine's picture goes to its screen.
   const bool main_on_top = (power_control_ & kMainOnTop) != 0;
   top_ = main_on_top ? main_.screen() : second_.screen();

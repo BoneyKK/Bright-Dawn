@@ -142,6 +142,15 @@ std::vector<SettingDef> game_setting_definitions() {
                          {"debug", "In detail"}},
                         "info"));
   defs.push_back(number(key::kLogsKept, "Log", "Logs kept", "Sets how many runs' logs are kept.", 1, 100, 10));
+  // Shown on the launcher's Debug page, not in a chapter.
+  defs.push_back(toggle(key::kFrameLog, "", "Frame log",
+                        "Writes what each frame costs to bright-dawn-frames.csv, next to the program, from the "
+                        "next start of the game.",
+                        false));
+  defs.push_back(toggle(key::kFrameLogSync, "", "Sync mode",
+                        "With the frame log: waits for the graphics hardware after each of its passes, so that "
+                        "the log has each pass's real time. The game runs slower.",
+                        false));
   // The bindings: not in a chapter of their own, as the Controls page draws
   // them; their defaults are input's.
   const auto bound_by_default = [](const Control& c, bool keyboard) {

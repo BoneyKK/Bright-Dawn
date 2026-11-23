@@ -1,5 +1,7 @@
 #include "nds/dma.h"
 
+#include "debug/frame_log.h"
+
 namespace bd::nds {
 namespace {
 
@@ -67,6 +69,9 @@ bool Dma::trigger(unsigned mode) {
 
 void Dma::run(int channel) {
   Channel& c = channels_[channel];
+  // Copies into the geometry engine's queue or command ports count as its time.
+  const bool to_geometry = c.at_destination >= 0x04000400 && c.at_destination < 0x04000600;
+  frame_log::Scope frame_log_scope(to_geometry ? frame_log::kGeometry : frame_log::kDma);
   u32 count = c.control & kCountMask;
   if (count == 0) count = kCountMask + 1;
   const bool words = (c.control & kWords) != 0;

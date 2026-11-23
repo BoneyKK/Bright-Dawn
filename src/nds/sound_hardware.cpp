@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "debug/frame_log.h"
+
 namespace bd::nds {
 
 namespace {
@@ -353,6 +355,8 @@ void SoundHardware::sample() {
 }
 
 void SoundHardware::run_until(Time now) {
+  if (next_sample_ > now) return;
+  frame_log::Scope frame_log_scope(frame_log::kArm7);
   while (next_sample_ <= now) {
     if (!on_output && !anything_running()) {
       // Nothing to do but count the samples up to now.

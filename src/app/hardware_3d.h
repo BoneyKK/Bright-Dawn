@@ -170,6 +170,7 @@ class Hardware3D {
   std::unordered_map<std::uint64_t, Place> placed_;
   int shelf_y_ = 0, shelf_x_ = 0, shelf_height_ = 0;
   bool atlas_full_noted_ = false;
+  int log_compose_column_ = 0;  // The frame log's column for the next compose.
   std::uint64_t scene_drawn_ = 0;  // The serial of the scene in scene_target_; 0 for none.
   std::vector<std::uint32_t> pending_;  // Indices of the scene's textures to upload.
 };

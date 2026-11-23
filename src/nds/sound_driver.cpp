@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "debug/frame_log.h"
+
 namespace bd::nds {
 
 namespace {
@@ -122,6 +124,7 @@ void SoundDriver::run_until(Time now) {
       }
     }
     if (when > now) break;
+    frame_log::Scope frame_log_scope(frame_log::kArm7);
     if (alarm != nullptr) {
       fire(*alarm);
     } else {

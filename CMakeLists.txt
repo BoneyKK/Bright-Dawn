@@ -73,6 +73,11 @@ find_package(Threads REQUIRED)
 target_include_directories(bd_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(bd_core PUBLIC bd_build_flags Threads::Threads)
 
+# The frame log (src/debug/frame_log.h): what each frame costs. Its timing is
+# all in the header, which bd_nds and bd_runtime use too; this is its file.
+add_library(bd_debug STATIC src/debug/frame_log_file.cpp)
+target_link_libraries(bd_debug PUBLIC bd_core)
+
 add_library(bd_platform STATIC
   src/platform/audio_feed.cpp
   src/platform/crash_log.cpp
@@ -240,7 +245,7 @@ if(BD_BUILD_APP)
     src/app/settings_book.cpp
     src/app/controls_page.cpp)
   target_include_directories(bd_app PUBLIC src)
-  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui bd_game_library_host bd_assets
+  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui bd_game_library_host bd_assets bd_debug
                         ${BD_SDL_TARGET})
 
   # The game runs on the main thread, and translated code nests native calls

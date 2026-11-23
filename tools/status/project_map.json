@@ -2,8 +2,8 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "Above 1x the 3D costs far less: the drawing by the DS's rules runs only at 1x (in the first cave at 4x on a software Vulkan device, 1500 frames took 111 s instead of 529 s), and outlines are drawn solid from the triangles' own pixels, so they meet the models' edges. The program has its own icon.",
-    "date": "2026-11-22"
+    "what": "The launcher has a Debug page. Its frame log writes what each frame costs, part by part (the game's code, the geometry engine, the 2D engines, each pass of the graphics hardware, present and the waits), to a CSV file next to the program; in sync mode it waits for each pass, for its real time.",
+    "date": "2026-11-23"
   },
   "statuses": {
     "done": "Works",
@@ -410,7 +410,7 @@
     {
       "part": "ui, app",
       "status": "done",
-      "now": "The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub."
+      "now": "The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. A Debug page switches on the frame log: what each frame costs, part by part."
     },
     {
       "part": "platform, core",
