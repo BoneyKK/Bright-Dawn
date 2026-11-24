@@ -46,7 +46,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (23 November 2026): L, R, Start and Select together reset the game again, as on the DS: the console starts anew at the title, with the save kept. Before, the game stopped on white screens.
+**Last change** (24 November 2026): The 3D geometry engine does the same work in about a quarter to a third less processor time: polygons that are fully in view are not copied when they are cut to the view, single commands skip the queue, and placing vertices on the screen takes two fewer divisions.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 

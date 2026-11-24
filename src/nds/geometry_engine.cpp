@@ -95,15 +95,19 @@ bool cut_to_view(Vertex* v, std::size_t& size) {
   bool cut = false;
   Vertex next[10];
   for (int side = 0; side < 6 && size != 0; ++side) {
+    const auto value = [side](const Vertex& p) {
+      const i32 c = side < 2 ? p.x : side < 4 ? p.y : p.z;
+      // Negated in 32 bits, as the hardware's arithmetic wraps.
+      return (side & 1) != 0 ? static_cast<i32>(0u - static_cast<u32>(c)) : c;
+    };
+    // A side that every corner is inside leaves the polygon as it is: most
+    // polygons are in view, and so are spared the copying below.
+    if (std::all_of(v, v + size, [&](const Vertex& p) { return static_cast<i64>(value(p)) >= -static_cast<i64>(p.w); }))
+      continue;
     std::size_t kept = 0;
     for (std::size_t j = 0; j < size; ++j) {
       const Vertex& current = v[j];
       const Vertex& previous = v[(j + size - 1) % size];
-      const auto value = [&](const Vertex& p) {
-        const i32 c = side < 2 ? p.x : side < 4 ? p.y : p.z;
-        // Negated in 32 bits, as the hardware's arithmetic wraps.
-        return (side & 1) != 0 ? static_cast<i32>(0u - static_cast<u32>(c)) : c;
-      };
       const i32 current_value = value(current), previous_value = value(previous);
       const bool current_in = static_cast<i64>(current_value) >= -static_cast<i64>(current.w);
       const bool previous_in = static_cast<i64>(previous_value) >= -static_cast<i64>(previous.w);
@@ -303,6 +307,14 @@ void GeometryEngine::write_command(unsigned command, std::uint32_t parameter) {
 }
 
 void GeometryEngine::add(Entry entry) {
+  if (queue_.empty() && !stopped_ && parameters(entry.command) <= 1) {
+    // Carried out at once, as run() would: the queue is as it was, empty, so
+    // its status and interrupt level stay as changed() last left them.
+    frame_log::Scope frame_log_scope(frame_log::kGeometry);
+    ++statistics_.commands[entry.command];
+    execute(entry.command, &entry.parameter);
+    return;
+  }
   if (!room()) {
     ++statistics_.waits_for_room;
     if (on_full) on_full();
@@ -752,10 +764,13 @@ void GeometryEngine::place_vertices() {
     if (v.w == 0) continue;
     const i64 w = v.w;
     // x is 9 bits and y 8, and they wrap; y runs down the screen.
-    v.fine_x = static_cast<i32>(((v.x + w) * width * 16 / (w * 2) + left * 16) & 0x1FFF);
-    v.fine_y = static_cast<i32>(((w - v.y) * height * 16 / (w * 2) + top * 16) & 0xFFF);
-    v.x = static_cast<i32>(((v.x + w) * width / (w * 2) + left) & 0x1FF);
-    v.y = static_cast<i32>(((w - v.y) * height / (w * 2) + top) & 0xFF);
+    // In sixteenths, then whole pixels: (a / b) / 16 is a / (16 b), so the
+    // second is the first cut down, as if it were worked out by itself.
+    const i64 sixteenths_x = (v.x + w) * width * 16 / (w * 2), sixteenths_y = (w - v.y) * height * 16 / (w * 2);
+    v.fine_x = static_cast<i32>((sixteenths_x + left * 16) & 0x1FFF);
+    v.fine_y = static_cast<i32>((sixteenths_y + top * 16) & 0xFFF);
+    v.x = static_cast<i32>((sixteenths_x / 16 + left) & 0x1FF);
+    v.y = static_cast<i32>((sixteenths_y / 16 + top) & 0xFF);
     v.z = static_cast<i32>(((static_cast<i64>(v.z) * (1 << 14)) / w + 0x3FFF) * (1 << 9));
   }
   placed_ = building_.vertices.size();
@@ -874,7 +889,6 @@ void GeometryEngine::add_polygon() {
 
   std::size_t size = corners;
   bool cut = false;
-  const Vertex second = corner[1], third = corner[2], fourth = corner[3];
   if (((attributes_ & kDrawFront) == 0 && facing > 0) || ((attributes_ & kDrawBack) == 0 && facing < 0)) {
     ++statistics_.polygons_facing_away;
     size = 0;
@@ -938,14 +952,15 @@ void GeometryEngine::add_polygon() {
       return true;
     };
     const bool strip = list_kind_ == kTriangleStrip || list_kind_ == kQuadStrip;
+    // A new strip goes on from the last two vertices sent, in that order.
+    const Vertex last_but_one = vertices[count - 2], last = vertices[count - 1];
     const std::size_t shared = strip && list_vertices_ != corners ? 2 : 0;
     vertices.resize(count - corners + shared);
     polygon.first = static_cast<std::uint16_t>(vertices.size());
     for (std::size_t i = 0; i < size; ++i)
       if (!append(corner[i])) return;
     if (strip) {
-      const Vertex& first_of_next = list_kind_ == kTriangleStrip ? second : fourth;
-      if (!append(first_of_next) || !append(third)) return;
+      if (!append(last_but_one) || !append(last)) return;
       list_vertices_ = 2;
     }
     ++statistics_.polygons_cut;
