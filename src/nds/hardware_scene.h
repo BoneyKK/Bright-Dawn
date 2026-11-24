@@ -52,7 +52,9 @@ struct HardwareScene {
     Overlay,       // Blended by its alpha; leaves the depth as it was.
     // The pixels of full alpha of a translucent polygon, drawn as opaque ones
     // (as the DS draws them), before its other pixels are drawn as
-    // Translucent or Overlay.
+    // Translucent or Overlay by the next run, of the same triangles. The
+    // two runs can hold several such polygons that share no pixel
+    // (nds/polygon_outline.h).
     Solid,
     // Shadow polygons, as the DS draws them, with a mark for each pixel (a
     // stencil buffer). Only Shadow draws a colour; none keeps its depth.

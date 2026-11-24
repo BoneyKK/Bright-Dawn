@@ -148,6 +148,7 @@ add_library(bd_nds STATIC
   src/nds/display_engine.cpp
   src/nds/frame_2d.cpp
   src/nds/geometry_engine.cpp
+  src/nds/polygon_outline.cpp
   src/nds/polygon_renderer.cpp
   src/nds/scene_dump.cpp
   src/nds/interrupts.cpp

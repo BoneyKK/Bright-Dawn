@@ -294,6 +294,8 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   ++scene.serial;
   scene.vertices.clear();
   scene.runs.clear();
+  pair_.clear();
+  pair_runs_ = static_cast<std::size_t>(-1);
   scene.textures.clear();
   scene_textures_.clear();
 
@@ -451,12 +453,47 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
       };
       if (kind == Kind::Shadow) put(Kind::ShadowGuard);
       // A translucent polygon of full alpha has pixels of full alpha where
-      // its texture has: those are drawn as opaque ones, first.
+      // its texture has: those are drawn as opaque ones, first, then the
+      // same triangles again for the other pixels. Polygons after one
+      // another that share no pixel go in the same pair of runs
+      // (nds/polygon_outline.h): a draw call for many, not two for each.
       if ((kind == Kind::Translucent || kind == Kind::Overlay) && shape.alpha == 0x3F) {
-        put(Kind::Solid);
-        // The same triangles again for the other pixels.
-        const HardwareScene::Run& solid = scene.runs.back();
-        scene.runs.push_back({solid.first, solid.count, kind, shape.depth_equal, number});
+        PolygonOutline outline;
+        outline.size = polygon.size;
+        for (unsigned i = 0; i < polygon.size; ++i) {
+          const unsigned k = polygon.strip_order && (i == 2 || i == 3) ? 5 - i : i;
+          const Vertex& v = frame.vertices[polygon.first + std::size_t{k}];
+          outline.x[i] = fine_positions_ ? v.fine_x : v.x * 16;
+          outline.y[i] = fine_positions_ ? v.fine_y : v.y * 16;
+        }
+        outline.bound();
+        const std::size_t runs = scene.runs.size();
+        bool joins = runs >= 2 && pair_runs_ == runs - 2 && pair_.size() < kMostInPair;
+        if (joins) {
+          const HardwareScene::Run& solid = scene.runs[runs - 2];
+          const HardwareScene::Run& other = scene.runs[runs - 1];
+          joins = other.kind == kind && other.number == number && other.depth_equal == shape.depth_equal &&
+                  solid.first + solid.count == scene.vertices.size() &&
+                  std::all_of(pair_.begin(), pair_.end(),
+                              [&](const PolygonOutline& o) { return drawn_apart(o, outline); });
+        }
+        if (joins) {
+          for (unsigned i = 1; i + 1 < polygon.size; ++i) {
+            scene.vertices.push_back(corners[0]);
+            scene.vertices.push_back(corners[i]);
+            scene.vertices.push_back(corners[i + 1]);
+          }
+          const u32 added = 3 * (polygon.size - 2);
+          scene.runs[runs - 2].count += added;
+          scene.runs[runs - 1].count += added;
+        } else {
+          put(Kind::Solid);
+          const HardwareScene::Run& solid = scene.runs.back();
+          scene.runs.push_back({solid.first, solid.count, kind, shape.depth_equal, number});
+          pair_runs_ = scene.runs.size() - 2;
+          pair_.clear();
+        }
+        pair_.push_back(outline);
       } else {
         put(kind);
       }

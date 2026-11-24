@@ -65,6 +65,7 @@
 #include "nds/arm9_io.h"
 #include "nds/geometry_engine.h"
 #include "nds/hardware_scene.h"
+#include "nds/polygon_outline.h"
 #include "nds/video_memory.h"
 
 namespace bd::nds {
@@ -271,6 +272,11 @@ class PolygonRenderer {
   std::unordered_map<std::uint64_t, Decoded> decoded_;
   std::size_t decoded_bytes_ = 0;
   std::unordered_map<std::uint64_t, std::uint32_t> scene_textures_;  // This scene's, by texture and palette words.
+  // The polygons in the last pair of runs of a translucent polygon of full
+  // alpha (its runs from pair_runs_), which more such polygons can join.
+  static constexpr std::size_t kMostInPair = 128;
+  std::vector<PolygonOutline> pair_;
+  std::size_t pair_runs_ = 0;
 };
 
 }  // namespace bd::nds

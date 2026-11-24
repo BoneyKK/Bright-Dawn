@@ -22,6 +22,7 @@ add_executable(bd_tests
   test_geometry_engine.cpp
   test_geometry_lighting.cpp
   test_geometry_polygons.cpp
+  test_polygon_outline.cpp
   test_polygon_renderer.cpp
   test_console.cpp
   test_program.cpp

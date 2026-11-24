@@ -866,6 +866,41 @@ TEST(renderer_scene_draws_the_solid_pixels_of_translucent_polygons_as_opaque_one
   CHECK(scene.runs[2].first == 6 && scene.runs[3].first == 6 && scene.runs[4].first == 12 && scene.vertices.size() == 18);
 }
 
+TEST(renderer_scene_draws_translucent_polygons_that_share_no_pixel_together) {
+  // Such polygons after one another, of one number, go in one pair of runs:
+  // all their solid pixels, then all their others. One that shares pixels
+  // with a polygon of the pair starts a new pair; the edges of a mesh are no
+  // shared pixels.
+  using Scene = bd::nds::HardwareScene;
+  using Kind = Scene::Kind;
+  Fixture f;
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kAlphaBlending);
+  f.fill_textures();
+  f.hand_over_textures();
+  const auto square = [&](int x, int y, u32 n) {
+    f.polygon({Fixture::vertex(x, y, kWhite, kMiddle, kOne, 0, 0), Fixture::vertex(x, y + 8, kWhite, kMiddle, kOne, 0, 128),
+               Fixture::vertex(x + 8, y + 8, kWhite, kMiddle, kOne, 128, 128),
+               Fixture::vertex(x + 8, y, kWhite, kMiddle, kOne, 128, 0)},
+              kOpaque | number(n), format(1));
+  };
+  square(0, 0, 1);    // A row of three, edge to edge.
+  square(8, 0, 1);
+  square(16, 0, 1);
+  square(0, 8, 1);    // Below the first: an edge shared too.
+  square(4, 4, 1);    // Over four of them: a new pair.
+  square(40, 40, 1);  // Far from that one: it joins.
+  square(60, 60, 2);  // Another number: a new pair.
+  const Scene& scene = f.r.build_scene(f.frame, f.video);
+  const Kind kinds[] = {Kind::Solid, Kind::Overlay, Kind::Solid, Kind::Overlay, Kind::Solid, Kind::Overlay};
+  CHECK(scene.runs.size() == std::size(kinds));
+  for (std::size_t i = 0; i < std::min(scene.runs.size(), std::size(kinds)); ++i) CHECK(scene.runs[i].kind == kinds[i]);
+  if (scene.runs.size() != std::size(kinds)) return;
+  CHECK(scene.runs[0].first == 0 && scene.runs[0].count == 24 && scene.runs[1].first == 0 && scene.runs[1].count == 24);
+  CHECK(scene.runs[2].first == 24 && scene.runs[2].count == 12 && scene.runs[3].first == 24 && scene.runs[3].count == 12);
+  CHECK(scene.runs[4].first == 36 && scene.runs[4].count == 6 && scene.runs[5].number == 2);
+  CHECK(scene.vertices.size() == 42);
+}
+
 TEST(renderer_scene_has_fog_for_the_graphics_hardware) {
   using Scene = bd::nds::HardwareScene;
   Fixture f;

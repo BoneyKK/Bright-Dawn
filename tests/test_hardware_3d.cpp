@@ -356,6 +356,103 @@ TEST(hardware_rasterizer_fogs_as_the_processor) {
 // Larger than the DS's, an outline is drawn from the triangles' own pixels,
 // solid in its edge colour, as many pixels wide as a DS pixel is, inside the
 // polygon's edges: or one, if asked.
+namespace {
+
+// The screen with `scene` drawn by the graphics hardware at `scale`.
+std::vector<u32> drawn(const bd::nds::HardwareScene& scene, int scale) {
+  Hardware3D& h = hardware();
+  const std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
+  bool failed = false;
+  REQUIRE(h.draw(0, screen, &scene, 0, 0, scale, failed) != nullptr || !failed);
+  REQUIRE(!failed);
+  std::vector<u32> pixels;
+  REQUIRE(h.read_screen(0, pixels));
+  return pixels;
+}
+
+}  // namespace
+
+// Translucent polygons whose textures have pixels of full alpha, drawn
+// together where they share no pixel (nds/polygon_outline.h), come out as
+// when each is drawn by itself, pixel for pixel: a mesh whose corners and
+// edges they share, and spikes over it and over one another.
+TEST(hardware_draws_polygons_that_share_no_pixel_together_as_one_by_one) {
+  std::mt19937 random(20261124);
+  const auto any = [&](u32 below) { return static_cast<u32>(random() % below); };
+  for (int round = 0; round < 4; ++round) {
+    Frame f;
+    for (const auto bank : {VideoMemory::kA, VideoMemory::kE}) f.video.set_control(bank, VideoMemory::kEnable);
+    for (u32 i = 0; i < 0x20000; i += 2) f.video.write(0x06800000 + i, 2, any(0x10000));
+    for (u32 i = 0; i < 0x10000; i += 2) f.video.write(0x06880000 + i, 2, any(0x10000));
+    f.video.set_control(VideoMemory::kA, VideoMemory::kEnable | 3);
+    f.video.set_control(VideoMemory::kE, VideoMemory::kEnable | 3);
+    f.control(PolygonRenderer::kTextures | PolygonRenderer::kAlphaBlending);
+    // Textures with an alpha of their own: three bits (format 1) or five (6).
+    const auto texture = [&] { return (any(2) != 0 ? 1u : 6u) << 26 | 2u << 20 | 2u << 23 | any(0x1000) | any(16) << 16; };
+    const auto corner = [&](int x, int y) {
+      Vertex v = Frame::vertex(std::clamp(x, 0, 256), std::clamp(y, 0, 192), any(0x40000), 0x400000 + static_cast<int>(any(0x100000)),
+                               0x1000 + static_cast<int>(any(0x4000)));
+      v.s = static_cast<std::int16_t>(any(1024));
+      v.t = static_cast<std::int16_t>(any(1024));
+      return v;
+    };
+    // One number and one way with the depth for most, as a model has.
+    const u32 number_part = any(64), new_depth = round % 2 != 0 ? 1u << 11 : 0u;
+    const auto attributes = [&] { return kOpaque | number(any(16) == 0 ? any(64) : number_part) | new_depth | 3u << 6; };
+    const int step = 8 + static_cast<int>(any(12)), columns = 256 / step, rows = 192 / step;
+    std::vector<Vertex> grid;
+    for (int r = 0; r <= rows; ++r)
+      for (int c = 0; c <= columns; ++c) grid.push_back(corner(c * step + static_cast<int>(any(3)) - 1, r * step + static_cast<int>(any(3)) - 1));
+    const auto at = [&](int r, int c) { return grid[static_cast<std::size_t>(r * (columns + 1) + c)]; };
+    for (int r = 0; r < rows; ++r)
+      for (int c = 0; c < columns; ++c) {
+        const Vertex quad[4] = {at(r, c), at(r + 1, c), at(r + 1, c + 1), at(r, c + 1)};
+        f.polygon(quad, 4, attributes(), texture());
+      }
+    for (int n = 0; n < 60; ++n) {
+      const int x = static_cast<int>(any(256)), y = static_cast<int>(any(192)), width = 1 + static_cast<int>(any(20));
+      const Vertex spike[3] = {corner(x, y), corner(x + width, y + 30), corner(x - width, y + 30)};
+      f.polygon(spike, 3, attributes(), texture());
+    }
+    const bd::nds::HardwareScene& merged = f.r.build_scene(f.frame, f.video);
+    // The same, each triangle in a pair of runs of its own: the triangles of
+    // a convex polygon share no pixel, so that is each polygon by itself.
+    bd::nds::HardwareScene alone = merged;
+    alone.runs.clear();
+    std::size_t triangles = 0;
+    for (std::size_t i = 0; i < merged.runs.size(); ++i) {
+      const auto& run = merged.runs[i];
+      const bool pair = run.kind == bd::nds::HardwareScene::Kind::Solid && i + 1 < merged.runs.size();
+      if (!pair) {
+        alone.runs.push_back(run);
+        continue;
+      }
+      const auto& second = merged.runs[++i];
+      for (std::uint32_t v = 0; v < run.count; v += 3) {
+        alone.runs.push_back({run.first + v, 3, run.kind, run.depth_equal, run.number});
+        alone.runs.push_back({second.first + v, 3, second.kind, second.depth_equal, second.number});
+        ++triangles;
+      }
+    }
+    CHECK(merged.runs.size() * 4 < alone.runs.size());
+    static std::uint64_t serial = std::uint64_t{1} << 40;
+    bd::nds::HardwareScene first = merged;
+    first.serial = ++serial;
+    alone.serial = ++serial;
+    for (const int scale : {2, 3}) {
+      const std::vector<u32> together = drawn(first, scale), one_by_one = drawn(alone, scale);
+      std::size_t differ = 0;
+      for (std::size_t i = 0; i < together.size(); ++i) differ += together[i] != one_by_one[i] ? 1 : 0;
+      if (differ != 0)
+        std::printf("    round %d at %dx: %zu runs for %zu triangles, %zu pixels differ\n", round, scale, merged.runs.size(),
+                    triangles, differ);
+      CHECK(differ == 0);
+      first.serial = ++serial;
+      alone.serial = ++serial;
+    }
+  }
+}
+
 TEST(hardware_outlines_keep_their_thickness_at_3x) {
   for (const auto marking : {PolygonRenderer::EdgeMarking::OriginalThickness, PolygonRenderer::EdgeMarking::OnePixel}) {
     Frame f;
