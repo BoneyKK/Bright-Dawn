@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "The 3D geometry engine does the same work in about a quarter to a third less processor time: polygons that are fully in view are not copied when they are cut to the view, single commands skip the queue, and placing vertices on the screen takes two fewer divisions.",
+    "what": "The 3D scene on the graphics hardware needs about eleven times fewer draw calls in the first cave (46 a frame, not 508), with the same pictures: translucent polygons that share no pixel are drawn together.",
     "date": "2026-11-24"
   },
   "statuses": {
