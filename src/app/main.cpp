@@ -137,6 +137,8 @@ constexpr const char* kUsage =
     "                        as if pressed; may be given more than once\n"
     "  --touch X,Y@F[-L]     touch the touch screen at pixel X,Y from frame F to frame L;\n"
     "                        may be given more than once\n"
+    "  --stick X,Y@F[-L]     push a controller's left stick to X,Y (percent of its reach,\n"
+    "                        -100 to 100, down positive) from frame F to frame L\n"
     "  --capture FILE        with --frames, write the window's last frame to FILE (BMP)\n"
     "  --capture-every N     with --capture, also write every Nth frame, to FILE-N.bmp\n"
     "  --dump-3d FILE        with --frames, write the 3D scene of the last frame to FILE,\n"
@@ -760,6 +762,14 @@ int main(int argc, char** argv) {
         return 1;
       }
       options.touches.push_back(*touch);
+      ++i;
+    } else if (arg == "--stick" && has_value) {
+      const auto stick = input::parse_scripted_stick(argv[i + 1]);
+      if (!stick) {
+        complain(nullptr, std::string("Not a stick position and frames: ") + argv[i + 1] + "\n\n" + kUsage);
+        return 1;
+      }
+      options.sticks.push_back(*stick);
       ++i;
     } else if (arg == "--capture-every" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {
       options.capture_every = static_cast<std::uint64_t>(number);

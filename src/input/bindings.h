@@ -68,6 +68,17 @@ std::optional<ScriptedTouch> parse_scripted_touch(std::string_view text);
 // The script's touch in `frame`, if any: the first that covers it.
 const ScriptedTouch* scripted_touch(const std::vector<ScriptedTouch>& script, std::uint64_t frame);
 
+// A controller's left stick pushed by a script, in percent of its reach
+// (-100 to 100 across, then down), over a range of frames. Written
+// "70,-70@1000-1100" (up and to the right).
+struct ScriptedStick {
+  int x = 0, y = 0;
+  std::uint64_t first = 0, last = 0;
+};
+std::optional<ScriptedStick> parse_scripted_stick(std::string_view text);
+// The script's stick in `frame`, if any: the first that covers it.
+const ScriptedStick* scripted_stick(const std::vector<ScriptedStick>& script, std::uint64_t frame);
+
 // The DS directions pressed by a stick at (`x`, `y`), each -32768 to 32767,
 // down positive: those past the threshold on each axis.
 std::uint32_t directions_from_stick(int x, int y);

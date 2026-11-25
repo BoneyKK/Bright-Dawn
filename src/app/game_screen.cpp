@@ -24,7 +24,8 @@ static_assert(input::bit(input::DsButton::A) == game::OpeningSkip::kA &&
 
 namespace {
 
-// The console's main memory, for the skip of the opening.
+// The console's main memory, for the skip of the opening and the stick's
+// walk.
 class ConsoleMemory : public game::GuestMemory {
  public:
   explicit ConsoleMemory(nds::Console& console) : console_(console) {}
@@ -513,21 +514,26 @@ void GameScreen::read_input() {
   const bool* keys = SDL_GetKeyboardState(&key_count);
   for (const Key& k : keys_)
     if (static_cast<int>(k.code) < key_count && keys[k.code]) held |= k.bit;
+  // The left stick pushed furthest, of all the controllers (or the script's).
+  int stick_x = 0, stick_y = 0;
+  const auto reach = [](int x, int y) { return static_cast<long long>(x) * x + static_cast<long long>(y) * y; };
   for (SDL_Gamepad* pad : gamepads_) {
     for (const PadButton& b : pad_buttons_)
       if (SDL_GetGamepadButton(pad, b.button)) held |= b.bit;
-    held |= input::directions_from_stick(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX),
-                                         SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY));
+    const int x = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX), y = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+    if (reach(x, y) > reach(stick_x, stick_y)) {
+      stick_x = x;
+      stick_y = y;
+    }
     if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >= input::kTriggerThreshold)
       held |= input::bit(input::DsButton::L);
     if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >= input::kTriggerThreshold)
       held |= input::bit(input::DsButton::R);
   }
-  ConsoleMemory memory(*console_);
-  held = opening_skip_.frame(memory, held, app_.settings.toggle(key::kSkipOpening));
-  if (opening_skip_.skipping() && !was_skipping_) log::info("game", "the opening is skipped (Start), up to the title");
-  was_skipping_ = opening_skip_.skipping();
-  if (held != console_->keypad().held()) console_->keypad().set_held(held);
+  if (const input::ScriptedStick* scripted = input::scripted_stick(app_.options.sticks, frames_run_)) {
+    stick_x = scripted->x * 32767 / 100;
+    stick_y = scripted->y * 32767 / 100;
+  }
 
   // The stylus: the left button, on the touch screen, while the window has
   // the mouse. Off the screen is not touching it.
@@ -548,6 +554,26 @@ void GameScreen::read_input() {
       }
     }
   }
+
+  ConsoleMemory memory(*console_);
+  game::StickWalk::Input walk;
+  walk.held = held;
+  walk.stick_x = stick_x;
+  walk.stick_y = stick_y;
+  walk.stick_directions = input::directions_from_stick(stick_x, stick_y);
+  walk.touching = touching;
+  walk.enabled = app_.settings.toggle(key::kAnalogWalking);
+  held = stick_walk_.frame(memory, walk);
+  if (stick_walk_.mode() != stick_mode_) {
+    stick_mode_ = stick_walk_.mode();
+    if (stick_mode_ == game::StickWalk::Mode::Walking) log::debug("input", "the left stick walks on the field");
+    if (stick_mode_ == game::StickWalk::Mode::Pad) log::debug("input", "the left stick is the d-pad");
+  }
+  held = opening_skip_.frame(memory, held, app_.settings.toggle(key::kSkipOpening));
+  if (opening_skip_.skipping() && !was_skipping_) log::info("game", "the opening is skipped (Start), up to the title");
+  was_skipping_ = opening_skip_.skipping();
+  if (held != console_->keypad().held()) console_->keypad().set_held(held);
+
   if (touching != touching_ || (touching && (at.x != touch_at_.x || at.y != touch_at_.y))) {
     touching_ = touching;
     touch_at_ = at;

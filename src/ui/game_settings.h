@@ -41,6 +41,7 @@ inline constexpr std::string_view kPlayBuilt = "game.play_built";
 inline constexpr std::string_view kLanguage = "game.language";
 inline constexpr std::string_view kRom = "game.rom";
 inline constexpr std::string_view kSkipOpening = "quality_of_life.skip_opening";
+inline constexpr std::string_view kAnalogWalking = "controls.analog_walking";
 inline constexpr std::string_view kBuildJobs = "builder.jobs";
 inline constexpr std::string_view kBuildCompiler = "builder.compiler";
 inline constexpr std::string_view kLogLevel = "log.level";
@@ -53,8 +54,9 @@ inline constexpr std::string_view kProcessor2D = "debug.processor_2d";
 
 std::vector<platform::SettingDef> game_setting_definitions();
 
-// The Controls chapter of the settings book, drawn by a page of its own
-// (app/controls_page.h) rather than from the definitions.
+// The Controls chapter of the settings book: its settings, then the
+// bindings, drawn by a page of their own (app/controls_page.h) rather than
+// from the definitions.
 inline constexpr std::string_view kControlsChapter = "Controls";
 
 // Something the window does, bound like a DS button.

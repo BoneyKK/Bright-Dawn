@@ -14,6 +14,9 @@ using platform::SettingKind;
 
 std::vector<std::string> SettingsBook::chapters_of(const platform::Settings& settings) {
   std::vector<std::string> chapters = settings.chapters();
+  // Settings of the Controls chapter are drawn above the bindings, at the
+  // chapter's own place.
+  chapters.erase(std::remove(chapters.begin(), chapters.end(), std::string(ui::kControlsChapter)), chapters.end());
   const auto game = std::find(chapters.begin(), chapters.end(), "Game");
   chapters.insert(game != chapters.end() ? game + 1 : chapters.end(), std::string(ui::kControlsChapter));
   return chapters;
@@ -62,12 +65,9 @@ std::vector<std::string> SettingsBook::draw(platform::Settings& settings) {
   ImGui::PopFont();
   ImGui::PopStyleColor();
   ImGui::Separator();
-  if (chapters[chapter_] == ui::kControlsChapter) {
-    controls_.draw(settings, nullptr, changed);
-  } else {
-    for (const SettingDef& def : settings.definitions())
-      if (def.chapter == chapters[chapter_]) draw_setting(settings, def, changed);
-  }
+  for (const SettingDef& def : settings.definitions())
+    if (def.chapter == chapters[chapter_]) draw_setting(settings, def, changed);
+  if (chapters[chapter_] == ui::kControlsChapter) controls_.draw(settings, nullptr, changed);
   ImGui::EndChild();
   return changed;
 }
@@ -171,12 +171,11 @@ void SettingsBook::draw_in_look(platform::Settings& settings, const std::vector<
     ImGui::SameLine();
   }
   ImGui::BeginChild("page", ImVec2(0, 0));
+  for (const SettingDef& def : settings.definitions())
+    if (def.chapter == chapters[chapter_]) draw_setting_in_look(settings, def, changed);
   if (chapters[chapter_] == ui::kControlsChapter) {
     controls_.draw(settings, look_, changed);
-    hovered_help_ = controls_.hovered_help();
-  } else {
-    for (const SettingDef& def : settings.definitions())
-      if (def.chapter == chapters[chapter_]) draw_setting_in_look(settings, def, changed);
+    if (!controls_.hovered_help().empty()) hovered_help_ = controls_.hovered_help();
   }
   ImGui::EndChild();
 }

@@ -177,8 +177,9 @@ add_library(bd_gfx STATIC src/gfx/screen_image.cpp src/gfx/screen_layout.cpp)
 target_link_libraries(bd_gfx PUBLIC bd_core)
 add_library(bd_input STATIC src/input/bindings.cpp)
 target_link_libraries(bd_input PUBLIC bd_core)
-# What Bright Dawn knows of the game itself: the skip of the opening.
-add_library(bd_game STATIC src/game/opening_skip.cpp)
+# What Bright Dawn knows of the game itself: the skip of the opening and
+# walking with the stick.
+add_library(bd_game STATIC src/game/opening_skip.cpp src/game/stick_walk.cpp)
 target_link_libraries(bd_game PUBLIC bd_core)
 # What the window program's own screens show and keep, without the screens:
 # the settings and their descriptions, and following the game builder.

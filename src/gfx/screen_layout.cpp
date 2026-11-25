@@ -34,7 +34,11 @@ ScreenLayout lay_out(int width, int height, const LayoutOptions& options) {
   const Size size = unscaled_size(options);
   const double fit = std::min(static_cast<double>(width) / size.x, static_cast<double>(height) / size.y);
   double scale = fit;
-  if (options.scaling == Scaling::WholeNumbers && fit >= 1) scale = std::floor(fit);
+  if (options.scaling == Scaling::WholeNumbers && fit >= 1) {
+    // Up to half a pixel short of a whole number counts as it: a wide screen
+    // is a third of a pixel wider than the window window_size gives at 4x.
+    scale = std::floor(fit + 0.5 / std::max(size.x, size.y));
+  }
   layout.scale = scale;
   layout.top_wide = options.wide_screen == 0 && options.arrangement != Arrangement::BottomOnly;
   layout.bottom_wide = options.wide_screen == 1;

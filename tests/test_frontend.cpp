@@ -175,6 +175,12 @@ TEST(layout_makes_one_screen_wide_and_centres_the_other) {
   options.wide_screen = 0;
   const ScreenLayout alone = lay_out(1024, 576, options);
   CHECK(!alone.top_wide && !alone.bottom_wide && same(alone.bottom, 128, 0, 768, 576));
+  // At 4x a wide screen is 1365.33 pixels across, in a window of 1365: still
+  // 4x, not 3x.
+  options.arrangement = Arrangement::Stacked;
+  CHECK(window_size(4, options).x == 1365);
+  CHECK(lay_out(1365, 1536, options).scale == 4);
+  CHECK(lay_out(1364, 1536, options).scale == 3);
 }
 
 TEST(touch_maps_onto_the_middle_of_a_wide_touch_screen) {

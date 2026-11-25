@@ -157,7 +157,7 @@ TEST(game_settings_are_valid_and_shown_in_chapters) {
     CHECK(!def.label.empty() && !def.help.empty());
   }
   CHECK((s.chapters() ==
-         std::vector<std::string>{"Display", "Graphics", "Sound", "Game", "Quality of life", "Builder", "Log"}));
+         std::vector<std::string>{"Display", "Graphics", "Sound", "Game", "Controls", "Quality of life", "Builder", "Log"}));
   // Sharp pixels with smooth edges, the look of melonDS's display, by
   // default; 3D textures as on the DS.
   CHECK(bd::ui::screen_filter(s) == bd::gfx::ScreenFilter::SharpSmoothEdges && !bd::ui::smooth_textures(s));

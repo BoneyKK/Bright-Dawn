@@ -78,6 +78,32 @@ std::optional<ScriptedTouch> parse_scripted_touch(std::string_view text) {
   return ScriptedTouch{*x, *y, frames->first, frames->second};
 }
 
+std::optional<ScriptedStick> parse_scripted_stick(std::string_view text) {
+  const std::size_t at = text.find('@');
+  if (at == std::string_view::npos) return std::nullopt;
+  const std::string_view point = text.substr(0, at);
+  const std::size_t comma = point.find(',');
+  if (comma == std::string_view::npos) return std::nullopt;
+  // -100 to 100: a sign, then 0 to 100.
+  const auto percent = [](std::string_view part) -> std::optional<int> {
+    const bool negative = !part.empty() && part[0] == '-';
+    const std::optional<int> value = coordinate(negative ? part.substr(1) : part, 100);
+    if (!value) return std::nullopt;
+    return negative ? -*value : *value;
+  };
+  const std::optional<int> x = percent(point.substr(0, comma));
+  const std::optional<int> y = percent(point.substr(comma + 1));
+  const auto frames = frame_range(text.substr(at + 1));
+  if (!x || !y || !frames) return std::nullopt;
+  return ScriptedStick{*x, *y, frames->first, frames->second};
+}
+
+const ScriptedStick* scripted_stick(const std::vector<ScriptedStick>& script, std::uint64_t frame) {
+  for (const ScriptedStick& stick : script)
+    if (frame >= stick.first && frame <= stick.last) return &stick;
+  return nullptr;
+}
+
 const ScriptedTouch* scripted_touch(const std::vector<ScriptedTouch>& script, std::uint64_t frame) {
   for (const ScriptedTouch& touch : script)
     if (frame >= touch.first && frame <= touch.last) return &touch;

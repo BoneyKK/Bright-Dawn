@@ -35,6 +35,7 @@ struct Options {
   std::filesystem::path record_sound;  // Keep the game's sound in this WAV file.  // Also write a frame every so many, named FILE-frame.bmp.
   std::vector<input::ScriptedPress> script;
   std::vector<input::ScriptedTouch> touches;
+  std::vector<input::ScriptedStick> sticks;
 };
 
 struct App {

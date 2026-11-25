@@ -5,6 +5,9 @@
 // The game's step and the pictures are kept apart (platform/frame_clock.h).
 // In a new game, Start skips the long story at the start, up to the title
 // (game/opening_skip.h), unless switched off in Settings, Quality of life.
+// On the field, a controller's left stick walks at any angle and pace
+// (game/stick_walk.h), unless switched off in Settings, Controls; elsewhere
+// it is the d-pad.
 // Escape, or a controller's guide button, pauses the game and opens the
 // menu: continue, the settings book, back to the launcher, quit. Settings
 // changed there take effect at once. Keys of the window itself: F11 or
@@ -27,6 +30,7 @@
 #include "app/build_tools.h"
 #include "debug/frame_log_file.h"
 #include "game/opening_skip.h"
+#include "game/stick_walk.h"
 #include "app/hardware_3d.h"
 #include "app/settings_book.h"
 #include "gfx/screen_layout.h"
@@ -170,6 +174,8 @@ class GameScreen {
   // (Settings, Quality of life).
   game::OpeningSkip opening_skip_;
   bool was_skipping_ = false;
+  game::StickWalk stick_walk_;
+  game::StickWalk::Mode stick_mode_ = game::StickWalk::Mode::Idle;
   // The frame log, when it is on (debug/frame_log.h).
   std::unique_ptr<frame_log::File> frame_log_;
   std::uint64_t log_executed_ = 0, log_interpreted_ = 0;

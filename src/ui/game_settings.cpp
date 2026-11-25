@@ -124,6 +124,10 @@ std::vector<SettingDef> game_setting_definitions() {
                          {"spanish", "Spanish (Espa\u00f1ol)"},
                          {"japanese", "Japanese"}},
                         "english"));
+  defs.push_back(toggle(key::kAnalogWalking, kControlsChapter.data(), "Left stick: analog walking",
+                        "On the field, a controller's left stick walks in any direction, from a walk to a run "
+                        "by how far it is pushed. Off: the stick is the d-pad, as everywhere else.",
+                        true));
   defs.push_back(toggle(key::kSkipOpening, "Quality of life", "Skip the opening with Start",
                         "In a new game, Start skips the long story at the start, up to the game's title.",
                         true));
