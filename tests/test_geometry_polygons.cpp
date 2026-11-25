@@ -2,6 +2,7 @@
 // kind of vertex list, dropped when facing away, cut to the view volume, and
 // placed on the screen. The expectations are worked out by hand from the
 // hardware's arithmetic; W below is one unit (4096) and H half of it.
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 
@@ -662,4 +663,52 @@ TEST(polygons_placed_vertices_keep_sixteenths_of_a_pixel) {
   CHECK(at(frame.vertices[0], 10, 20) && frame.vertices[0].fine_x == 168 && frame.vertices[0].fine_y == 324);
   // On whole pixels the two agree.
   CHECK(at(frame.vertices[1], 256, 192) && frame.vertices[1].fine_x == 256 * 16 && frame.vertices[1].fine_y == 192 * 16);
+}
+
+TEST(polygons_a_wide_frame_reaches_a_third_further_with_perspective_only) {
+  Fixture f;
+  f.g.set_wide(true);
+  f.send(GeometryEngine::kViewport, {kWholeScreen});
+  const auto right_most = [](const GeometryEngine::Frame& frame, std::size_t p) {
+    int most = -1000;
+    for (unsigned i = 0; i < frame.polygons[p].size; ++i) most = std::max(most, frame.vertices[frame.polygons[p].first + i].x);
+    return most;
+  };
+  // Without perspective (the matrices as they start): cut at the DS's edge
+  // in both frames.
+  f.begin(GeometryEngine::kTriangles, kBoth);
+  f.v(0, 0);
+  f.v(2 * W, 0);
+  f.v(0, W);
+  // With perspective (w = -z, here W): the DS's frame is cut at x = w, the
+  // wide one at 4/3 w, a third of the screen's width further.
+  f.send(GeometryEngine::kMatrixMode, {0});
+  GeometryEngine::Matrix projection = GeometryEngine::kIdentity;
+  projection[11] = -W;
+  projection[15] = 0;
+  for (std::int32_t value : projection) f.send(GeometryEngine::kMatrixLoad4x4, {static_cast<std::uint32_t>(value)});
+  f.send(GeometryEngine::kMatrixMode, {1});
+  f.begin(GeometryEngine::kTriangles, kBoth);
+  f.v(0, 0, -W);
+  f.v(2 * W, 0, -W);
+  f.v(0, W, -W);
+  // Past the DS's right edge, but within the wide frame's.
+  f.v(W + W / 8, 0, -W);
+  f.v(W + W / 4, 0, -W);
+  f.v(W + W / 8, W / 2, -W);
+  f.swap();
+  const GeometryEngine::Frame& ds = f.g.finished();
+  const GeometryEngine::Frame& wide = f.g.wide_finished();
+  REQUIRE(ds.polygons.size() == 2 && wide.polygons.size() == 3);
+  CHECK(ds.polygons[0].flat && wide.polygons[0].flat && !wide.polygons[1].flat && !wide.polygons[2].flat);
+  CHECK(right_most(ds, 0) == 256 && right_most(wide, 0) == 256);
+  CHECK(right_most(ds, 1) == 256);
+  // 4/3 of the way from the middle to the edge: 128 + 4 / 3 * 128, not
+  // wrapped to 9 bits.
+  CHECK(right_most(wide, 1) == 298);
+  CHECK(right_most(wide, 2) == 288);
+  // Each wide polygon has corners of its own, in the order they run.
+  CHECK(wide.polygons[1].first == wide.polygons[0].first + wide.polygons[0].size && !wide.polygons[1].strip_order);
+  // The game's frame and counts are the DS's alone.
+  CHECK(f.g.statistics().polygons_out_of_view == 1);
 }

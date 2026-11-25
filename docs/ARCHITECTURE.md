@@ -137,12 +137,20 @@ not modified to know about them. Identifying the current situation requires
 per-revision knowledge of the game's state, supplied as symbol data.
 
 **Resolution and widescreen.** 3D geometry reaches `gfx` as commands, not
-pixels, so it can be rasterised at any resolution. Widescreen replaces the
-projection at the point where the game loads it and widens the viewport; places
-where the game culls against the original frustum are patched individually. 2D
-elements are positioned through anchors (left, centre, right, stretch-safe
-area) rather than raw 256x192 coordinates. Fixed-layout 2D scenes keep their
-composition and are bordered or extended, never stretched.
+pixels, so it can be rasterised at any resolution. The first widescreen
+(Settings, Graphics, *Widescreen (3D)*; graphics hardware only) changes no
+game code: the geometry engine builds each frame a second time
+(`GeometryEngine::set_wide`), with polygons drawn with perspective cut at
+x = ±4/3 w instead of ±w, and the hardware scene is drawn from it a third
+wider, x times 256·scale / width in the vertex shader so that the DS's
+screen is the exact middle. Orthographic polygons (HUD, message boxes) are
+cut and placed as on the DS. The compose pass puts the 2D picture in the
+middle and the scene alone at the sides, on the lines whose 3D layer is on.
+The frame the game reads (counts, limits) is the DS's. What the game culls
+itself before it sends polygons is not drawn at the sides, so models can
+appear at the edges late; the 2D stays 256 wide. Later, 2D elements could be
+positioned through anchors (left, centre, right, stretch-safe area) rather
+than raw 256x192 coordinates, and the game's own culling widened.
 
 **Graphics compatibility layer.** Each DS feature with fixed-resolution or
 hardware-specific behaviour (display capture, windows, blending, brightness,
@@ -170,7 +178,7 @@ metadata.
 | Every read of ROM data is bounds-checked | A malformed or malicious file must produce an error message, not a crash. Enforced by the damage tests under AddressSanitizer. |
 | In-house test harness | A few dozen lines; avoids a dependency this early. |
 | Extracted data goes to the user data directory | Keeps game data out of the repository and out of the install directory. |
-| Screens: sharp pixels with smooth edges; textures of 3D scenes smoothed only if asked | Nearest scaling makes some DS pixels a window pixel wider than others at sizes that are not whole numbers; bilinear scaling blurs the HUD and text. By default each screen's picture (the console's, or the graphics hardware's at N times the resolution) is enlarged nearest to the next whole multiple of itself at or above the window's scale, and that is scaled bilinear to the window (gfx::ScreenFilter::SharpSmoothEdges, gfx::enlarge_factor): crisp blocks of one size, with their edges mixed over one window pixel. Nearest (Sharp) is what melonDS shows with its filter off: blocks one window pixel apart in size, nothing mixed. Two draws per screen, both on the graphics hardware. Plain bilinear and nearest remain choices. Smoothing textures (bilinear) is a separate choice for the 3D scenes and is done in the 3D renderer, before the screens are put together, for polygons drawn with perspective only: a polygon whose w does not depend on where its corners are was drawn with an orthographic projection, which is how a game draws a HUD in 3D. Textures whose texels are there or not keep hard outlines (a pixel is drawn where at least half of what it mixes is there). |
+| Screens: sharp pixels with smooth edges; textures of 3D scenes smoothed only if asked | Nearest scaling makes some DS pixels a window pixel wider than others at sizes that are not whole numbers; bilinear scaling blurs the HUD and text. By default each screen's picture (the console's, or the graphics hardware's at N times the resolution) is enlarged nearest to the next whole multiple of itself at or above the window's scale, and that is scaled bilinear to the window (gfx::ScreenFilter::SharpSmoothEdges, gfx::enlarge_factor): crisp blocks of one size, with their edges mixed over one window pixel. Nearest (Sharp) is what melonDS shows with its filter off: blocks one window pixel apart in size, nothing mixed. Two draws per screen, both on the graphics hardware. A picture of the graphics hardware made larger than the window shows it (8x shown at 3x) is instead made smaller by averaging all the pixels each window pixel covers (shaders/resolve.frag): bilinear filtering takes four, and would leave the edges stepped. Plain bilinear and nearest remain choices. Smoothing textures (bilinear) is a separate choice for the 3D scenes and is done in the 3D renderer, before the screens are put together, for polygons drawn with perspective only: a polygon whose w does not depend on where its corners are was drawn with an orthographic projection, which is how a game draws a HUD in 3D. Textures whose texels are there or not keep hard outlines (a pixel is drawn where at least half of what it mixes is there). |
 | The settings are described once | Each setting (key, chapter, label, help, kind, values, default) is described in `ui/game_settings.cpp`. The settings book, the settings file (a commented text file a person can edit) and the checks on values are all made from the descriptions, so a new setting needs no screen work. The command line changes settings for one run only, without saving them. |
 | Dear ImGui for the program's own screens | MIT licence, kept in the repository like SkyEmu's core, with its SDL 3 backends: widgets, keyboard and controller navigation and text input that work everywhere SDL does, drawn with SDL's renderer. The look of the book is a matter of style and drawing on top of it; the settings and the builder are kept apart from it (`ui`), so the screens can be redrawn without touching them. |
 | Every run writes a log | A player's problem has to be traceable afterwards: a log in the user data directory, a line per event with wall-clock time and time since start, written out at once so that it ends with what happened last even when the program crashes, which is noted in it. The last ten runs are kept. The builder writes everything it and its programs print to `build.log`. |

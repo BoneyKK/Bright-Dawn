@@ -68,7 +68,10 @@ window. By default each DS pixel stays a crisp block, every one the same size,
 with the edges between them softened over one window pixel: the look of
 melonDS's display. The screen is enlarged without smoothing to the next whole
 multiple of its size, then smoothed (bilinear) down to the window, both by the
-graphics hardware. *Smooth* is plain bilinear, *Sharp* plain nearest. The
+graphics hardware. A picture of the graphics hardware made at more pixels than
+the window has for it (8x in a 1080p window) is made smaller by averaging the
+pixels each window pixel covers, for smooth edges without stairs.
+*Smooth* is plain bilinear, *Sharp* plain nearest. The
 textures of 3D scenes are separate: sharp, as on the DS, unless *Textures in 3D
 scenes* (Settings, Graphics) is set to smooth (bilinear) while the processor
 draws them; polygons drawn without perspective, as a game draws its HUD in
@@ -136,7 +139,15 @@ pixels wide at N times the resolution; *1 pixel* (`pixel`) makes them one
 pixel wide at any resolution; *Off* (`off`) leaves them out. Above 1x they
 are drawn from the triangles' own pixels, as wide on every side and soft on
 their inner side, and the game's smoothing of polygon edges (anti-aliasing)
-is left out. The shaders are
+is left out. *Widescreen (3D)* (Settings, Graphics; off by default;
+`--widescreen`) shows the screen with the 3D scene 16:9 with the graphics
+hardware: the scene goes on a third further on each side, the 2D picture
+stays 256 by 192 in the middle, and the other screen stays 4:3; the stylus
+touches the middle only. Its limits: the 2D (HUD, text, 2D backgrounds) does
+not reach the sides, which show the 3D alone (black on lines without it);
+models the game itself leaves out as out of view appear at the sides late;
+scenes shown through a display capture, and 3D on both screens at once (the
+title), stay 4:3; at 1x the polygon edges are not smoothed. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 `bd_gpu_tests` (ctest's `gpu`) draws test scenes with the graphics hardware

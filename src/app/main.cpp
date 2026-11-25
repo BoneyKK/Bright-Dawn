@@ -113,6 +113,8 @@ constexpr const char* kUsage =
     "  --edge-marking MODE   outlines the game draws around 3D models: original (as\n"
     "                        wide as a DS pixel; the default), pixel (one pixel of\n"
     "                        the 3D resolution) or off\n"
+    "  --widescreen          the 3D scene on the main screen a third wider (16:9),\n"
+    "                        with the graphics hardware\n"
     "  --mute                no sound\n"
     "  --language LANGUAGE   the console's language, which the game shows its text in:\n"
     "                        english, french, german, italian, spanish or japanese\n"
@@ -734,6 +736,8 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::k3DResolution, argv[++i]);
     } else if (arg == "--edge-marking" && has_value) {
       cl.overrides.emplace_back(ui::key::kEdgeMarking, argv[++i]);
+    } else if (arg == "--widescreen") {
+      cl.overrides.emplace_back(ui::key::kWidescreen, "on");
     } else if (arg == "--textures" && has_value) {
       cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
     } else if (arg == "--log-level" && has_value) {

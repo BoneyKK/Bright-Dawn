@@ -87,6 +87,8 @@ class GeometryEngine {
   static constexpr std::size_t kQueueSize = 256;
   static constexpr std::size_t kMostVertices = 6144;  // In a frame.
   static constexpr std::size_t kMostPolygons = 2048;
+  static constexpr std::size_t kMostWideVertices = 2 * kMostVertices;  // In a wide frame (set_wide).
+  static constexpr std::size_t kMostWidePolygons = 2 * kMostPolygons;
 
   // A vertex of the frame. Until its vertex list is finished, x, y, z and w
   // are its place after the matrices ("clip space": it is in view when each
@@ -267,6 +269,19 @@ class GeometryEngine {
   // The frame being built, and the one last handed over for drawing.
   const Frame& building() const { return building_; }
   const Frame& finished() const { return finished_; }
+
+  // A wider picture (the graphics hardware's widescreen, app/hardware_3d.h):
+  // with it on, each frame is also built a second time, as wide_finished().
+  // There the polygons drawn with perspective are cut at x = -4/3 w and
+  // 4/3 w in place of -w and w, so that they reach a third of the DS's
+  // width further on each side, and their corners are placed without x
+  // wrapping (it runs from -43 to 298 on a whole screen); those without
+  // perspective are as in finished(). Each polygon has corners of its own,
+  // in the order they run around it. The frame the game sees, its counts
+  // and its limits are finished()'s alone.
+  void set_wide(bool on) { wide_ = on; }
+  bool wide() const { return wide_; }
+  const Frame& wide_finished() const { return wide_finished_; }
   const Statistics& statistics() const { return statistics_; }
 
  private:
@@ -293,6 +308,9 @@ class GeometryEngine {
   void begin_vertices(std::uint32_t parameter);
   void add_vertex();
   void add_polygon();
+  // Adds `polygon`, of `count` corners (in the order they run around it, not
+  // yet cut), to the wide frame, cut to its view.
+  void add_wide_polygon(const Polygon& polygon, const Vertex* corners, std::size_t count);
   void forget_loose_vertices();
   // Places the vertices of the list that has ended on the screen.
   void place_vertices();
@@ -343,6 +361,9 @@ class GeometryEngine {
   // under way, and for the next.
   std::array<std::uint16_t, 4> viewport_now_ = {0, 0, 256, 192}, viewport_next_ = {0, 0, 256, 192};
   Frame building_, finished_;
+  bool wide_ = false;
+  Frame wide_building_, wide_finished_;  // See set_wide().
+  std::size_t wide_placed_ = 0;
   std::array<std::int32_t, 4> position_result_{};
   std::array<std::int16_t, 3> vector_result_{};
   std::uint32_t viewport_ = 0, swap_parameter_ = 0;

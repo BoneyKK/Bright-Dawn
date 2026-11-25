@@ -161,7 +161,8 @@ class PolygonRenderer {
   // Makes the frame ready for the graphics hardware instead of drawing it.
   // Textures are read from `video` as it is now, and decoded only when their
   // contents were not seen before.
-  const HardwareScene& build_scene(const GeometryEngine::Frame& frame, const VideoMemory& video);
+  // `wide`: `frame` is the geometry engine's wide frame (HardwareScene::wide).
+  const HardwareScene& build_scene(const GeometryEngine::Frame& frame, const VideoMemory& video, bool wide = false);
   const HardwareScene& scene() const { return scene_; }
 
   // State, for tests and reports.

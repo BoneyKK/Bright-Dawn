@@ -1014,3 +1014,76 @@ TEST(hardware_2d_pictures_as_the_processor_draws_them) {
   }
   CHECK(full >= 30 && with_marks >= 3 && with_changes >= 30);
 }
+
+// Widescreen: the scene from the wide frame, drawn a third wider, with the
+// DS's 256 columns in the middle (43 columns on each side at 1x): there the
+// 2D picture with the scene put in where marked; at the sides the scene on
+// the lines that show it, black on the others.
+TEST(hardware_draws_a_wide_scene_with_the_screen_in_the_middle) {
+  Hardware3D& h = hardware();
+  CHECK(Hardware3D::picture_width(1, true) == 342 && Hardware3D::picture_width(3, true) == 1024 &&
+        Hardware3D::picture_width(4, false) == 1024);
+  Frame f;
+  // Red with perspective from past the left edge to the middle of the DS's
+  // screen, at w = 2 (so not flat).
+  const u32 red = 63;
+  f.polygon({Frame::vertex(-43, 0, red, 0x100000, 2 * kOne), Frame::vertex(-43, 192, red, 0x100000, 2 * kOne),
+             Frame::vertex(128, 192, red, 0x100000, 2 * kOne), Frame::vertex(128, 0, red, 0x100000, 2 * kOne)},
+            kOpaque | number(1));
+  // The top half shows the 3D; the bottom half is a blue 2D layer.
+  std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
+  for (std::size_t i = screen.size() / 2; i < screen.size(); ++i) screen[i] = 63u << 12;
+  h.set_wide(true);
+  for (const int scale : {1, 3}) {
+    static std::uint64_t last_serial = 0;
+    const bd::nds::HardwareScene* scene = nullptr;
+    do scene = &f.r.build_scene(f.frame, f.video, true);
+    while (scene->serial <= last_serial);
+    last_serial = scene->serial;
+    CHECK(scene->wide);
+    bool failed = false;
+    REQUIRE(h.draw(0, screen, scene, 0, 0, scale, failed) != nullptr && !failed);
+    std::vector<u32> pixels;
+    REQUIRE(h.read_screen(0, pixels));
+    const int width = Hardware3D::picture_width(scale, true), left = (width - kWidth * scale) / 2;
+    REQUIRE(pixels.size() == static_cast<std::size_t>(width) * kHeight * scale);
+    const auto at = [&](int x, int y) { return pixels[static_cast<std::size_t>(y * scale) * width + x] & 0xFFFFFF; };
+    // The DS's column 127 is red, 128 not: the screen is exactly the middle.
+    CHECK(at(left + 127 * scale, 10) == 0x0000FF && at(left + 128 * scale, 10) == 0);
+    // The left side shows the scene on the lines with 3D, black elsewhere.
+    CHECK(at(0, 10) == 0x0000FF && at(left - 1, 10) == 0x0000FF);
+    CHECK(at(0, 150) == 0 && at(left - 1, 150) == 0 && at(left, 150) == 0xFF0000);
+    // The right side: past the red polygon, nothing.
+    CHECK(at(width - 1, 10) == 0 && at(width - 1, 150) == 0);
+  }
+  // Where outlines are looked for: across all of a wide picture.
+  const std::array<u32, 4> area = Hardware3D::outline_area(f.r.scene(), {0, 0, 256, 96}, 1, true);
+  CHECK(area[0] == 0 && area[2] >= 170 && area[2] <= 173 && area[3] <= 98);
+  h.set_wide(false);
+}
+
+// A picture made larger than the window shows it is made smaller by
+// averaging: at a quarter, each pixel the mean of its 4 by 4.
+TEST(hardware_downscales_a_picture_by_averaging) {
+  Hardware3D& h = hardware();
+  Frame f;
+  f.control(PolygonRenderer::kEdgeMarking);
+  cave(f);
+  const std::vector<u32> large = f.graphics_hardware(4);
+  SDL_Texture* small = h.downscaled(0, 0, 1024, 256, 192);
+  REQUIRE(small != nullptr);
+  std::vector<u32> pixels;
+  REQUIRE(h.read_downscaled(0, pixels) && pixels.size() == static_cast<std::size_t>(kWidth) * kHeight);
+  int differ = 0;
+  for (int y = 0; y < kHeight; ++y)
+    for (int x = 0; x < kWidth; ++x)
+      for (unsigned part = 0; part < 3; ++part) {
+        int sum = 0;
+        for (int j = 0; j < 4; ++j)
+          for (int i = 0; i < 4; ++i)
+            sum += static_cast<int>((large[static_cast<std::size_t>(y * 4 + j) * 1024 + x * 4 + i] >> (8 * part)) & 255);
+        const int got = static_cast<int>((pixels[static_cast<std::size_t>(y) * kWidth + x] >> (8 * part)) & 255);
+        if (std::abs(got - sum / 16) > 1) ++differ;
+      }
+  CHECK(differ == 0);
+}

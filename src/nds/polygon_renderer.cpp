@@ -277,7 +277,7 @@ std::uint32_t PolygonRenderer::scene_texture(const Shape& shape) {
   return index;
 }
 
-const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& frame, const VideoMemory& video) {
+const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& frame, const VideoMemory& video, bool wide) {
   if (keep_inputs_) keep(frame, video);
   frame_ = &frame;
   video_ = &video;
@@ -292,6 +292,7 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
   }
   HardwareScene& scene = scene_;
   ++scene.serial;
+  scene.wide = wide;
   scene.vertices.clear();
   scene.runs.clear();
   pair_.clear();

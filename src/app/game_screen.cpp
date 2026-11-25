@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -186,6 +187,13 @@ void GameScreen::apply_settings(bool first) {
   console_->display().set_check_2d(app_.options.check_2d);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
+  // Widescreen: the main engine's screen a third wider, where the graphics
+  // hardware draws.
+  const bool was_wide = wide_;
+  wide_ = hardware && s.toggle(key::kWidescreen);
+  hardware_.set_wide(wide_);
+  console_->geometry().set_wide(wide_);
+  layout_.wide_screen = wide_ ? main_screen() : -1;
   console_->polygon_renderer().set_edge_marking(ui::edge_marking(s));
   console_->polygon_renderer().keep_inputs(!app_.options.dump_3d.empty());
   const bool smooth = ui::smooth_textures(s);
@@ -210,7 +218,7 @@ void GameScreen::apply_settings(bool first) {
     }
   }
   const long long scale = s.number(key::kScale);
-  if (first || scale != scale_applied_) {
+  if (first || scale != scale_applied_ || wide_ != was_wide) {
     scale_applied_ = scale;
     if ((SDL_GetWindowFlags(app_.window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) == 0) {
       const gfx::Point size = gfx::window_size(static_cast<int>(scale), layout_);
@@ -636,16 +644,28 @@ void GameScreen::give_up_hardware(const char* why) {
                          ", so the processor draws the 3D pictures from now on");
   hardware_failed_ = true;
   shown_3d_ = {};
+  wide_ = false;
+  hardware_.set_wide(false);
+  console_->geometry().set_wide(false);
+  layout_.wide_screen = -1;
   hardware_problem_ = std::string("the graphics hardware failed to ") + why;
   console_->display().hardware_3d_failed(hardware_problem_);
 }
 
-SDL_Texture* GameScreen::enlarged(int i, SDL_Texture* source, int factor) {
+int GameScreen::main_screen() const {
+  return (console_->display().power_control() & nds::Display::kMainOnTop) != 0 ? 0 : 1;
+}
+
+SDL_Texture* GameScreen::enlarged(int i, SDL_Texture* source, int made_at, int factor) {
   const std::size_t n = static_cast<std::size_t>(i);
   SDL_Texture*& t = enlarged_[n];
-  if (factor != enlarged_factor_[n]) {
+  // As wide as the source, in the same proportion (a wide picture is wider).
+  float source_w = 0, source_h = 0;
+  SDL_GetTextureSize(source, &source_w, &source_h);
+  const int width = static_cast<int>(source_w) / made_at * factor + static_cast<int>(source_w) % made_at * factor / made_at;
+  if (factor != enlarged_factor_[n] || width != enlarged_width_[n]) {
     if (t != nullptr) SDL_DestroyTexture(t);
-    t = SDL_CreateTexture(app_.renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, gfx::kScreenWidth * factor,
+    t = SDL_CreateTexture(app_.renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, width,
                           gfx::kScreenHeight * factor);
     if (t == nullptr) {
       log::warning("window", std::string("cannot make the enlarged screens, so they are shown sharp: ") +
@@ -656,6 +676,7 @@ SDL_Texture* GameScreen::enlarged(int i, SDL_Texture* source, int factor) {
     SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
     SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
     enlarged_factor_[n] = factor;
+    enlarged_width_[n] = width;
     enlarged_stale_[n] = true;
     log::writef(log::Level::Debug, "window", "screen %d enlarged %d times before smoothing", i, factor);
   }
@@ -669,9 +690,23 @@ SDL_Texture* GameScreen::enlarged(int i, SDL_Texture* source, int factor) {
   return t;
 }
 
+// Pictures the main engine stays on one screen before that one is wide.
+constexpr int kSteadyPictures = 30;
+
 void GameScreen::draw() {
   int width = 0, height = 0;
   SDL_GetCurrentRenderOutputSize(app_.renderer, &width, &height);
+  // With widescreen, the main engine's screen is the wide one, once it has
+  // stayed there half a second: a game that shows 3D on both screens moves
+  // it every frame, and both are then 4:3.
+  const int main = main_screen();
+  if (main != main_screen_seen_) {
+    main_screen_seen_ = main;
+    main_screen_pictures_ = 0;
+  } else if (main_screen_pictures_ < kSteadyPictures) {
+    ++main_screen_pictures_;
+  }
+  layout_.wide_screen = wide_ && main_screen_pictures_ >= kSteadyPictures ? main : -1;
   screens_ = gfx::lay_out(width, height, layout_);
   // Each screen: the graphics hardware's picture where it made one (at a
   // whole multiple of the DS screen's size), else the console's own. For
@@ -685,21 +720,50 @@ void GameScreen::draw() {
     if (filter_ != gfx::ScreenFilter::SharpSmoothEdges || enlarging_failed_) continue;
     float w = 0, h = 0;
     SDL_GetTextureSize(shown[i], &w, &h);
-    const int made_at = std::max(1, static_cast<int>(w) / gfx::kScreenWidth);
+    // By its lines: a wide picture is wider than 256 times that.
+    const int made_at = std::max(1, static_cast<int>(h) / gfx::kScreenHeight);
     const int factor = gfx::enlarge_factor(filter_, screens_.scale, largest_texture_, made_at);
     if (factor == made_at) continue;  // Already a whole multiple at or above the scale.
-    if (SDL_Texture* e = enlarged(static_cast<int>(i), shown[i], factor); e != nullptr) shown[i] = e;
+    if (SDL_Texture* e = enlarged(static_cast<int>(i), shown[i], made_at, factor); e != nullptr) shown[i] = e;
   }
   SDL_SetRenderDrawColor(app_.renderer, 0, 0, 0, 255);
   SDL_RenderClear(app_.renderer);
-  const auto place = [&](SDL_Texture* texture, const gfx::Rect& r) {
+  // A wide picture (the graphics hardware's, with widescreen) fills a wide
+  // screen, and only its 256 columns in the middle show on one that is not;
+  // a picture of the DS's size goes in the middle of a wide screen.
+  // A graphics hardware picture larger than its place (made at 8x, shown
+  // at 3x) is made smaller by averaging (Hardware3D::downscaled), but for
+  // the Sharp filter: bilinear filtering alone would leave its edges
+  // stepped.
+  const auto place = [&](std::size_t i, SDL_Texture* texture, const gfx::Rect& r, bool wide_screen) {
     if (r.w <= 0 || r.h <= 0) return;  // Not shown (the touch screen alone).
-    const SDL_FRect to{static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w),
-                       static_cast<float>(r.h)};
-    SDL_RenderTexture(app_.renderer, texture, nullptr, &to);
+    float w = 0, h = 0;
+    SDL_GetTextureSize(texture, &w, &h);
+    const float middle = h * gfx::kScreenWidth / gfx::kScreenHeight;  // The DS's screen's width in the picture.
+    const bool wide_picture = w > middle + 0.5f;
+    SDL_FRect to{static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w), static_cast<float>(r.h)};
+    SDL_FRect from{0, 0, w, h};
+    if (wide_screen && !wide_picture) {
+      const float across = to.w * static_cast<float>(gfx::kScreenWidth / gfx::kWideWidth);
+      to.x += (to.w - across) / 2;
+      to.w = across;
+    } else if (!wide_screen && wide_picture) {
+      from.x = (w - middle) / 2;
+      from.w = middle;
+    }
+    if (texture == shown_3d_[i] && filter_ != gfx::ScreenFilter::Sharp && from.h > to.h * 1.001f) {
+      const float left = std::round(to.x), top = std::round(to.y);
+      const int across = static_cast<int>(std::round(to.x + to.w) - left), down = static_cast<int>(std::round(to.y + to.h) - top);
+      if (SDL_Texture* smaller = hardware_.downscaled(static_cast<int>(i), from.x, from.w, across, down)) {
+        const SDL_FRect at{left, top, static_cast<float>(across), static_cast<float>(down)};
+        SDL_RenderTexture(app_.renderer, smaller, nullptr, &at);
+        return;
+      }
+    }
+    SDL_RenderTexture(app_.renderer, texture, &from, &to);
   };
-  place(shown[0], screens_.top);
-  place(shown[1], screens_.bottom);
+  place(0, shown[0], screens_.top, screens_.top_wide);
+  place(1, shown[1], screens_.bottom, screens_.bottom_wide);
 }
 
 void GameScreen::dump_3d() {

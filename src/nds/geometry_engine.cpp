@@ -65,11 +65,9 @@ i64 wrapping_plus(i64 a, i64 b) { return static_cast<i64>(static_cast<std::uint6
 i64 wrapping_minus(i64 a, i64 b) { return static_cast<i64>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(b)); }
 
 // Where the edge from `a` to `b` crosses one side of the view volume, given
-// each end's distance to that side. Everything a vertex carries is taken in
-// proportion.
-Vertex crossing(const Vertex& a, const Vertex& b, i32 value_a, i32 value_b) {
-  const i64 d1 = static_cast<i64>(value_a) + a.w;
-  const i64 d2 = static_cast<i64>(value_b) + b.w;
+// each end's distance to that side (d1 and d2; 0 or more inside). Everything
+// a vertex carries is taken in proportion.
+Vertex crossing(const Vertex& a, const Vertex& b, i64 d1, i64 d2) {
   if (d2 == d1) return a;
   const auto between = [&](i64 from, i64 to) { return (d2 * from - d1 * to) / (d2 - d1); };
   Vertex v;
@@ -90,35 +88,37 @@ Vertex crossing(const Vertex& a, const Vertex& b, i32 value_a, i32 value_b) {
 // Cuts a polygon down to the view volume (each of x, y, z between -w and w),
 // one side after the other. `v` holds `size` corners and has room for ten:
 // each side can add one. Returns whether anything was cut off; `size` is
-// zero when nothing is left.
-bool cut_to_view(Vertex* v, std::size_t& size) {
+// zero when nothing is left. `wide`: x between -4/3 w and 4/3 w, for a
+// picture a third wider than the DS's (GeometryEngine::set_wide).
+bool cut_to_view(Vertex* v, std::size_t& size, bool wide = false) {
   bool cut = false;
   Vertex next[10];
   for (int side = 0; side < 6 && size != 0; ++side) {
-    const auto value = [side](const Vertex& p) {
+    // How far inside the side a corner is: 0 or more inside.
+    const auto distance = [side, wide](const Vertex& p) -> i64 {
       const i32 c = side < 2 ? p.x : side < 4 ? p.y : p.z;
       // Negated in 32 bits, as the hardware's arithmetic wraps.
-      return (side & 1) != 0 ? static_cast<i32>(0u - static_cast<u32>(c)) : c;
+      const i64 value = (side & 1) != 0 ? static_cast<i32>(0u - static_cast<u32>(c)) : c;
+      return wide && side < 2 ? 3 * value + 4 * static_cast<i64>(p.w) : value + p.w;
     };
     // A side that every corner is inside leaves the polygon as it is: most
     // polygons are in view, and so are spared the copying below.
-    if (std::all_of(v, v + size, [&](const Vertex& p) { return static_cast<i64>(value(p)) >= -static_cast<i64>(p.w); }))
-      continue;
+    if (std::all_of(v, v + size, [&](const Vertex& p) { return distance(p) >= 0; })) continue;
     std::size_t kept = 0;
     for (std::size_t j = 0; j < size; ++j) {
       const Vertex& current = v[j];
       const Vertex& previous = v[(j + size - 1) % size];
-      const i32 current_value = value(current), previous_value = value(previous);
-      const bool current_in = static_cast<i64>(current_value) >= -static_cast<i64>(current.w);
-      const bool previous_in = static_cast<i64>(previous_value) >= -static_cast<i64>(previous.w);
+      const i64 current_distance = distance(current), previous_distance = distance(previous);
+      const bool current_in = current_distance >= 0;
+      const bool previous_in = previous_distance >= 0;
       if (current_in) {
         if (!previous_in) {
-          next[kept++] = crossing(current, previous, current_value, previous_value);
+          next[kept++] = crossing(current, previous, current_distance, previous_distance);
           cut = true;
         }
         next[kept++] = current;
       } else if (previous_in) {
-        next[kept++] = crossing(current, previous, current_value, previous_value);
+        next[kept++] = crossing(current, previous, current_distance, previous_distance);
         cut = true;
       }
     }
@@ -774,6 +774,20 @@ void GeometryEngine::place_vertices() {
     v.z = static_cast<i32>(((static_cast<i64>(v.z) * (1 << 14)) / w + 0x3FFF) * (1 << 9));
   }
   placed_ = building_.vertices.size();
+  // The wide frame's, the same way, but x does not wrap: it goes past the
+  // DS's screen on both sides.
+  for (std::size_t i = wide_placed_; i < wide_building_.vertices.size(); ++i) {
+    Vertex& v = wide_building_.vertices[i];
+    if (v.w == 0) continue;
+    const i64 w = v.w;
+    const i64 sixteenths_x = (v.x + w) * width * 16 / (w * 2), sixteenths_y = (w - v.y) * height * 16 / (w * 2);
+    v.fine_x = static_cast<i32>(sixteenths_x + left * 16);
+    v.fine_y = static_cast<i32>((sixteenths_y + top * 16) & 0xFFF);
+    v.x = static_cast<i32>(sixteenths_x / 16 + left);
+    v.y = static_cast<i32>((sixteenths_y / 16 + top) & 0xFF);
+    v.z = static_cast<i32>(((static_cast<i64>(v.z) * (1 << 14)) / w + 0x3FFF) * (1 << 9));
+  }
+  wide_placed_ = wide_building_.vertices.size();
   viewport_now_ = viewport_next_;
 }
 
@@ -789,6 +803,13 @@ void GeometryEngine::hand_over_frame() {
   building_.vertices.clear();
   building_.polygons.clear();
   building_.depth_is_w = (swap_parameter_ & 2) != 0;
+  wide_building_.swap_parameter = finished_.swap_parameter;
+  wide_building_.depth_is_w = finished_.depth_is_w;
+  std::swap(wide_building_, wide_finished_);
+  wide_building_.vertices.clear();
+  wide_building_.polygons.clear();
+  wide_building_.depth_is_w = building_.depth_is_w;
+  wide_placed_ = 0;
   list_vertices_ = 0;
 }
 
@@ -897,6 +918,7 @@ void GeometryEngine::add_polygon() {
     ++statistics_.polygons_past_far_side;
     size = 0;
   } else {
+    if (wide_) add_wide_polygon(polygon, corner, corners);
     cut = cut_to_view(corner, size);
     if (size == 0) ++statistics_.polygons_out_of_view;
   }
@@ -969,6 +991,24 @@ void GeometryEngine::add_polygon() {
   polygon.strip_order = list_kind_ == kQuadStrip && !cut;
   building_.polygons.push_back(polygon);
   ++statistics_.polygons;
+}
+
+void GeometryEngine::add_wide_polygon(const Polygon& polygon, const Vertex* corners, std::size_t count) {
+  Vertex corner[10];
+  std::copy(corners, corners + count, corner);
+  std::size_t size = count;
+  // Drawn with perspective: as far as the wider picture shows. Without (a
+  // HUD, a menu): as on the DS, as such polygons are placed on its screen.
+  cut_to_view(corner, size, !polygon.flat);
+  if (size == 0 || wide_building_.polygons.size() >= kMostWidePolygons ||
+      wide_building_.vertices.size() + size > kMostWideVertices)
+    return;
+  Polygon wide = polygon;
+  wide.first = static_cast<std::uint16_t>(wide_building_.vertices.size());
+  wide.size = static_cast<std::uint8_t>(size);
+  wide.strip_order = false;
+  wide_building_.vertices.insert(wide_building_.vertices.end(), corner, corner + size);
+  wide_building_.polygons.push_back(wide);
 }
 
 }  // namespace bd::nds

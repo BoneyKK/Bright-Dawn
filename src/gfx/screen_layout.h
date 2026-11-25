@@ -10,6 +10,11 @@
 //   that fits; when not even one fits, as by Fit;
 // - or to fill as much of the window as the screens' shape allows (Fit).
 //
+// With the graphics hardware's widescreen (app/hardware_3d.h), one screen,
+// the one with the 3D scene, is a third wider (16:9: kWideWidth DS pixels
+// across), its 256 columns in the middle; the other stays 4:3, and in a
+// stack it is centred over or under the wide one.
+//
 // Nothing here knows about a window system: sizes are in window pixels.
 #pragma once
 
@@ -18,6 +23,8 @@
 namespace bd::gfx {
 
 inline constexpr int kScreenWidth = 256, kScreenHeight = 192;
+// A wide screen's width in DS pixels: 16:9 at the DS's 192 lines.
+inline constexpr double kWideWidth = kScreenWidth * 4.0 / 3.0;
 
 // BottomOnly: the touch screen alone; the top screen is not shown (its
 // rectangle has no area), and the gap and which is first do not matter.
@@ -29,6 +36,7 @@ struct LayoutOptions {
   Scaling scaling = Scaling::WholeNumbers;
   int gap = 0;                // DS pixels between the screens; 0 or more.
   bool bottom_first = false;  // The touch screen above (or left of) the other.
+  int wide_screen = -1;       // The screen shown wide: 0 the top, 1 the touch screen, -1 neither.
 };
 
 struct Rect {
@@ -38,6 +46,8 @@ struct Rect {
 struct ScreenLayout {
   Rect top, bottom;  // The console's top screen and its touch screen.
   double scale = 0;  // Window pixels per DS pixel.
+  // Whether each is wide (kWideWidth across, the DS's screen in the middle).
+  bool top_wide = false, bottom_wide = false;
 };
 
 struct Point {
@@ -81,7 +91,8 @@ int prescale_factor(double scale, int largest_texture);
 int enlarge_factor(ScreenFilter filter, double scale, int largest_texture, int made_at);
 
 // The touch screen pixel (0-255 across, 0-191 down) under a point of the
-// window, or nothing when the point is not on the touch screen.
+// window, or nothing when the point is not on the touch screen. On a wide
+// touch screen, only its 256 columns in the middle are the DS's.
 std::optional<Point> touch_point(const ScreenLayout& layout, double x, double y);
 
 }  // namespace bd::gfx

@@ -137,7 +137,8 @@ void Display::line_begins(unsigned line) {
       if (swaps != swaps_built_) {
         swaps_built_ = swaps;
         frame_log::Scope frame_log_scope(frame_log::kBuildScene);
-        renderer_.build_scene(geometry_.finished(), video_);
+        if (geometry_.wide()) renderer_.build_scene(geometry_.wide_finished(), video_, true);
+        else renderer_.build_scene(geometry_.finished(), video_);
         have_scene_ = true;
         ++statistics_.pictures_3d;
       }

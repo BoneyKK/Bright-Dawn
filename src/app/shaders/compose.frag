@@ -22,6 +22,12 @@
 // polygon number takes its number's edge colour, as far as it is within
 // that distance (soft on the inner side), then fog. So an outline is as wide on every side, on the
 // nearer of two groups only, and never inside a group.
+//
+// Widescreen (u_wide.x is 1): the scene is wider than the screen's 256
+// columns, which are in its middle; a screen is drawn as wide as the scene,
+// and at its sides it is the scene alone on the lines that show it (u_wide_rows),
+// with the effect the DS's screen gives the 3D at that line's end, and the
+// master brightness; elsewhere black. A capture takes the scene's middle.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -74,6 +80,11 @@ layout(set = 3, binding = 0) uniform Compose {
   // bounds): left, top, right and bottom, the last two past the last.
   // u_edges holds nothing outside.
   uvec4 u_outline_bounds;
+  // Widescreen: x, 1; y, where the screen's 256 columns start, and z, how
+  // much of the width they are (0 to 1); w, 1 where the sides show the
+  // scene.
+  vec4 u_wide;
+  uvec4 u_wide_rows[2];  // The lines whose sides show the scene: a bit each.
 };
 
 uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
@@ -246,9 +257,38 @@ vec3 composed(vec2 at, vec2 inside, bool lit) {
   return effect == 1u ? mix(below, c, scene.a) : c;
 }
 
+// A wide screen's side, at `at` of the screen (x outside 0 to 1) and
+// `inside` the scene.
+vec3 side(vec2 at, vec2 inside) {
+  vec3 c = vec3(0.0);
+  const uint line = min(uint(at.y * 192.0), 191u);
+  const uint word = line / 32u;
+  if (u_wide.w > 0.5 && ((u_wide_rows[word / 4u][word % 4u] >> (line % 32u)) & 1u) != 0u) {
+    const vec4 scene = scene_at(inside);
+    if (scene.a >= 0.5 / 63.0) {
+      c = scene.rgb / scene.a;
+      // The effect of the screen's pixel at that end of the line, where it
+      // shows the 3D.
+      const uint mark = uint(texture(u_screen, vec2(clamp(at.x, 0.5 / 256.0, 255.5 / 256.0), at.y)).a * 255.0 + 0.5);
+      const uint effect = (mark & 128u) != 0u ? mark & 3u : 0u;
+      c = brightened(c, effect, float((mark >> 2) & 31u) / 16.0);
+      if (effect == 1u) c *= scene.a;
+    }
+  }
+  return brightened(c, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
+}
+
 void main() {
   o_colour = vec4(0.0, 0.0, 0.0, 1.0);
   if (u_capture.x == 0u && u_options.x < 0.5) {
+    if (u_wide.x > 0.5) {
+      // The screen's 256 columns in the middle; a kept capture put in is the
+      // screen's size.
+      const vec2 at = vec2((v_place.x - u_wide.y) / u_wide.z, v_place.y);
+      const vec2 inside = vec2(u_options.y > 200.0 ? at.x : v_place.x, v_place.y * 192.0 / u_options.y);
+      o_colour.rgb = at.x < 0.0 || at.x >= 1.0 ? side(at, inside) : composed(at, inside, true);
+      return;
+    }
     o_colour.rgb = composed(v_place, vec2(v_place.x, v_place.y * 192.0 / u_options.y), true);
     return;
   }
@@ -261,12 +301,14 @@ void main() {
   uint i = (n - (u_capture.w & 0xFFFFu)) & 0xFFFFu;
   if (i / width >= height) discard;
   vec2 at = (vec2(float(i % width), float(i / width)) + within) / vec2(256.0, 192.0);
+  // In a wide scene, its middle.
+  const vec2 inside = u_wide.x > 0.5 ? vec2(u_wide.y + at.x * u_wide.z, at.y) : at;
   vec3 first;
   if ((u_capture.x & 4u) != 0u) {
-    vec4 scene = scene_at(at);
+    vec4 scene = scene_at(inside);
     first = scene.a < 0.5 / 63.0 ? vec3(0.0) : scene.rgb / scene.a;
   } else {
-    first = composed(at, at, false);
+    first = composed(at, inside, false);
   }
   uint j = ((u_capture.w >> 16) + i) & 0xFFFFu;
   vec3 second = texture(u_second, (vec2(float(j % 256u), float(j / 256u)) + within) / 256.0).rgb;

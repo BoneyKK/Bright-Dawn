@@ -103,6 +103,10 @@ std::vector<SettingDef> game_setting_definitions() {
                         "Sets the outlines the game draws around 3D models (edge marking): as wide as a DS pixel at "
                         "any resolution, one pixel wide, or none.",
                         {{"original", "Original thickness"}, {"pixel", "1 pixel"}, {"off", "Off"}}, "original"));
+  defs.push_back(toggle(key::kWidescreen, "Graphics", "Widescreen (3D)",
+                        "With the graphics hardware, shows the 3D scene on the main screen a third wider (16:9). "
+                        "The 2D pictures and the touch screen stay 4:3.",
+                        false));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
                         "Sets whether the processor draws 3D textures sharp or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));

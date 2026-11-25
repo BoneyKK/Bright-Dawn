@@ -29,6 +29,14 @@
 // out as its bank. The last three are kept. A screen marked where it shows
 // one is drawn with it put in, as with the scene.
 //
+// Widescreen (set_wide): the scene, from the geometry engine's wide frame
+// (nds::HardwareScene::wide), is drawn a third wider than the DS's screen
+// (picture_width()), the DS's 256 columns in the middle; a screen is that
+// wide too, its 2D picture in the middle, and at its sides the scene alone
+// (with fog, outlines, the 3D's effect at the line's end and the master
+// brightness) on the lines that show it, else black. Captures stay the
+// DS's size, of the scene's middle. The rasterizer (1x) is not used then.
+//
 // Made for speed, not to be exact: see nds/hardware_scene.h for what is
 // left out. The program's own drawing (nds::PolygonRenderer) stays for
 // where this cannot be used.
@@ -61,6 +69,20 @@ class Hardware3D {
   bool open(SDL_Renderer* renderer, std::string& error);
   bool is_open() const { return device_ != nullptr; }
 
+  // Widescreen (see above). Changing it lets go of the pictures made and
+  // the captures kept.
+  void set_wide(bool on) {
+    if (on == wide_) return;
+    wide_ = on;
+    if (device_ != nullptr) release_targets();
+  }
+  bool wide() const { return wide_; }
+  // How many pixels across the scene and the screens are at `scale`: 256
+  // times it, or (wide) an even number near a third more.
+  static int picture_width(int scale, bool wide) {
+    return wide ? 2 * ((1024 * scale + 3) / 6) : 256 * scale;
+  }
+
   // The capture numbered `number`, made as `recipe` says, `scale` times as
   // large: its first source is `source` (256 * 192 colours with marks) with
   // `scene` put in, or `scene` alone. False if it could not be made.
@@ -89,9 +111,18 @@ class Hardware3D {
     picture.pixels = &screen;
     return draw(which, picture, scene, capture, brightness, scale, failed);
   }
+  // The last picture draw() made of screen `which`, its columns from
+  // `from_x` (`from_w` of them) and all its lines, made `width` by `height`
+  // pixels by averaging the part of it each covers (shaders/resolve.frag):
+  // for a window that shows it smaller than it is made. Null if it cannot
+  // be made.
+  SDL_Texture* downscaled(int which, float from_x, float from_w, int width, int height);
+  // For tests and checks: the last picture downscaled() made of screen
+  // `which`, as read_screen() gives it, `width` by `height`.
+  bool read_downscaled(int which, std::vector<std::uint32_t>& pixels);
   // For tests and checks: the last picture draw() made of screen `which`,
-  // as red, green, blue and alpha bytes (red lowest), row after row, 256 *
-  // scale by 192 * scale. False if it cannot be read.
+  // as red, green, blue and alpha bytes (red lowest), row after row,
+  // picture_width() by 192 * scale. False if it cannot be read.
   bool read_screen(int which, std::vector<std::uint32_t>& pixels);
   // For tests and checks: the last 2D picture of a screen, drawn or
   // uploaded, as red, green, blue and the mark (bits 24 to 31 of nds::
@@ -111,13 +142,16 @@ class Hardware3D {
   // number) can cover in a picture `width` by `height`, a pixel more on
   // each side: left, top, right and bottom, the right and bottom ones past
   // the last. All 0 if there are none. Outlines are looked for only there.
+  // `across`: x is drawn times it (a wide picture's, 256 * scale / width).
   static std::array<std::uint32_t, 4> opaque_bounds(const nds::HardwareScene& scene, std::uint32_t width,
-                                                    std::uint32_t height);
+                                                    std::uint32_t height, float across = 1.0f);
   // Where outlines are looked for at `scale`, where the DS's pixels
   // `shown` (left, top, right and bottom, as above) show the scene: the
-  // opaque polygons' bounds, within a DS pixel of those.
+  // opaque polygons' bounds, within a DS pixel of those. In a wide picture
+  // (`wide`) the sides show the scene on the lines it is shown on.
   static std::array<std::uint32_t, 4> outline_area(const nds::HardwareScene& scene,
-                                                   const std::array<std::uint32_t, 4>& shown, int scale);
+                                                   const std::array<std::uint32_t, 4>& shown, int scale,
+                                                   bool wide = false);
 
  public:
   // The compose shader's uniforms, as std140 lays them out.
@@ -138,6 +172,10 @@ class Hardware3D {
     std::uint32_t outline[4];
     float outline_colours[8][4];
     std::uint32_t outline_bounds[4];  // Where outlines can be: opaque_bounds().
+    // Widescreen: 1; where the DS's screen starts and how much of the width
+    // it is (0 to 1 each); 1 where the sides show the scene.
+    float wide[4];
+    std::uint32_t wide_rows[8];  // The lines whose sides show the scene: a bit each, from bit 0 of the first.
   };
 
  private:
@@ -193,6 +231,7 @@ class Hardware3D {
   SDL_GPUGraphicsPipeline* engine2d_pipeline_ = nullptr;  // shaders/engine2d.frag
   SDL_GPUGraphicsPipeline* edges_pipeline_ = nullptr;     // shaders/edges.frag
   SDL_GPUGraphicsPipeline* nearby_pipeline_ = nullptr;    // shaders/nearby.frag
+  SDL_GPUGraphicsPipeline* resolve_pipeline_ = nullptr;   // shaders/resolve.frag
   SDL_GPUSampler* nearest_ = nullptr;
   SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
   SDL_GPUTexture* atlas_ = nullptr;
@@ -223,8 +262,10 @@ class Hardware3D {
   SDL_GPUBuffer* changes_ = nullptr;  // nds::Video2D::changes, then nds::Video2D::changed.
   std::uint32_t changes_size_ = 0;
 
-  // At the scale in use.
+  bool wide_ = false;
+  // At the scale in use, and how wide the pictures are (picture_width()).
   int scale_ = 0;
+  int width_ = 0;
   SDL_GPUTexture* scene_target_ = nullptr;
   SDL_GPUTexture* fog_marks_ = nullptr;  // The scene's depths, and where fog is taken.
   SDL_GPUTexture* numbers_ = nullptr;    // The numbers of the opaque polygons drawn (scene.frag).
@@ -241,6 +282,10 @@ class Hardware3D {
   std::array<SDL_GPUTexture*, 2> outputs_{};  // For the top and the bottom screen,
   std::array<SDL_Texture*, 2> shown_{};       // as textures of the renderer.
   std::array<Kept, 3> kept_{};
+  // downscaled()'s pictures, for the top and the bottom screen, and their sizes.
+  std::array<SDL_GPUTexture*, 2> smaller_{};
+  std::array<SDL_Texture*, 2> smaller_shown_{};
+  std::array<std::array<int, 2>, 2> smaller_size_{};
 
   // The atlas: textures by key, placed on shelves from the top down.
   std::unordered_map<std::uint64_t, Place> placed_;

@@ -96,7 +96,12 @@ class GameScreen {
   // Screen i's picture `source` (the console's or the graphics hardware's),
   // enlarged without smoothing to `factor` times the DS screen's size, made
   // again when the factor changes or the screens do; nothing if it cannot be.
-  SDL_Texture* enlarged(int i, SDL_Texture* source, int factor);
+  // `source` (made at `made_at` times the DS's resolution) enlarged `factor`
+  // / `made_at` times, for screen `i`.
+  SDL_Texture* enlarged(int i, SDL_Texture* source, int made_at, int factor);
+  // The screen the main engine shows (0 the top, 1 the touch screen): the
+  // one that is wide with widescreen on.
+  int main_screen() const;
   void draw();
   void capture(bool last);
   // Writes the last 3D scene, as made, to --dump-3d's file.
@@ -116,6 +121,7 @@ class GameScreen {
   gfx::ScreenFilter filter_ = gfx::ScreenFilter::SharpSmoothEdges;
   std::array<SDL_Texture*, 2> enlarged_{};  // Render targets: top, bottom.
   std::array<int, 2> enlarged_factor_{};
+  std::array<int, 2> enlarged_width_{};
   std::array<bool, 2> enlarged_stale_{true, true};
   bool enlarging_failed_ = false;
   int largest_texture_ = 4096;
@@ -124,6 +130,11 @@ class GameScreen {
   // frame last shown, or null when the frame was drawn here.
   Hardware3D hardware_;
   bool hardware_tried_ = false, hardware_failed_ = false;
+  bool wide_ = false;  // Widescreen, with the graphics hardware (Hardware3D::set_wide).
+  // The screen the main engine was last on, and for how many pictures in a
+  // row: the wide one only once it stays (the 3D on both screens, as the
+  // title has it, switches it every frame).
+  int main_screen_seen_ = -1, main_screen_pictures_ = 0;
   std::uint64_t checked_2d_ = 0, differed_2d_ = 0;  // --check-2d: pictures checked, and those that differ.
   std::string hardware_problem_;  // Why the graphics hardware cannot draw, when it is asked for.
   // The screens as the graphics hardware drew them (top, bottom), where it

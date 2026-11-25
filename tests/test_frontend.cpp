@@ -147,6 +147,52 @@ TEST(layout_finds_the_touch_screen_pixel_under_a_point) {
   CHECK(end.has_value() && end->x == 255 && end->y == 191);
 }
 
+TEST(layout_makes_one_screen_wide_and_centres_the_other) {
+  using namespace bd::gfx;
+  // Widescreen on the touch screen, at 3 times: 1024 by 576 (16:9) under
+  // the top screen's 768 by 576, which is centred over it.
+  LayoutOptions options;
+  options.wide_screen = 1;
+  CHECK(window_size(3, options).x == 1024 && window_size(3, options).y == 1152);
+  const ScreenLayout stacked = lay_out(1024, 1152, options);
+  CHECK(stacked.scale == 3 && stacked.bottom_wide && !stacked.top_wide);
+  CHECK(same(stacked.top, 128, 0, 768, 576));
+  CHECK(same(stacked.bottom, 0, 576, 1024, 576));
+  // Side by side, the top screen wide.
+  options.arrangement = Arrangement::SideBySide;
+  options.wide_screen = 0;
+  CHECK(window_size(3, options).x == 1792 && window_size(3, options).y == 576);
+  const ScreenLayout beside = lay_out(1792, 576, options);
+  CHECK(beside.top_wide && !beside.bottom_wide);
+  CHECK(same(beside.top, 0, 0, 1024, 576));
+  CHECK(same(beside.bottom, 1024, 0, 768, 576));
+  // The touch screen alone, wide.
+  options.arrangement = Arrangement::BottomOnly;
+  options.wide_screen = 1;
+  CHECK(window_size(3, options).x == 1024 && window_size(3, options).y == 576);
+  CHECK(same(lay_out(1024, 576, options).bottom, 0, 0, 1024, 576));
+  // The top screen wide, with the touch screen alone shown: 4:3.
+  options.wide_screen = 0;
+  const ScreenLayout alone = lay_out(1024, 576, options);
+  CHECK(!alone.top_wide && !alone.bottom_wide && same(alone.bottom, 128, 0, 768, 576));
+}
+
+TEST(touch_maps_onto_the_middle_of_a_wide_touch_screen) {
+  using namespace bd::gfx;
+  LayoutOptions options;
+  options.wide_screen = 1;
+  const ScreenLayout layout = lay_out(1024, 1152, options);
+  // The DS's 256 columns are the middle 768 window pixels of the 1024.
+  CHECK(!touch_point(layout, 127.9, 600).has_value());
+  const auto first = touch_point(layout, 128, 576);
+  CHECK(first.has_value() && first->x == 0 && first->y == 0);
+  const auto middle = touch_point(layout, 512, 576 + 288);
+  CHECK(middle.has_value() && middle->x == 128 && middle->y == 96);
+  const auto last = touch_point(layout, 895.9, 1151.9);
+  CHECK(last.has_value() && last->x == 255 && last->y == 191);
+  CHECK(!touch_point(layout, 896, 600).has_value());
+}
+
 TEST(screen_image_makes_six_bits_eight) {
   using bd::gfx::eight_bits;
   CHECK(eight_bits(0) == 0);

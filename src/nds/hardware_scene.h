@@ -83,6 +83,11 @@ struct HardwareScene {
   };
 
   std::uint64_t serial = 0;  // One more for each scene made.
+  // Made from the geometry engine's wide frame (GeometryEngine::set_wide):
+  // x of the DS's screen still runs from -w to w, and polygons drawn with
+  // perspective reach on to -4/3 w and 4/3 w. The graphics hardware draws it
+  // a third wider than the DS's screen, the DS's screen in the middle.
+  bool wide = false;
   std::vector<Vertex> vertices;
   std::vector<Run> runs;
   std::vector<Texture> textures;
