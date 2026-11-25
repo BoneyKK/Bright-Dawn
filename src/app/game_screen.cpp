@@ -194,6 +194,7 @@ void GameScreen::apply_settings(bool first) {
   wide_ = hardware && s.toggle(key::kWidescreen);
   hardware_.set_wide(wide_);
   console_->geometry().set_wide(wide_);
+  console_->display().set_sides(wide_);
   layout_.wide_screen = wide_ ? main_screen() : -1;
   console_->polygon_renderer().set_edge_marking(ui::edge_marking(s));
   console_->polygon_renderer().keep_inputs(!app_.options.dump_3d.empty());
@@ -610,6 +611,7 @@ void GameScreen::upload_screens() {
       picture.video = &display.video_2d();
     } else {
       picture.pixels = i == 0 ? &display.top_screen() : &display.bottom_screen();
+      if (!display.screen_sides(i).empty()) picture.sides = &display.screen_sides(i);
     }
     bool failed = false;
     SDL_Texture* t = hardware_.draw(i, picture,
@@ -657,7 +659,8 @@ void GameScreen::keep_capture() {
   if (number == 0 || number == capture_kept_ || !hardware_.is_open() || hardware_failed_) return;
   capture_kept_ = number;
   if (!hardware_.capture(console_->polygon_renderer().scene(), display.capture_recipe(), display.capture_source(), number,
-                         scale_3d(), display.kept_numbers()))
+                         scale_3d(), display.kept_numbers(),
+                         display.capture_sides().empty() ? nullptr : &display.capture_sides()))
     give_up_hardware("make a display capture");
 }
 
@@ -673,6 +676,7 @@ void GameScreen::give_up_hardware(const char* why) {
   wide_ = false;
   hardware_.set_wide(false);
   console_->geometry().set_wide(false);
+  console_->display().set_sides(false);
   layout_.wide_screen = -1;
   hardware_problem_ = std::string("the graphics hardware failed to ") + why;
   console_->display().hardware_3d_failed(hardware_problem_);

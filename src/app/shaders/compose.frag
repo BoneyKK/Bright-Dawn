@@ -30,7 +30,9 @@
 // columns, which are in its middle; a screen is drawn as wide as the scene,
 // and at its sides it is the scene alone on the lines that show it (u_wide_rows),
 // with the effect the DS's screen gives the 3D at that line's end, and the
-// master brightness; elsewhere black. Where the line's end shows a kept
+// master brightness; elsewhere black. Where the processor drew the 2D
+// picture further at its sides (u_sides, nds::DisplayEngine::set_sides),
+// those pixels are put together as the screen's are. Else, where the line's end shows a kept
 // capture put in, the sides show it there too, under the scene. A kept
 // capture is as wide as the scene, its bank's 256 columns in the middle: a
 // capture of all of each line of a bank has sides made as a screen's are
@@ -60,13 +62,18 @@ layout(set = 2, binding = 6) uniform sampler2D u_nearby;
 // 1 << 24 where they are to be taken.
 // A kept capture put in where marked (u_put_info.x is 1).
 layout(set = 2, binding = 7) uniform sampler2D u_put;
-layout(std430, set = 2, binding = 8) readonly buffer Finished { uint finished[]; };
+// Widescreen: the screen's pixels at its sides, as u_screen holds its own:
+// for each line, kSide columns left of it, then kSide right of it (where
+// u_put_info.w is 1).
+layout(set = 2, binding = 8) uniform sampler2D u_sides;
+const int kSide = 44;
+layout(std430, set = 2, binding = 9) readonly buffer Finished { uint finished[]; };
 // For each line, where u_put shows (nds::CaptureLines), two each: in 256ths
 // of a pixel, the place at its start (x, y) and the step across (z, w);
 // then the step down within the line (x, y), the bank's row where the
 // bitmap starts (z), and (w) 1 where shown, plus 2 where it repeats, plus
 // its rows times 4.
-layout(std430, set = 2, binding = 9) readonly buffer PutMap { vec4 put_map[]; };
+layout(std430, set = 2, binding = 10) readonly buffer PutMap { vec4 put_map[]; };
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
   // x: 0 a screen, 1 a capture.
@@ -100,7 +107,8 @@ layout(set = 3, binding = 0) uniform Compose {
   vec4 u_wide;
   uvec4 u_wide_rows[2];  // The lines whose sides show the scene: a bit each.
   // x: 1 where u_put is put in; y: 1 where u_second is a kept capture; z: 1
-  // where there is no scene (what is marked as 3D shows the 2D picture).
+  // where there is no scene (what is marked as 3D shows the 2D picture); w:
+  // 1 where u_sides holds the sides.
   uvec4 u_put_info;
 };
 
@@ -262,9 +270,21 @@ vec3 brightened(vec3 c, uint way, float factor) {
   return c;
 }
 
-// The screen at `at` with what u_scene holds at `inside` put in.
-vec3 composed(vec2 at, vec2 inside, bool lit) {
-  vec4 screen = texture(u_screen, at);
+// The screen's pixel at `at` past its sides, from u_sides; false where
+// there is none.
+bool side_pixel(vec2 at, out vec4 pixel) {
+  const int column = int(floor(at.x * 256.0)), line = clamp(int(at.y * 192.0), 0, 191);
+  int i;
+  if (column < 0 && column >= -kSide) i = column + kSide;
+  else if (column >= 256 && column < 256 + kSide) i = kSide + column - 256;
+  else return false;
+  pixel = texelFetch(u_sides, ivec2(i, line), 0);
+  return true;
+}
+
+// The screen at `at` (its pixel `screen`; past its sides if `side`) with
+// what u_scene holds at `inside` put in.
+vec3 composed_from(vec4 screen, vec2 at, vec2 inside, bool lit, bool side) {
   // Each part's top six bits (the lowest bit of red is a mark).
   const uvec4 bytes = uvec4(screen * 255.0 + 0.5);
   const uvec3 six = bytes.rgb >> 2u;
@@ -272,7 +292,7 @@ vec3 composed(vec2 at, vec2 inside, bool lit) {
   // Under the 3D layer, a kept capture's pixel (nds::DisplayEngine::
   // kCapturedBelow).
   vec2 bank;
-  if ((bytes.r & 1u) != 0u && u_put_info.x != 0u && put_at(at, false, bank)) {
+  if ((bytes.r & 1u) != 0u && u_put_info.x != 0u && put_at(at, side, bank)) {
     below = kept_colour(u_put, bank);
     if (lit) below = brightened(below, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
   }
@@ -303,6 +323,8 @@ vec3 composed(vec2 at, vec2 inside, bool lit) {
   if (lit) c = brightened(c, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
   return effect == 1u ? mix(below, c, scene.a) : c;
 }
+
+vec3 composed(vec2 at, vec2 inside, bool lit) { return composed_from(texture(u_screen, at), at, inside, lit, false); }
 
 // A wide screen's side, at `at` of the screen (x outside 0 to 1) and
 // `inside` the scene; with the master brightness if `lit`.
@@ -336,7 +358,10 @@ void main() {
     if (u_wide.x > 0.5) {
       // The screen's 256 columns in the middle.
       const vec2 at = vec2((v_place.x - u_wide.y) / u_wide.z, v_place.y);
-      o_colour.rgb = at.x < 0.0 || at.x >= 1.0 ? side(at, v_place, true) : composed(at, v_place, true);
+      vec4 pixel;
+      if (at.x >= 0.0 && at.x < 1.0) o_colour.rgb = composed(at, v_place, true);
+      else if (u_put_info.w != 0u && side_pixel(at, pixel)) o_colour.rgb = composed_from(pixel, at, v_place, true, true);
+      else o_colour.rgb = side(at, v_place, true);
       return;
     }
     o_colour.rgb = composed(v_place, v_place, true);
@@ -366,7 +391,9 @@ void main() {
     vec4 scene = scene_at(inside);
     first = scene.a < 0.5 / 63.0 ? vec3(0.0) : scene.rgb / scene.a;
   } else if (!in_bank) {
-    first = side(at, inside, false);
+    vec4 pixel;
+    first = u_put_info.w != 0u && side_pixel(at, pixel) ? composed_from(pixel, at, inside, false, true)
+                                                         : side(at, inside, false);
   } else {
     first = composed(at, inside, false);
   }

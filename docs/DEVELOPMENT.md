@@ -155,8 +155,16 @@ is left out. *Widescreen (3D)* (Settings, Graphics; off by default;
 `--widescreen`) shows the screen with the 3D scene 16:9 with the graphics
 hardware: the scene goes on a third further on each side, the 2D picture
 stays 256 by 192 in the middle, and the other screen stays 4:3; the stylus
-touches the middle only. Its limits: the 2D (HUD, text, 2D backgrounds) does
-not reach the sides, which show the 3D alone (black on lines without it);
+touches the middle only. Where the processor draws the 2D (battles), the
+2D goes on at the sides too: a battle's backdrop shows more of its picture
+(the game keeps all 512 columns of it in main memory and puts 256 of them in
+video memory as it scrolls; `DisplayEngine::streamed_source` finds it there),
+another background that scrolls is mirrored there, a fixed one (a text box)
+takes its edge pixel, and a flat 3D band across the whole screen (the battle
+log) is made longer, its texture not stretched.
+Its limits: where the graphics hardware draws the 2D (the field), the 2D
+(HUD, text, 2D backgrounds) does not reach the sides, which show the 3D
+alone (black on lines without it);
 models the game itself leaves out as out of view appear at the sides late;
 3D on both screens at once (the title) stays 4:3; at 1x the polygon edges are not smoothed. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to

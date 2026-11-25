@@ -1,6 +1,7 @@
 #include "nds/display_engine.h"
 
 #include <algorithm>
+#include <functional>
 
 namespace bd::nds {
 
@@ -107,6 +108,7 @@ void DisplayEngine::attach(Arm9Io& io) {
 }
 
 void DisplayEngine::start_frame() {
+  ++frames_;
   line_x_ = reference_x_;
   line_y_ = reference_y_;
 }
@@ -126,10 +128,12 @@ std::uint32_t DisplayEngine::colour_of(unsigned index) const {
 
 unsigned DisplayEngine::shown_inside(int x) const {
   if ((control_ & (kWindow0 | kWindow1 | kSpriteWindow)) == 0) return 0x3F;
+  // At the sides, as at the screen's edge.
+  const int at = std::clamp(x + origin_, 0, kWidth - 1);
   for (unsigned n = 0; n < 2; ++n) {
     if ((control_ & (kWindow0 << n)) == 0 || !window_on_line_[n]) continue;
     const int left = std::min(window_x1_[n], window_x2_[n]), right = std::max(window_x1_[n], window_x2_[n]);
-    if ((x >= left && x < right) != window_flipped_[n]) return (window_inside_ >> (8 * n)) & 0x3Fu;
+    if ((at >= left && at < right) != window_flipped_[n]) return (window_inside_ >> (8 * n)) & 0x3Fu;
   }
   if ((control_ & kSpriteWindow) != 0 && sprite_window_[static_cast<std::size_t>(x)]) return (window_outside_ >> 8) & 0x3Fu;
   return window_outside_ & 0x3Fu;
@@ -155,9 +159,8 @@ void DisplayEngine::place(unsigned background, int x, std::uint32_t colour, bool
   }
 }
 
-void DisplayEngine::draw_line(int line) {
+void DisplayEngine::draw_layers(int line, bool side) {
   marked_ = false;
-  for (auto& lines : bitmap_lines_) lines[static_cast<std::size_t>(line)].on = false;
   Dot backdrop;
   backdrop.colour = colour_of(0);
   top_.fill(backdrop);
@@ -176,7 +179,7 @@ void DisplayEngine::draw_line(int line) {
   if (mode == 6) {
     if (shown(2)) draw_large(2, line);
   } else if (mode == 7) {
-    ++notes_["background mode 7, which is none"];
+    if (!side) ++notes_["background mode 7, which is none"];
   } else {
     if (shown(3)) {
       if (mode == 0)
@@ -196,14 +199,66 @@ void DisplayEngine::draw_line(int line) {
     }
     if (shown(1)) draw_tiles(1, line);
     if (shown(0)) {
-      if (which_ == kMain && (control_ & kBackground0Is3D) != 0)
-        hardware_3d_ ? mark_3d() : draw_3d(line);
-      else
+      if (which_ == kMain && (control_ & kBackground0Is3D) != 0) {
+        if (hardware_3d_) mark_3d();
+        else if (!side) draw_3d(line);
+      } else {
         draw_tiles(0, line);
+      }
     }
   }
 
   blend(line);
+  // The matrix backgrounds drawn: the next line starts one step down their
+  // matrix.
+  if (!side) {
+    const unsigned matrix = matrix_backgrounds(control_);
+    for (unsigned n = 0; n < 2; ++n) {
+      if ((matrix & (1u << n)) == 0) continue;
+      line_x_[n] += pb_[n];
+      line_y_[n] += pd_[n];
+    }
+  }
+}
+
+void DisplayEngine::draw_line(int line) {
+  // The sides first: the matrix backgrounds step on to the next line with
+  // the screen's.
+  if (sides_ && line >= 0 && line < kHeight) {
+    const std::size_t size = static_cast<std::size_t>(kHeight) * 2 * kSideColumns;
+    if (side_mixed_.size() != size) {
+      side_mixed_.assign(size, 0);
+      side_shown_.assign(size, 0);
+      side_layers_.assign(size, 5);
+    }
+    const unsigned direction = master_brightness_ >> 14;
+    const u32 factor = std::min<u32>(master_brightness_ & 0x1F, 16);
+    for (int side = 0; side < 2; ++side) {
+      origin_ = side == 0 ? -kSideColumns : kWidth;
+      columns_ = kSideColumns;
+      draw_layers(line, true);
+      const std::size_t first = (static_cast<std::size_t>(line) * 2 + static_cast<std::size_t>(side)) * kSideColumns;
+      for (std::size_t x = 0; x < static_cast<std::size_t>(kSideColumns); ++x) {
+        const u32 mark = marked_ ? marks_[x] : 0;
+        u32 shown = top_[x].colour;
+        if ((direction == 1 || direction == 2) && factor != 0 && !is_3d_below(mark)) {
+          u32 result = 0;
+          for (unsigned shift = 0; shift < 18; shift += 6) {
+            const u32 part = part_of(shown, shift);
+            result |= (direction == 1 ? part + (63 - part) * factor / 16 : part - part * factor / 16) << shift;
+          }
+          shown = result;
+        }
+        side_mixed_[first + x] = top_[x].colour | mark;
+        side_shown_[first + x] = shown | mark;
+        side_layers_[first + x] = top_[x].layer;
+      }
+    }
+    origin_ = 0;
+    columns_ = kWidth;
+  }
+  for (auto& lines : bitmap_lines_) lines[static_cast<std::size_t>(line)].on = false;
+  draw_layers(line, false);
   for (std::size_t x = 0; x < static_cast<std::size_t>(kWidth); ++x) mixed_[x] = top_[x].colour;
 
   u32* shown_line = &screen_[static_cast<std::size_t>(line) * kWidth];
@@ -326,6 +381,8 @@ void DisplayEngine::draw_sprites(int line, bool window_pass) {
     if (in_y < 0 || in_y >= room_y) continue;
     int x = static_cast<int>(a1 & 0x1FF);
     if (x >= kWidth) x -= 512;
+    // At the sides, only those that reach the screen.
+    if (origin_ != 0 && (x >= kWidth || x + room_x <= 0)) continue;
     const std::int8_t priority = static_cast<std::int8_t>(static_cast<int>((a2 >> 10) & 3) - 1);
 
     // The matrix: one of 32 sets of four numbers, kept in the gaps between
@@ -369,7 +426,8 @@ void DisplayEngine::draw_sprites(int line, bool window_pass) {
         px = j;
         py = (a1 & (1u << 13)) != 0 ? height - 1 - in_y : in_y;
       }
-      if (at_x < 0 || at_x >= kWidth) continue;
+      at_x -= origin_;
+      if (at_x < 0 || at_x >= columns_) continue;
 
       u32 colour;
       if (kind == 3) {
@@ -431,7 +489,7 @@ void DisplayEngine::mark_3d() {
   const unsigned effect = (blend_control_ >> 6) & 3;
   const auto priority = static_cast<std::int8_t>(background_control_[0] & 3);
   marks_.fill(0);
-  for (int x = 0; x < kWidth; ++x) {
+  for (int x = 0; x < columns_; ++x) {
     const unsigned inside = shown_inside(x);
     const Dot& top = top_[static_cast<std::size_t>(x)];
     if ((inside & 1) == 0 || priority > below_[static_cast<std::size_t>(x)].priority) continue;
@@ -468,8 +526,158 @@ std::uint32_t DisplayEngine::for_hardware(std::uint32_t pixel, bool marks) {
   return r | g << 8 | b << 16 | (pixel >> 24) << 24;
 }
 
+int DisplayEngine::mirrored(int x) { return x < 0 ? -1 - x : x >= kWidth ? 2 * kWidth - 1 - x : x; }
+
+void DisplayEngine::matrix_start(unsigned n, bool mirror, std::int32_t& at_x, std::int32_t& at_y, std::int32_t& step_x,
+                                 std::int32_t& step_y) const {
+  // From column origin_ on (mirrored: from its mirror image, backwards),
+  // one step before the first, as the loops step first.
+  mirror = mirror && origin_ != 0;
+  const int first = mirror ? mirrored(origin_) : origin_, step = mirror ? -1 : 1;
+  step_x = pa_[n] * step;
+  step_y = pc_[n] * step;
+  at_x = line_x_[n] + pa_[n] * first - step_x;
+  at_y = line_y_[n] + pc_[n] * first - step_y;
+}
+
+bool DisplayEngine::streamed_source(unsigned n) {
+  const unsigned background = n + 2;
+  const u32 bg_control = background_control_[background];
+  if (main_memory_ == nullptr || main_size_ < static_cast<std::size_t>(kStreamedWidth) * kStreamedHeight ||
+      pa_[n] != 256 || pc_[n] != 0)
+    return false;
+  Streamed& streamed = streamed_[n];
+  if (streamed.checked == frames_) return streamed.found;
+  streamed.checked = frames_;
+  const u32 map = vram_ + ((bg_control << 3) & 0x0F800) + ((control_ >> 11) & 0x70000);
+  const u32 pixels = vram_ + ((bg_control << 12) & 0x3C000) + ((control_ >> 8) & 0x70000);
+  // Of the screen's column `x` on this line: where it is across (not
+  // repeated), its map entry, and the line in its tile.
+  struct Spot {
+    int across;
+    u32 entry;
+    int row;
+  };
+  const auto spot = [&](int x) {
+    const int across = (line_x_[n] + pa_[n] * x) >> 8;
+    const int y = ((line_y_[n] + pc_[n] * x) >> 8) & 0xFF;
+    const int column = across & 0xFF;
+    return Spot{across, read(map + static_cast<u32>((y / 8) * 32 + column / 8) * 2, 2), y & 7};
+  };
+  // The picture's tile layout, unturned.
+  const auto laid_out = [](const Spot& at) {
+    return (at.entry & 0xC00) == 0 && (at.entry & 0x3FF) / 16 == static_cast<u32>((at.across & 0xFF) / 8);
+  };
+  const auto in_picture = [](const Spot& at, int line) {
+    return static_cast<std::size_t>(((at.entry & 15) * 8 + static_cast<u32>(line)) * kStreamedWidth +
+                                    (static_cast<u32>(at.across) & (kStreamedWidth - 1)));
+  };
+  const std::size_t size = static_cast<std::size_t>(kStreamedWidth) * kStreamedHeight;
+  const auto matches = [&](std::size_t base) {
+    if (base + size > main_size_) return false;
+    for (int x = 4; x < kWidth; x += 31) {
+      const Spot at = spot(x);
+      if (!laid_out(at)) return false;
+      const u32 number = read(pixels + (at.entry & 0x3FF) * 64 + static_cast<u32>(at.row * 8 + (at.across & 7)), 1);
+      if (main_memory_[base + in_picture(at, at.row)] != number) return false;
+    }
+    return true;
+  };
+  if (streamed.found && matches(streamed.base)) return true;
+  streamed.found = false;
+  if (frames_ < streamed.next_search) return false;
+  streamed.next_search = frames_ + 60;
+  // Looked for by a tile of the screen's whose pixels are not all the same:
+  // its eight lines, a picture's width apart.
+  const std::uint8_t* const memory = main_memory_;
+  for (int x = 0, tried = 0; x < kWidth && tried < 4; x += 8) {
+    Spot at = spot(x);
+    at.across &= ~7;
+    if (!laid_out(at)) return false;
+    std::array<std::uint8_t, 64> tile{};
+    for (u32 i = 0; i < 64; ++i) tile[i] = static_cast<std::uint8_t>(read(pixels + (at.entry & 0x3FF) * 64 + i, 1));
+    if (std::all_of(tile.begin(), tile.end(), [&](std::uint8_t b) { return b == tile[0]; })) continue;
+    ++tried;
+    const std::boyer_moore_horspool_searcher first_line(tile.begin(), tile.begin() + 8);
+    const std::size_t offset = in_picture(at, 0);
+    for (const std::uint8_t* from = memory + offset;;) {
+      const std::uint8_t* found = std::search(from, memory + main_size_, first_line);
+      if (found == memory + main_size_) break;
+      from = found + 1;
+      const std::size_t base = static_cast<std::size_t>(found - memory) - offset;
+      bool whole = static_cast<std::size_t>(found - memory) + 7 * kStreamedWidth + 8 <= main_size_;
+      for (int line = 1; whole && line < 8; ++line)
+        whole = std::equal(tile.begin() + line * 8, tile.begin() + line * 8 + 8, found + line * kStreamedWidth);
+      if (whole && matches(base)) {
+        streamed.found = true;
+        streamed.base = base;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool DisplayEngine::tile_pixel(unsigned background, int line, int x, std::uint32_t& colour) {
+  // As draw_tiles(), for one pixel.
+  const u32 bg_control = background_control_[background];
+  u32 map = vram_ + ((control_ >> 11) & 0x70000) + ((bg_control << 3) & 0x0F800);
+  const u32 pixels = vram_ + ((control_ >> 8) & 0x70000) + ((bg_control << 12) & 0x3C000);
+  const int mosaic_down = ((mosaic_ >> 4) & 0xF) + 1;
+  const int from_line = (bg_control & (1u << 6)) != 0 ? line - line % mosaic_down : line;
+  const u32 y = (static_cast<u32>(from_line) + scroll_y_[background]) & 0x1FF;
+  map += (y & 0xF8) << 3;
+  if (y >= 256 && (bg_control & (1u << 15)) != 0) map += (bg_control & (1u << 14)) != 0 ? 0x1000 : 0x800;
+  const u32 x_in = (static_cast<u32>(x) + scroll_x_[background]) & 0x1FF;
+  u32 entry_at = map + ((x_in & 0xF8) >> 2);
+  if (x_in >= 256 && (bg_control & (1u << 14)) != 0) entry_at += 0x800;
+  const u32 entry = read(entry_at, 2);
+  const bool colours_256 = (bg_control & (1u << 7)) != 0;
+  const u32 row = (entry & (1u << 11)) != 0 ? 7 - (y & 7) : (y & 7);
+  const u32 column = (entry & (1u << 10)) != 0 ? 7 - (x_in & 7) : (x_in & 7);
+  u32 number;
+  if (colours_256) {
+    number = read(pixels + (entry & 0x3FF) * 64 + row * 8 + column, 1);
+  } else {
+    const u32 byte = read(pixels + (entry & 0x3FF) * 32 + row * 4 + column / 2, 1);
+    number = (column & 1) != 0 ? byte >> 4 : byte & 0xF;
+  }
+  if (number == 0) return false;
+  const unsigned slot = background + ((background < 2 && (bg_control & (1u << 13)) != 0) ? 2 : 0);
+  const bool second = which_ == kSub;
+  if (colours_256 && (control_ & kExtendedPalettes) != 0 && video_.extended_palette(second, slot, 0) >= 0) {
+    const u32 at = ((entry >> 3) & 0x1E00) + number * 2;
+    colour = six_bits_each(static_cast<u32>(video_.extended_palette(second, slot, at) |
+                                             video_.extended_palette(second, slot, at + 1) << 8));
+  } else if (colours_256) {
+    colour = colour_of(number);
+  } else {
+    colour = colour_of(((entry >> 12) & 0xF) * 16 + number);
+  }
+  return true;
+}
+
 void DisplayEngine::draw_tiles(unsigned background, int line) {
   const u32 bg_control = background_control_[background];
+  if (origin_ != 0) {
+    // A side. A background 512 across goes on as its map does. One 256
+    // across, the screen's width, has nothing past the edge but itself
+    // again (or what the game puts there next): not scrolled across, it is
+    // taken to be fixed to the screen (a text box) and goes on as its pixel
+    // at the edge; else as its pixels at the edge, mirrored.
+    u32 colour = 0;
+    if ((bg_control & (1u << 14)) != 0) {
+      for (int i = 0; i < columns_; ++i)
+        if (tile_pixel(background, line, origin_ + i, colour)) place(background, i, colour);
+    } else if ((scroll_x_[background] & 0x1FF) == 0) {
+      if (!tile_pixel(background, line, origin_ < 0 ? 0 : kWidth - 1, colour)) return;
+      for (int i = 0; i < columns_; ++i) place(background, i, colour);
+    } else {
+      for (int i = 0; i < columns_; ++i)
+        if (tile_pixel(background, line, mirrored(origin_ + i), colour)) place(background, i, colour);
+    }
+    return;
+  }
   // The map of tile numbers and the tiles' pixels, each at a place the
   // background's control register names (the main engine's control register
   // can move both on in steps of 64 KiB).
@@ -537,10 +745,11 @@ void DisplayEngine::draw_matrix_tiles(unsigned background, int line) {
   const u32 pixels = vram_ + ((bg_control << 12) & 0x3C000) + ((control_ >> 8) & 0x70000);
   // Square, 128 to 1024 pixels; a map entry is a byte, a tile 256 colours.
   const int size = 128 << ((bg_control >> 14) & 3);
-  i32 at_x = line_x_[n] - pa_[n], at_y = line_y_[n] - pc_[n];
-  for (int i = 0; i < kWidth; ++i) {
-    int x = (at_x += pa_[n]) >> 8;
-    int y = (at_y += pc_[n]) >> 8;
+  i32 at_x, at_y, step_x, step_y;
+  matrix_start(n, (bg_control & (1u << 13)) != 0 && size == kWidth, at_x, at_y, step_x, step_y);
+  for (int i = 0; i < columns_; ++i) {
+    int x = (at_x += step_x) >> 8;
+    int y = (at_y += step_y) >> 8;
     // Outside the background: repeated, or nothing.
     if ((bg_control & (1u << 13)) != 0) {
       x &= size - 1;
@@ -552,20 +761,23 @@ void DisplayEngine::draw_matrix_tiles(unsigned background, int line) {
     const u32 number = read(pixels + tile * 64 + static_cast<u32>((y & 7) * 8 + (x & 7)), 1);
     if (number != 0) place(background, i, colour_of(number));
   }
-  // The next line starts one step down the matrix.
-  line_x_[n] += pb_[n];
-  line_y_[n] += pd_[n];
 }
 
 void DisplayEngine::draw_extended(unsigned background, int line) {
   const unsigned n = background - 2;
   const u32 bg_control = background_control_[background];
-  i32 at_x = line_x_[n] - pa_[n], at_y = line_y_[n] - pc_[n];
   const bool repeated = (bg_control & (1u << 13)) != 0;
+  // At a side, one that repeats as wide as the screen is mirrored there.
+  const bool bitmap = (bg_control & (1u << 7)) != 0;
+  const int across = bitmap ? kBitmapSizes[(bg_control >> 14) & 3][0] : 128 << ((bg_control >> 14) & 3);
+  // At a side, one filled from a wider picture shows it (streamed_source).
+  const bool streamed = origin_ != 0 && !bitmap && repeated && across == kWidth && streamed_source(n);
+  i32 at_x, at_y, step_x, step_y;
+  matrix_start(n, repeated && across == kWidth && !streamed, at_x, at_y, step_x, step_y);
   // Where on the background pixel `i` of the line is; false if nowhere.
   const auto next = [&](int size_x, int size_y, int& x, int& y) {
-    x = (at_x += pa_[n]) >> 8;
-    y = (at_y += pc_[n]) >> 8;
+    x = (at_x += step_x) >> 8;
+    y = (at_y += step_y) >> 8;
     if (repeated) {
       x &= size_x - 1;
       y &= size_y - 1;
@@ -580,11 +792,11 @@ void DisplayEngine::draw_extended(unsigned background, int line) {
     const u32 data = vram_ + ((bg_control << 6) & 0x7C000);
     const int size_x = kBitmapSizes[(bg_control >> 14) & 3][0], size_y = kBitmapSizes[(bg_control >> 14) & 3][1];
     const bool direct = (bg_control & (1u << 2)) != 0;
-    if (direct && line >= 0 && line < kHeight)
+    if (direct && origin_ == 0 && line >= 0 && line < kHeight)
       bitmap_lines_[n][static_cast<std::size_t>(line)] = {
           true,     repeated, data,     line_x_[n], line_y_[n], pa_[n], pb_[n], pc_[n], pd_[n],
           static_cast<std::uint16_t>(size_x), static_cast<std::uint16_t>(size_y)};
-    for (int i = 0; i < kWidth; ++i) {
+    for (int i = 0; i < columns_; ++i) {
       int x, y;
       if (!next(size_x, size_y, x, y)) continue;
       if (direct) {
@@ -605,14 +817,22 @@ void DisplayEngine::draw_extended(unsigned background, int line) {
     const bool second = which_ == kSub;
     const bool extended = (control_ & kExtendedPalettes) != 0;
     const bool slot_there = video_.extended_palette(second, background, 0) >= 0;
-    for (int i = 0; i < kWidth; ++i) {
+    for (int i = 0; i < columns_; ++i) {
+      const int picture_x = (at_x + step_x) >> 8;
       int x, y;
       if (!next(size, size, x, y)) continue;
       const u32 entry = read(map + static_cast<u32>((y / 8) * (size / 8) + x / 8) * 2, 2);
       if (extended && !slot_there) continue;
-      const int row = ((entry & (1u << 11)) != 0 ? 7 - y : y) & 7;
-      const int column = ((entry & (1u << 10)) != 0 ? 7 - x : x) & 7;
-      const u32 number = read(pixels + (entry & 0x3FF) * 64 + static_cast<u32>(row * 8 + column), 1);
+      u32 number;
+      if (streamed) {
+        number = main_memory_[streamed_[n].base +
+                              ((entry & 15) * 8 + static_cast<u32>(y & 7)) * kStreamedWidth +
+                              (static_cast<u32>(picture_x) & (kStreamedWidth - 1))];
+      } else {
+        const int row = ((entry & (1u << 11)) != 0 ? 7 - y : y) & 7;
+        const int column = ((entry & (1u << 10)) != 0 ? 7 - x : x) & 7;
+        number = read(pixels + (entry & 0x3FF) * 64 + static_cast<u32>(row * 8 + column), 1);
+      }
       if (number == 0) continue;
       if (extended) {
         const u32 at = ((entry >> 3) & 0x1E00) + number * 2;
@@ -624,8 +844,6 @@ void DisplayEngine::draw_extended(unsigned background, int line) {
       }
     }
   }
-  line_x_[n] += pb_[n];
-  line_y_[n] += pd_[n];
 }
 
 void DisplayEngine::draw_large(unsigned background, int line) {
@@ -636,10 +854,11 @@ void DisplayEngine::draw_large(unsigned background, int line) {
   // by 1024, or 1024 by 512.
   const int size_x = ((bg_control >> 14) & 3) != 0 ? 1024 : 512;
   const int size_y = ((bg_control >> 14) & 3) != 0 ? 512 : 1024;
-  i32 at_x = line_x_[n] - pa_[n], at_y = line_y_[n] - pc_[n];
-  for (int i = 0; i < kWidth; ++i) {
-    int x = (at_x += pa_[n]) >> 8;
-    int y = (at_y += pc_[n]) >> 8;
+  i32 at_x, at_y, step_x, step_y;
+  matrix_start(n, false, at_x, at_y, step_x, step_y);
+  for (int i = 0; i < columns_; ++i) {
+    int x = (at_x += step_x) >> 8;
+    int y = (at_y += step_y) >> 8;
     if ((bg_control & (1u << 13)) != 0) {
       x &= size_x - 1;
       y &= size_y - 1;
@@ -651,8 +870,6 @@ void DisplayEngine::draw_large(unsigned background, int line) {
     const u32 number = read(vram_ + static_cast<u32>(y * size_x + x), 1);
     if (number != 0) place(background, i, colour_of(number));
   }
-  line_x_[n] += pb_[n];
-  line_y_[n] += pd_[n];
 }
 
 void DisplayEngine::blend(int line) {
@@ -670,7 +887,7 @@ void DisplayEngine::blend(int line) {
     return result;
   };
 
-  for (int x = 0; x < kWidth; ++x) {
+  for (int x = 0; x < columns_; ++x) {
     // Blended with the 3D layer by the graphics hardware.
     if (marked_ && is_3d_below(marks_[static_cast<std::size_t>(x)])) continue;
     Dot& top = top_[static_cast<std::size_t>(x)];

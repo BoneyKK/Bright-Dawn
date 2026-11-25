@@ -45,6 +45,7 @@ Console::Console(const Program& program, const TranslatedEntry* translated)
   geometry_.on_no_room = [this] { polygon_renderer_.ram_overflowed(); };
   polygon_renderer_.attach(io_);
   display_.attach(io_);
+  display_.main_engine().set_main_memory(bus_.main_memory(), Arm9Bus::kMainRamSize);
   video_timing_.on_line_begins = [this](unsigned line) { display_.line_begins(line); };
   video_timing_.on_line_done = [this](unsigned line) { display_.line_done(line); };
   // A DMA channel can be set to feed the 3D engine's queue whenever it is

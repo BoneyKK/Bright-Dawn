@@ -372,13 +372,16 @@ void Display::vertical_blank() {
     // made smaller, as the start of a battle does), put in by the graphics
     // hardware at its resolution.
     recipe_.put_capture = 0;
+    Shown shown;
     if (!recipe_.only_3d && recipe_.source != 1) {
-      const Shown shown = shown_capture(main_, capture_source_, true);
+      shown = shown_capture(main_, capture_source_, true);
       if (shown.kept != nullptr) {
         put_in(main_, shown, capture_source_, capture_source_, recipe_.put_lines);
         recipe_.put_capture = shown.kept->number;
       }
     }
+    capture_sides_.clear();
+    if (main_.sides() && !main_.side_mixed().empty()) make_sides(main_.side_mixed(), shown, capture_sides_);
     std::swap(frame_recipe_, recipe_);
   }
   ScreenFill& main_fill = frame_fills_[main_on_top ? 0 : 1];
@@ -388,8 +391,25 @@ void Display::vertical_blank() {
     main_fill = {Fill::kScene, 0, main_.master_brightness(), {}};
   // A capture can be on a screen with the scene too, as behind a message
   // box the game draws in 3D.
-  if (!by_hardware_[0]) find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
+  Shown main_shown;
+  if (!by_hardware_[0]) main_shown = find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
   if (!by_hardware_[1]) find_capture(second_, main_on_top ? bottom_ : top_, second_fill);
+  // The main engine's sides, by its display mode: the picture's; the bank
+  // shown, which only a kept capture has; white; or black.
+  for (auto& sides : screen_sides_) sides.clear();
+  if (main_.sides() && !by_hardware_[0] && !main_.side_shown().empty()) {
+    std::vector<std::uint32_t>& sides = screen_sides_[main_on_top ? 0 : 1];
+    switch ((main_.control() >> DisplayEngine::kDisplayModeShift) & 3) {
+      case 1: make_sides(main_.side_shown(), main_shown, sides); break;
+      case 2:
+        sides.assign(main_.side_shown().size(), main_shown.kept != nullptr && main_shown.background < 0
+                                                     ? DisplayEngine::kCapturedBelow
+                                                     : 0u);
+        break;
+      case 0: sides.assign(main_.side_shown().size(), 0x3FFFFu); break;
+      default: sides.assign(main_.side_shown().size(), 0u); break;
+    }
+  }
   capture_shown_ = main_fill.fill == Fill::kCapture || second_fill.fill == Fill::kCapture || main_fill.capture != 0 ||
                    second_fill.capture != 0;
   ++statistics_.frames;
@@ -508,17 +528,29 @@ void Display::put_in(const DisplayEngine& engine, const Shown& shown, const std:
   }
 }
 
-void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const {
+void Display::make_sides(const std::vector<std::uint32_t>& from, const Shown& shown,
+                         std::vector<std::uint32_t>& sides) const {
+  sides = from;
+  if (shown.kept == nullptr || shown.background < 0) return;
+  // Where the background that shows it is on top.
+  const std::vector<std::uint8_t>& layers = main_.side_layers();
+  for (std::size_t i = 0; i < sides.size() && i < layers.size(); ++i)
+    if (layers[i] == shown.background) sides[i] |= DisplayEngine::kCapturedBelow;
+}
+
+Display::Shown Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen,
+                                     ScreenFill& fill) const {
   // Through a background only where the screen shows the engine's picture.
   const bool picture = ((engine.control() >> DisplayEngine::kDisplayModeShift) & 3) == 1;
   const Shown shown = shown_capture(engine, engine.unlit_screen(), picture);
-  if (shown.kept == nullptr) return;
+  if (shown.kept == nullptr) return shown;
   put_in(engine, shown, engine.unlit_screen(), screen, fill.lines);
   if (fill.fill != Fill::kScene) {
     fill.fill = Fill::kCapture;
     fill.brightness = engine.master_brightness();
   }
   fill.capture = shown.kept->number;
+  return shown;
 }
 
 }  // namespace bd::nds

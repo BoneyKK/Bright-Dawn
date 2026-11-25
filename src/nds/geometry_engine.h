@@ -275,8 +275,10 @@ class GeometryEngine {
   // There the polygons drawn with perspective are cut at x = -4/3 w and
   // 4/3 w in place of -w and w, so that they reach a third of the DS's
   // width further on each side, and their corners are placed without x
-  // wrapping (it runs from -43 to 298 on a whole screen); those without
-  // perspective are as in finished(). Each polygon has corners of its own,
+  // wrapping (it runs from -43 to 298 on a whole screen). Those without
+  // perspective are as in finished(), but one that spans the whole width
+  // (a text band) is made a third longer on each side, its depth, texture
+  // and colour going on as across it. Each polygon has corners of its own,
   // in the order they run around it. The frame the game sees, its counts
   // and its limits are finished()'s alone.
   void set_wide(bool on) { wide_ = on; }

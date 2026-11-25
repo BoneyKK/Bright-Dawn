@@ -1,6 +1,8 @@
 #include "nds/geometry_engine.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 
 #include "debug/frame_log.h"
 
@@ -83,6 +85,65 @@ Vertex crossing(const Vertex& a, const Vertex& b, i64 d1, i64 d2) {
     v.colour |= (static_cast<u32>(part) & 0x3F) << shift;
   }
   return v;
+}
+
+// A polygon without perspective, cut to the view, that reaches both sides of
+// the screen (x = -w and w): the corners on them moved on to the sides of a
+// picture a third wider (x = -4/3 w and 4/3 w), with their depth, colours
+// and texture coordinates carried on as they change across the polygon (a
+// texture goes on, not stretched).
+void widen_across(Vertex* v, std::size_t size) {
+  const auto on_side = [&](const Vertex& p, int side) {
+    const i64 tolerance = std::max<i64>(std::abs(static_cast<i64>(p.w)) / 512, 1);
+    return std::abs(static_cast<i64>(p.x) - side * static_cast<i64>(p.w)) <= tolerance;
+  };
+  bool left = false, right = false;
+  for (std::size_t i = 0; i < size; ++i) {
+    left = left || on_side(v[i], -1);
+    right = right || on_side(v[i], 1);
+  }
+  if (!left || !right) return;
+  // How each part changes with x and y: from the three corners that span
+  // the most.
+  std::size_t a = 0, b = 1, c = 2;
+  double best = 0;
+  for (std::size_t i = 0; i < size; ++i)
+    for (std::size_t j = i + 1; j < size; ++j)
+      for (std::size_t k = j + 1; k < size; ++k) {
+        const double area = std::abs(static_cast<double>(v[j].x - v[i].x) * (v[k].y - v[i].y) -
+                                     static_cast<double>(v[k].x - v[i].x) * (v[j].y - v[i].y));
+        if (area > best) {
+          best = area;
+          a = i, b = j, c = k;
+        }
+      }
+  if (best == 0) return;
+  const double x1 = v[b].x - v[a].x, y1 = v[b].y - v[a].y, x2 = v[c].x - v[a].x, y2 = v[c].y - v[a].y;
+  const double det = x1 * y2 - x2 * y1;
+  // The change of a part per unit of x, from its values at the three.
+  const auto per_x = [&](double pa, double pb, double pc) { return ((pb - pa) * y2 - (pc - pa) * y1) / det; };
+  const Vertex old[3] = {v[a], v[b], v[c]};
+  for (std::size_t i = 0; i < size; ++i) {
+    Vertex& p = v[i];
+    const int side = on_side(p, -1) ? -1 : on_side(p, 1) ? 1 : 0;
+    if (side == 0) continue;
+    const i32 to = static_cast<i32>(side * 4 * static_cast<i64>(p.w) / 3);
+    const double dx = static_cast<double>(to) - p.x;
+    const auto moved = [&](double value, double change) { return value + change * dx; };
+    p.z = static_cast<i32>(std::lround(moved(p.z, per_x(old[0].z, old[1].z, old[2].z))));
+    p.s = static_cast<std::int16_t>(
+        std::clamp<long>(std::lround(moved(p.s, per_x(old[0].s, old[1].s, old[2].s))), -32768, 32767));
+    p.t = static_cast<std::int16_t>(
+        std::clamp<long>(std::lround(moved(p.t, per_x(old[0].t, old[1].t, old[2].t))), -32768, 32767));
+    u32 colour = 0;
+    for (unsigned shift = 0; shift < 18; shift += 6) {
+      const auto part = [&](const Vertex& q) { return static_cast<double>((q.colour >> shift) & 0x3F); };
+      const long value = std::lround(moved(part(p), per_x(part(old[0]), part(old[1]), part(old[2]))));
+      colour |= static_cast<u32>(std::clamp<long>(value, 0, 63)) << shift;
+    }
+    p.colour = colour;
+    p.x = to;
+  }
 }
 
 // Cuts a polygon down to the view volume (each of x, y, z between -w and w),
@@ -998,8 +1059,11 @@ void GeometryEngine::add_wide_polygon(const Polygon& polygon, const Vertex* corn
   std::copy(corners, corners + count, corner);
   std::size_t size = count;
   // Drawn with perspective: as far as the wider picture shows. Without (a
-  // HUD, a menu): as on the DS, as such polygons are placed on its screen.
+  // HUD, a menu): as on the DS, as such polygons are placed on its screen;
+  // but one across the whole screen (a box behind a message) goes on to
+  // the wider picture's sides.
   cut_to_view(corner, size, !polygon.flat);
+  if (polygon.flat && size >= 3) widen_across(corner, size);
   if (size == 0 || wide_building_.polygons.size() >= kMostWidePolygons ||
       wide_building_.vertices.size() + size > kMostWideVertices)
     return;

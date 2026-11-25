@@ -50,6 +50,7 @@ class Arm9Bus : public runtime::Bus {
   // known to run code from there, and it has no single place to point at.
   bool has_code_memory(std::uint32_t address) override { return locate(address, false) != nullptr; }
 
+  const std::uint8_t* main_memory() const { return main_ram_.data(); }  // kMainRamSize bytes.
   VideoMemory& video_memory() { return video_; }
   // The palette memory and the sprite attribute memory, two kibibytes each:
   // the main display engine's half first. For the display.

@@ -880,3 +880,84 @@ TEST(display_sprite_mosaic_and_the_second_engine_s_sprites) {
   second.draw();
   CHECK(second.at(0) == kRed && second.at(1) == kGreen && second.at(2) == kBlue);
 }
+
+TEST(display_widescreen_sides_of_tiled_backgrounds) {
+  Fixture f;
+  f.simple_tiles();
+  f.control(0 | show(0) | kPicture);
+  f.engine.set_sides(true);
+  constexpr int kSide = DisplayEngine::kSideColumns;
+  // Line 0's sides: 44 columns left of the screen, then 44 right of it.
+  const auto left = [&f](int x) { return f.engine.side_mixed()[static_cast<std::size_t>(kSide + x)] & 0x3FFFF; };
+  const auto right = [&f](int x) { return f.engine.side_mixed()[static_cast<std::size_t>(kSide + x - 256)] & 0x3FFFF; };
+  // Not scrolled, 256 across: fixed to the screen, as its pixel at the edge.
+  f.draw();
+  CHECK(left(-1) == kRed && left(-44) == kRed && right(256) == kGrey && right(299) == kGrey);
+  CHECK(f.at(0) == kRed && f.at(1) == kGreen);
+  // Scrolled: its pixels at the edge, mirrored.
+  f.reg(DisplayEngine::kScroll, 2, 1);
+  f.draw();
+  CHECK(left(-1) == kGreen && left(-2) == kBlue && left(-3) == kGrey);
+  CHECK(f.at(0) == kGreen && f.at(1) == kBlue);
+  // 512 across: as its map goes on (the second map's tile, turned across).
+  f.reg(DisplayEngine::kScroll, 2, 0);
+  f.map(2, 0, 0, 0x2401);
+  f.background(0, 1u << 8 | 1u << 2 | 1u << 14);
+  f.draw();
+  CHECK(right(256 + 7) == kRed && right(256 + 5) == kBlue && right(256) == kGrey);
+  // Off: no sides drawn, the screen as before.
+  f.engine.set_sides(false);
+  f.draw();
+  CHECK(f.at(0) == kRed);
+}
+
+TEST(display_widescreen_sides_of_a_background_filled_from_a_wider_picture) {
+  // A picture 512 by 128 in main memory, a byte a pixel; background 2 of
+  // mode 5 (tiles through a matrix, 256 across, repeated) shows 256 columns
+  // of it at a time, each 8 of them a column of 16 tiles, 32 in a ring, as
+  // a battle's backdrop is (DisplayEngine::streamed_source).
+  Fixture f;
+  std::vector<std::uint8_t> memory(0x40000);
+  const std::size_t base = 0x10074;
+  const auto picture = [](int x, int y) { return static_cast<u32>(1 + (x * 7 + y * 13 + (x / 8) * 3) % 250); };
+  for (int y = 0; y < 128; ++y)
+    for (int x = 0; x < 512; ++x) memory[base + static_cast<std::size_t>(y * 512 + x)] = static_cast<std::uint8_t>(picture(x, y));
+  for (u32 i = 1; i < 256; ++i) f.colour(i, (i & 31) | (i >> 5) << 5);
+  const auto shown = [](u32 i) { return rgb((i & 31) * 2, ((i >> 5) & 31) * 2, 0); };
+  // Map in block 14 (2 KiB blocks), tiles from 32 KiB: column c's tiles
+  // 16c to 16c + 15.
+  f.background(2, 1u << 14 | 1u << 13 | 14u << 8 | 2u << 2);
+  for (unsigned row = 0; row < 32; ++row)
+    for (unsigned column = 0; column < 32; ++column) f.write(0x7000 + (row * 32 + column) * 2, 2, column * 16 + std::min(row, 15u));
+  // The screen shows the picture's columns 64 to 319 (the background's x
+  // is 576): those are in the ring.
+  for (int x = 64; x < 320; ++x)
+    for (int y = 0; y < 128; ++y) {
+      const u32 tile = static_cast<u32>((x / 8) % 32 * 16 + y / 8);
+      f.write(0x8000 + tile * 64 + static_cast<u32>((y % 8) * 8 + x % 8), 1, picture(x, y));
+    }
+  f.reg(DisplayEngine::kMatrix, 4, 0x00000100);
+  f.reg(DisplayEngine::kMatrix + 4, 4, 0x01000000);
+  f.reg(DisplayEngine::kMatrix + 8, 4, 576u << 8);
+  f.reg(DisplayEngine::kMatrix + 12, 4, 3u << 8);
+  f.control(5 | show(2) | kPicture);
+  f.engine.set_sides(true);
+  constexpr int kSide = DisplayEngine::kSideColumns;
+  const auto left = [&f](int x) { return f.engine.side_mixed()[static_cast<std::size_t>(kSide + x)] & 0x3FFFF; };
+  const auto right = [&f](int x) { return f.engine.side_mixed()[static_cast<std::size_t>(kSide + x - 256)] & 0x3FFFF; };
+  // Without main memory: mirrored.
+  f.draw();
+  CHECK(f.at(0) == shown(picture(64, 3)) && f.at(255) == shown(picture(319, 3)));
+  CHECK(left(-1) == shown(picture(64, 3)) && right(256) == shown(picture(319, 3)));
+  // With it: the picture's own columns past the screen's.
+  f.engine.set_main_memory(memory.data(), memory.size());
+  f.draw();
+  CHECK(left(-1) == shown(picture(63, 3)) && left(-44) == shown(picture(20, 3)));
+  CHECK(right(256) == shown(picture(320, 3)) && right(299) == shown(picture(363, 3)));
+  CHECK(f.at(0) == shown(picture(64, 3)));
+  // Once the screen no longer matches the picture, not.
+  memory[base + 3 * 512 + 68] ^= 0xFF;
+  memory[base + 3 * 512 + 99] ^= 0xFF;
+  f.draw();
+  CHECK(left(-1) == shown(picture(64, 3)));
+}

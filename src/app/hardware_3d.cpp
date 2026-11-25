@@ -150,6 +150,7 @@ Hardware3D::~Hardware3D() {
   if (atlas_ != nullptr) SDL_ReleaseGPUTexture(device_, atlas_);
   if (screen_ != nullptr) SDL_ReleaseGPUTexture(device_, screen_);
   if (bank_ != nullptr) SDL_ReleaseGPUTexture(device_, bank_);
+  if (sides_ != nullptr) SDL_ReleaseGPUTexture(device_, sides_);
   if (transfer_ != nullptr) SDL_ReleaseGPUTransferBuffer(device_, transfer_);
   for (SDL_GPUBuffer* b : {vertices_, corners_, polygons_, video_, layout_, lines_, palettes_, sprite_copies_, changes_,
                            put_map_buffer_})
@@ -180,7 +181,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   SDL_GPUShader* compose_vertex = make_shader(device, shaders::kComposeVert, sizeof shaders::kComposeVert,
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
-                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1, 2);
+                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1, 2);
   SDL_GPUShader* engine2d_fragment = make_shader(device, shaders::kEngine2dFrag, sizeof shaders::kEngine2dFrag,
                                                  SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 1, 6);
   SDL_GPUShader* edges_fragment = make_shader(device, shaders::kEdgesFrag, sizeof shaders::kEdgesFrag,
@@ -373,6 +374,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     screen_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
                            SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET, kScreenWidth, kScreenHeight);
     bank_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, 256);
+    sides_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                          2 * nds::DisplayEngine::kSideColumns, kScreenHeight);
     if (nearest_ == nullptr || atlas_ == nullptr || screen_ == nullptr || bank_ == nullptr) made = fail("3D textures");
   }
   if (!made) return false;  // What was made is let go by the destructor.
@@ -552,7 +555,7 @@ const Hardware3D::Kept* Hardware3D::kept(std::uint64_t number) const {
 
 bool Hardware3D::capture(const nds::HardwareScene& scene, const nds::CaptureRecipe& recipe,
                          const std::vector<std::uint32_t>& source, std::uint64_t number, int scale,
-                         const std::array<std::uint64_t, 3>& keep) {
+                         const std::array<std::uint64_t, 3>& keep, const std::vector<std::uint32_t>* sides) {
   if (!ready(scale)) return false;
   // The second source: a kept capture, or the bank as it is.
   SDL_GPUTexture* second = nullptr;
@@ -590,6 +593,7 @@ bool Hardware3D::capture(const nds::HardwareScene& scene, const nds::CaptureReci
   const std::vector<std::uint32_t>* bank = second == bank_ ? &recipe.second_pixels : nullptr;
   Picture picture;
   picture.pixels = &source;
+  picture.sides = sides;
   if (!run(&scene, picture, put != nullptr ? put->texture : nullptr, second, bank, into->texture, uniforms))
     return false;
   into->number = number;
@@ -817,6 +821,11 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   // went up, where the engines' pages are, the lines, and the copies of
   // palette and sprite attribute memory.
   const std::uint32_t screen_bytes = lines != nullptr ? 0 : kScreenBytes;
+  // Widescreen: the picture's sides.
+  constexpr int kSides = 2 * nds::DisplayEngine::kSideColumns;
+  const bool with_sides = wide_ && lines == nullptr && picture.sides != nullptr &&
+                          picture.sides->size() == std::size_t{kSides} * kScreenHeight;
+  const std::uint32_t side_bytes = with_sides ? static_cast<std::uint32_t>(kSides * kScreenHeight * 4) : 0;
   std::vector<unsigned> video_pages;
   std::uint32_t layout_bytes = 0, lines_bytes = 0, palette_bytes = 0, sprite_bytes = 0, changes_bytes = 0;
   if (lines != nullptr) {
@@ -844,7 +853,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   const std::uint32_t picture_bytes = video_bytes + aligned(layout_bytes) + aligned(lines_bytes) +
                                       aligned(palette_bytes) + aligned(sprite_bytes) + aligned(changes_bytes);
   std::uint32_t bytes = screen_bytes + picture_bytes + aligned(vertex_bytes) + bank_bytes + aligned(corner_bytes) +
-                        aligned(polygon_bytes) + aligned(put_bytes);
+                        aligned(polygon_bytes) + aligned(put_bytes) + aligned(side_bytes);
   for (std::uint32_t i : pending_)
     bytes += aligned(static_cast<std::uint32_t>(scene.textures[i].width * scene.textures[i].height * 4));
   if (!ensure_transfer(bytes) || (vertex_bytes != 0 && !ensure_vertex_buffer(vertex_bytes)) ||
@@ -912,6 +921,15 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
       mapped[at + 4 * i + 3] = 255;
     }
     at += bank_bytes;
+  }
+  const std::uint32_t sides_at = at;
+  if (side_bytes != 0) {
+    const std::vector<std::uint32_t>& sides = *picture.sides;
+    for (std::size_t i = 0; i < sides.size(); ++i) {
+      const std::uint32_t p = nds::DisplayEngine::for_hardware(sides[i], marks);
+      std::memcpy(mapped + at + 4 * i, &p, 4);
+    }
+    at += aligned(side_bytes);
   }
   const std::uint32_t put_at = at;
   if (put_bytes != 0) {
@@ -1013,6 +1031,14 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
     from.offset = bank_at;
     to.texture = bank_;
     to.w = to.h = 256;
+    SDL_UploadToGPUTexture(copy, &from, &to, true);
+  }
+  if (side_bytes != 0) {
+    from.offset = sides_at;
+    to.texture = sides_;
+    to.x = to.y = 0;
+    to.w = kSides;
+    to.h = kScreenHeight;
     SDL_UploadToGPUTexture(copy, &from, &to, true);
   }
   if (put_bytes != 0) {
@@ -1184,19 +1210,21 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 8> sources{{{screen_, nearest_},
+  const std::array<SDL_GPUTextureSamplerBinding, 9> sources{{{screen_, nearest_},
                                                              {scene_target_, nearest_},
                                                              {second != nullptr ? second : bank_, nearest_},
                                                              {fog_marks_, nearest_},
                                                              {numbers_, nearest_},
                                                              {edges_, nearest_},
                                                              {nearby_, nearest_},
-                                                             {put != nullptr ? put : bank_, nearest_}}};
+                                                             {put != nullptr ? put : bank_, nearest_},
+                                                             {sides_, nearest_}}};
   SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), static_cast<Uint32>(sources.size()));
   const std::array<SDL_GPUBuffer*, 2> compose_buffers{finished_, put_map_buffer_};
   SDL_BindGPUFragmentStorageBuffers(pass, 0, compose_buffers.data(), static_cast<Uint32>(compose_buffers.size()));
   // Outlines and anti-aliased edges where the scene is put in.
   ComposeUniforms uniforms = given_uniforms;
+  uniforms.put_info[3] = side_bytes != 0 ? 1u : 0u;
   if (given != nullptr && rasterized_) {
     uniforms.edge[0] = static_cast<std::uint32_t>(kScreenWidth * scale_);
     uniforms.edge[1] = static_cast<std::uint32_t>(kScreenHeight * scale_);

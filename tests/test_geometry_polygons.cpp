@@ -3,6 +3,7 @@
 // placed on the screen. The expectations are worked out by hand from the
 // hardware's arithmetic; W below is one unit (4096) and H half of it.
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <initializer_list>
 
@@ -711,4 +712,44 @@ TEST(polygons_a_wide_frame_reaches_a_third_further_with_perspective_only) {
   CHECK(wide.polygons[1].first == wide.polygons[0].first + wide.polygons[0].size && !wide.polygons[1].strip_order);
   // The game's frame and counts are the DS's alone.
   CHECK(f.g.statistics().polygons_out_of_view == 1);
+}
+
+TEST(polygons_a_flat_band_across_the_screen_is_made_longer_in_a_wide_frame) {
+  Fixture f;
+  f.g.set_wide(true);
+  f.send(GeometryEngine::kViewport, {kWholeScreen});
+  // Without perspective, from the left edge to the right one (a text band),
+  // its texture running 0 to 4096 across: the wide frame's goes on a third
+  // further on each side, its texture as across it, not stretched.
+  f.begin(GeometryEngine::kQuads, kBoth);
+  f.texture_coordinates(0, 0);
+  f.v(-W, 0);
+  f.texture_coordinates(4096, 0);
+  f.v(W, 0);
+  f.texture_coordinates(4096, 512);
+  f.v(W, -H);
+  f.texture_coordinates(0, 512);
+  f.v(-W, -H);
+  // One that reaches only the right edge stays as it is.
+  f.begin(GeometryEngine::kTriangles, kBoth);
+  f.v(0, 0);
+  f.v(W, 0);
+  f.v(W, -H);
+  f.swap();
+  const GeometryEngine::Frame& ds = f.g.finished();
+  const GeometryEngine::Frame& wide = f.g.wide_finished();
+  REQUIRE(ds.polygons.size() == 2 && wide.polygons.size() == 2 && wide.polygons[0].size == 4);
+  int least = 1000, most = -1000;
+  for (unsigned i = 0; i < 4; ++i) {
+    const Vertex& v = wide.vertices[wide.polygons[0].first + i];
+    least = std::min(least, v.x);
+    most = std::max(most, v.x);
+    // 16 of the texture's units a pixel, as across the DS's screen.
+    CHECK(std::abs(v.s - 16 * v.x) <= 24);
+  }
+  CHECK(least <= -42 && least >= -43 && most >= 298 && most <= 299);
+  for (unsigned i = 0; i < 3; ++i) {
+    const Vertex& v = wide.vertices[wide.polygons[1].first + i];
+    CHECK(v.x >= 128 && v.x <= 256);
+  }
 }

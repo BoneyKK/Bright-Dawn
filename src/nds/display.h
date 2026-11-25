@@ -91,6 +91,14 @@ class Display {
   const std::vector<std::uint32_t>& top_screen() const { return top_; }
   const std::vector<std::uint32_t>& bottom_screen() const { return bottom_; }
 
+  // Widescreen: the main engine draws each line further at its sides too
+  // (DisplayEngine::set_sides), where the processor draws it. Of screen `i`
+  // (0 top, 1 bottom), those columns as shown (DisplayEngine::side_shown(),
+  // laid out as it is; marked DisplayEngine::kCapturedBelow where they show
+  // the capture the screen shows), or empty for none.
+  void set_sides(bool on) { main_.set_sides(on); }
+  const std::vector<std::uint32_t>& screen_sides(int i) const { return screen_sides_[static_cast<std::size_t>(i & 1)]; }
+
   // The 3D picture drawn by the graphics hardware where it can be: the
   // polygon renderer then makes a scene (PolygonRenderer::build_scene) in
   // place of the picture, and the main engine marks where it goes.
@@ -169,6 +177,9 @@ class Display {
   }
   const CaptureRecipe& capture_recipe() const { return frame_recipe_; }
   const std::vector<std::uint32_t>& capture_source() const { return capture_source_; }
+  // And its sides, as screen_sides(), from the colours before the master
+  // brightness; empty for none.
+  const std::vector<std::uint32_t>& capture_sides() const { return capture_sides_; }
 
   DisplayEngine& main_engine() { return main_; }
   DisplayEngine& second_engine() { return second_; }
@@ -182,7 +193,12 @@ class Display {
   // Marks `screen` where `engine` shows a capture of the graphics hardware
   // still in video memory, and says so in `fill` (with the scene already
   // in `fill`, where the scene does not go).
-  void find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const;
+  // The capture found.
+  struct Shown;
+  Shown find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const;
+  // The main engine's sides (DisplayEngine::side_mixed() or side_shown()),
+  // marked where they show `shown`, into `sides`.
+  void make_sides(const std::vector<std::uint32_t>& from, const Shown& shown, std::vector<std::uint32_t>& sides) const;
 
   // Starts this frame's capture by the graphics hardware.
   void start_hardware_capture();
@@ -244,6 +260,8 @@ class Display {
   bool capture_shown_ = false;  // A screen showed one in the last frame.
   CaptureRecipe recipe_, frame_recipe_;
   std::vector<std::uint32_t> capture_source_;
+  std::vector<std::uint32_t> capture_sides_;
+  std::array<std::vector<std::uint32_t>, 2> screen_sides_;
   std::uint64_t frame_capture_ = 0;
   std::array<ScreenFill, 2> frame_fills_{};
   // The 2D pictures by the graphics hardware: wanted, and this frame's, by

@@ -36,9 +36,10 @@
 // Widescreen (set_wide): the scene, from the geometry engine's wide frame
 // (nds::HardwareScene::wide), is drawn a third wider than the DS's screen
 // (picture_width()), the DS's 256 columns in the middle; a screen is that
-// wide too, its 2D picture in the middle, and at its sides the scene alone
-// (with fog, outlines, the 3D's effect at the line's end and the master
-// brightness) on the lines that show it, else black. A kept capture is as
+// wide too, its 2D picture in the middle. At its sides: where the processor
+// draws the 2D, its side columns (Picture::sides) over the scene; else the
+// scene alone (with fog, outlines, the 3D's effect at the line's end and the
+// master brightness) on the lines that show it, else black. A kept capture is as
 // wide too: one of whole lines has sides as a screen's, and a screen that
 // shows one at a line's end shows its sides there. The rasterizer (1x) is
 // not used then.
@@ -94,15 +95,19 @@ class Hardware3D {
   // `scene` put in, or `scene` alone. It takes the place of a capture not
   // in `keep` (those the console keeps, nds::Display::kept_numbers()), if
   // there is one. False if it could not be made.
+  // `sides`: the source's sides (nds::Display::capture_sides()), or null.
   bool capture(const nds::HardwareScene& scene, const nds::CaptureRecipe& recipe,
                const std::vector<std::uint32_t>& source, std::uint64_t number, int scale,
-               const std::array<std::uint64_t, 3>& keep = {});
+               const std::array<std::uint64_t, 3>& keep = {}, const std::vector<std::uint32_t>* sides = nullptr);
   // A screen's 2D picture: the processor's (`pixels`: 256 * 192 colours
   // with marks), or the lines the graphics hardware draws it from.
   struct Picture {
     const std::vector<std::uint32_t>* pixels = nullptr;
     const nds::Frame2D* lines = nullptr;
     const nds::Video2D* video = nullptr;
+    // Widescreen, with `pixels`: the 2D picture at its sides (nds::Display::
+    // screen_sides()), or null.
+    const std::vector<std::uint32_t>* sides = nullptr;
   };
   // A screen (`which`: 0 the top, 1 the bottom) with `scene` (if any) and
   // the kept capture numbered `capture` (if not 0) put in, `scale` times as
@@ -185,7 +190,7 @@ class Hardware3D {
     float wide[4];
     std::uint32_t wide_rows[8];  // The lines whose sides show the scene: a bit each, from bit 0 of the first.
     // 1 where a kept capture is put in; 1 where the second source is a kept
-    // capture; 1 where there is no scene.
+    // capture; 1 where there is no scene; 1 where the sides are given.
     std::uint32_t put_info[4];
   };
 
@@ -254,6 +259,7 @@ class Hardware3D {
   SDL_GPUTexture* atlas_ = nullptr;
   SDL_GPUTexture* screen_ = nullptr;
   SDL_GPUTexture* bank_ = nullptr;  // A bank of video memory, 256 by 256, for a capture's second source.
+  SDL_GPUTexture* sides_ = nullptr;  // Picture::sides, as screen_ holds the screen's pixels.
   SDL_GPUTransferBuffer* transfer_ = nullptr;
   std::uint32_t transfer_size_ = 0;
   SDL_GPUBuffer* vertices_ = nullptr;

@@ -156,6 +156,31 @@ class DisplayEngine {
     return bitmap_lines_[background & 1][static_cast<std::size_t>(line)];
   }
 
+  // Widescreen: each line is drawn kSideColumns further on each side too,
+  // as the layers go on there: a background through its matrix, or its map,
+  // or the wider picture it is filled from (set_main_memory), else mirrored
+  // where it repeats and is scrolled across; a fixed one (a text box, say)
+  // as its pixel at the screen's edge; sprites that reach the screen. With
+  // the marks of the 3D (set_hardware_3d), the windows as at the edge, and
+  // the effects; without the processor's 3D picture.
+  static constexpr int kSideColumns = 44;
+  void set_sides(bool on) { sides_ = on; }
+  bool sides() const { return sides_; }
+  // Of each line, the kSideColumns left of the screen then those right of
+  // it (kHeight * 2 * kSideColumns): the colours mixed, with the marks
+  // (before the display mode and the master brightness, as mixed_line());
+  // with the master brightness; and the top layer of each (Dot::layer).
+  const std::vector<std::uint32_t>& side_mixed() const { return side_mixed_; }
+  const std::vector<std::uint32_t>& side_shown() const { return side_shown_; }
+  const std::vector<std::uint8_t>& side_layers() const { return side_layers_; }
+  // Main memory, for the sides: a background that the game fills from a
+  // wider picture there as it scrolls (a battle's backdrop, 512 across)
+  // shows that picture at the sides, not a copy of the screen. Null: none.
+  void set_main_memory(const std::uint8_t* memory, std::size_t size) {
+    main_memory_ = memory;
+    main_size_ = size;
+  }
+
   // The screen as shown: kWidth * kHeight colours of six bits a part.
   const std::vector<std::uint32_t>& screen() const { return screen_; }
   // The line last drawn before the display mode and the master brightness:
@@ -187,6 +212,28 @@ class DisplayEngine {
   // backgrounds', 256 to 511 the sprites'.
   std::uint32_t colour_of(unsigned index) const;
   unsigned shown_inside(int x) const;             // The six bits of whichever window `x` is in.
+  // The layers of a line into top_ and below_ (and marks_), blended, from
+  // column origin_ on, columns_ of them; `side`: a side's (see set_sides).
+  void draw_layers(int line, bool side);
+  // Pixel `x` (of the screen; any) of tiled background `background` on
+  // `line`: false where it has none.
+  bool tile_pixel(unsigned background, int line, int x, std::uint32_t& colour);
+  // A column past a side of the screen mirrored into it.
+  static int mirrored(int x);
+  // Where matrix background `n` starts (one step before the first pixel)
+  // for the columns being drawn, and its step across; at a side, mirrored
+  // if `mirror` (see set_sides).
+  void matrix_start(unsigned n, bool mirror, std::int32_t& at_x, std::int32_t& at_y, std::int32_t& step_x,
+                    std::int32_t& step_y) const;
+  // The wider picture that matrix background `n` (tiles, 256 across, that
+  // repeat) is filled from (see set_main_memory): a picture of
+  // kStreamedWidth by kStreamedHeight, a byte a pixel, whose columns of 8
+  // the game puts in as columns of 16 tiles (column c's tiles 16c to
+  // 16c + 15, top down), 32 of them in a ring, so that the background's x
+  // (not repeated) is the picture's, modulo its width. Whether there is one
+  // (checked against the screen once a frame; looked for when it fails).
+  bool streamed_source(unsigned n);
+  static constexpr int kStreamedWidth = 512, kStreamedHeight = 128;
   void place(unsigned background, int x, std::uint32_t colour, bool from_3d = false, std::uint8_t alpha = 0);
   void draw_sprites(int line, bool window_pass);
   void draw_3d(int line);
@@ -223,6 +270,22 @@ class DisplayEngine {
   std::uint8_t blend_brightness_ = 0;
 
   std::array<std::array<BitmapLine, kHeight>, 2> bitmap_lines_{};  // Of backgrounds 2 and 3.
+  // The columns being drawn: from origin_ (of the screen), columns_ of them
+  // (into top_ and the rest from their start).
+  int origin_ = 0, columns_ = kWidth;
+  bool sides_ = false;
+  std::vector<std::uint32_t> side_mixed_, side_shown_;
+  std::vector<std::uint8_t> side_layers_;
+  const std::uint8_t* main_memory_ = nullptr;
+  std::size_t main_size_ = 0;
+  unsigned frames_ = 0;  // Frames begun, for streamed_.
+  struct Streamed {
+    bool found = false;
+    std::size_t base = 0;       // In main memory, its top left pixel.
+    unsigned checked = ~0u;     // The frame it was checked on.
+    unsigned next_search = 0;   // The frame it may be looked for again.
+  };
+  std::array<Streamed, 2> streamed_{};
   std::array<Dot, kWidth> top_{}, below_{};
   std::array<bool, kWidth> sprite_window_{};
   std::array<std::uint32_t, kWidth> mixed_{};
