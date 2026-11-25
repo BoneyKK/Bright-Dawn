@@ -1,5 +1,5 @@
 // A pixel of the 3D scene: the vertex colour, mixed with a texel of the
-// texture atlas as the polygon asks (modulated, as a decal, or with the toon
+// texture atlas (or four, mixed, with flag 256) as the polygon asks (modulated, as a decal, or with the toon
 // table), written with its colour times its alpha; and, for fog, its depth
 // (24 bits) and whether it takes fog (the pipelines keep the depth where the polygon keeps its depth, and
 // the mark where every polygon drawn on the pixel takes fog); and the number
@@ -35,6 +35,39 @@ int wrapped(int c, int size, bool repeat, bool flip) {
   return c & (size - 1);
 }
 
+// Texel `st` of the texture at `place` in the atlas, `size` texels, wrapped
+// as `flags` say: never a neighbour's in the atlas.
+vec4 atlas_texel(ivec2 st, ivec2 place, ivec2 size, uint flags) {
+  st.x = wrapped(st.x, size.x, (flags & 8u) != 0u, (flags & 32u) != 0u);
+  st.y = wrapped(st.y, size.y, (flags & 16u) != 0u, (flags & 64u) != 0u);
+  return texelFetch(u_atlas, place + st, 0);
+}
+
+// Mixed from the four texels whose middles are around the point, as
+// nds::PolygonRenderer::smoothed_texel() mixes them: with an alpha of their
+// own (flag 512), by weight and alpha, so that what is not there does not
+// darken what is; else drawn where at least half the weight is there, from
+// what is.
+vec4 smoothed_texel(vec2 at, ivec2 place, ivec2 size, uint flags) {
+  vec2 st = at - 0.5;
+  ivec2 first = ivec2(floor(st));
+  vec2 f = st - vec2(first);
+  vec4 texels[4] = vec4[4](atlas_texel(first, place, size, flags), atlas_texel(first + ivec2(1, 0), place, size, flags),
+                           atlas_texel(first + ivec2(0, 1), place, size, flags),
+                           atlas_texel(first + ivec2(1, 1), place, size, flags));
+  float weights[4] = float[4]((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+  vec3 parts = vec3(0.0);
+  float sum = 0.0;
+  bool own_alpha = (flags & 512u) != 0u;
+  for (int i = 0; i < 4; ++i) {
+    float w = own_alpha ? weights[i] * texels[i].a : (texels[i].a > 0.0 ? weights[i] : 0.0);
+    parts += w * texels[i].rgb;
+    sum += w;
+  }
+  if (own_alpha) return sum > 0.0 ? vec4(parts / sum, sum) : vec4(0.0);
+  return sum >= 0.5 ? vec4(parts / sum, 1.0) : vec4(0.0);
+}
+
 void main() {
   vec4 colour = v_colour;
   uint flags = v_info.z;
@@ -43,11 +76,9 @@ void main() {
   bool highlight = u_options.y > 0.5;
   if ((flags & 4u) != 0u) {
     ivec2 size = ivec2(int(v_info.y & 0xFFFFu), int(v_info.y >> 16));
-    ivec2 st = ivec2(floor(v_texel));
-    st.x = wrapped(st.x, size.x, (flags & 8u) != 0u, (flags & 32u) != 0u);
-    st.y = wrapped(st.y, size.y, (flags & 16u) != 0u, (flags & 64u) != 0u);
     ivec2 place = ivec2(int(v_info.x & 0xFFFFu), int(v_info.x >> 16));
-    vec4 texel = texelFetch(u_atlas, place + st, 0);
+    vec4 texel = (flags & 256u) != 0u ? smoothed_texel(v_texel, place, size, flags)
+                                      : atlas_texel(ivec2(floor(v_texel)), place, size, flags);
     if (mode == 0u) {
       colour = texel * v_colour;
     } else if (mode == 1u) {

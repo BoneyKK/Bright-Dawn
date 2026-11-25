@@ -44,6 +44,13 @@ struct HardwareScene {
   static constexpr std::uint32_t kFlipS = 1u << 5;
   static constexpr std::uint32_t kFlipT = 1u << 6;
   static constexpr std::uint32_t kFog = 1u << 7;      // The polygon takes fog.
+  // The texture's texels mixed, four at a time (PolygonRenderer::
+  // TextureFilter::Bilinear), and whether it has an alpha of its own
+  // (formats 1 and 6): those mixed by weight and alpha; others drawn where
+  // at least half the weight is there, from what is (as
+  // PolygonRenderer::smoothed_texel()).
+  static constexpr std::uint32_t kSmooth = 1u << 8;
+  static constexpr std::uint32_t kOwnAlpha = 1u << 9;
 
   // How a run of triangles is drawn.
   enum class Kind : std::uint8_t {
@@ -166,6 +173,8 @@ struct HardwareScene {
     };
     static constexpr std::uint32_t kClockwise = 1;
     static constexpr std::uint32_t kTextured = 2;
+    static constexpr std::uint32_t kSmooth = 4;    // As HardwareScene::kSmooth.
+    static constexpr std::uint32_t kOwnAlpha = 8;  // As HardwareScene::kOwnAlpha.
 
     // In the order drawn: the opaque polygons, then the translucent ones.
     std::vector<Corner> corners;

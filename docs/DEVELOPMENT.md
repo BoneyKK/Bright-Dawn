@@ -85,9 +85,10 @@ the window has for it (8x in a 1080p window) is made smaller by averaging the
 pixels each window pixel covers, for smooth edges without stairs.
 *Smooth* is plain bilinear, *Sharp* plain nearest. The
 textures of 3D scenes are separate: sharp, as on the DS, unless *Textures in 3D
-scenes* (Settings, Graphics) is set to smooth (bilinear) while the processor
-draws them; polygons drawn without perspective, as a game draws its HUD in
-3D, keep their texels either way.
+scenes* (Settings, Graphics) is set to smooth (bilinear), with the processor
+or the graphics hardware (four texels mixed, each texture wrapped as it asks
+and never mixed with its neighbours in the atlas); polygons drawn without
+perspective, as a game draws its HUD in 3D, keep their texels either way.
 
 The settings are kept in `settings.txt` in the per-user data directory
 (`%LOCALAPPDATA%\BrightDawn` on Windows, `~/.local/share/bright-dawn` on

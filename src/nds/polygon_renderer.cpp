@@ -404,6 +404,11 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         info[2] |= HardwareScene::kTextured | (shape.repeat_s ? HardwareScene::kRepeatS : 0) |
                    (shape.repeat_t ? HardwareScene::kRepeatT : 0) | (shape.flip_s ? HardwareScene::kFlipS : 0) |
                    (shape.flip_t ? HardwareScene::kFlipT : 0);
+        const bool own_alpha = shape.format == 1 || shape.format == 6;
+        if (shape.smooth) {
+          info[2] |= HardwareScene::kSmooth | (own_alpha ? HardwareScene::kOwnAlpha : 0u);
+          drawn.flags |= HardwareScene::Raster::kSmooth | (own_alpha ? HardwareScene::Raster::kOwnAlpha : 0u);
+        }
       }
       HardwareScene::Vertex corners[10];
       for (unsigned i = 0; i < polygon.size; ++i) {

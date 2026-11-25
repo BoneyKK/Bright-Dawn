@@ -477,6 +477,39 @@ uint texel(Polygon p, int s, int t) {
   return c.r | c.g << 6 | c.b << 12 | c.a << 18;
 }
 
+// Mixed from the four texels whose middles are around the point (in
+// sixteenths of a texel), as PolygonRenderer::smoothed_texel() mixes them.
+uint smoothed_texel(Polygon p, int s16, int t16) {
+  const int s = s16 - 8, t = t16 - 8;
+  const int s0 = s >> 4, t0 = t >> 4;
+  const uint fs = uint(s & 15), ft = uint(t & 15);
+  const uint texels[4] = uint[4](texel(p, s0, t0), texel(p, s0 + 1, t0), texel(p, s0, t0 + 1), texel(p, s0 + 1, t0 + 1));
+  const uint weights[4] = uint[4]((16u - fs) * (16u - ft), fs * (16u - ft), (16u - fs) * ft, fs * ft);
+  uint parts[3] = uint[3](0u, 0u, 0u);
+  if ((p.flags & 8u) != 0u) {
+    uint alpha_sum = 0u;
+    for (int i = 0; i < 4; ++i) {
+      const uint a = weights[i] * alpha_of(texels[i]);
+      alpha_sum += a;
+      for (uint q = 0u; q < 3u; ++q) parts[q] += a * part_of(texels[i], q * 6u);
+    }
+    if (alpha_sum == 0u) return 0u;
+    uint mixed = ((alpha_sum + 128u) / 256u) << 18;
+    for (uint q = 0u; q < 3u; ++q) mixed |= ((parts[q] + alpha_sum / 2u) / alpha_sum) << (q * 6u);
+    return mixed;
+  }
+  uint covered = 0u;
+  for (int i = 0; i < 4; ++i) {
+    if (alpha_of(texels[i]) == 0u) continue;
+    covered += weights[i];
+    for (uint q = 0u; q < 3u; ++q) parts[q] += weights[i] * part_of(texels[i], q * 6u);
+  }
+  if (covered * 2u < 256u) return 0u;
+  uint mixed = 0x3Fu << 18;
+  for (uint q = 0u; q < 3u; ++q) mixed |= ((parts[q] + covered / 2u) / covered) << (q * 6u);
+  return mixed;
+}
+
 uint toon_entry(uint i) { return u_toon[i / 4u][i % 4u]; }
 uint times(uint a, uint b) { return ((a + 1u) * (b + 1u) - 1u) / 64u; }
 
@@ -592,7 +625,7 @@ void main() {
       if ((p.flags & 2u) != 0u) {
         const int s16 = int(ACROSS(spans[j].se0 + 0xFFFFu, spans[j].se1 + 0xFFFFu) - 0xFFFFu);
         const int t16 = int(ACROSS(spans[j].te0 + 0xFFFFu, spans[j].te1 + 0xFFFFu) - 0xFFFFu);
-        const uint tex = texel(p, s16 >> 4, t16 >> 4);
+        const uint tex = (p.flags & 4u) != 0u ? smoothed_texel(p, s16, t16) : texel(p, s16 >> 4, t16 >> 4);
         uint mixed = 0u;
         if (mode == 0u) {
           for (uint shift = 0u; shift < 24u; shift += 6u) mixed |= times(part_of(tex, shift), part_of(colour, shift)) << shift;

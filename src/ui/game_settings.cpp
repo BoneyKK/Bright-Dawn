@@ -108,7 +108,7 @@ std::vector<SettingDef> game_setting_definitions() {
                         "The 2D pictures and the touch screen stay 4:3.",
                         false));
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
-                        "Sets whether the processor draws 3D textures sharp or smoothed.",
+                        "Sets whether 3D textures are drawn sharp, as on the DS, or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));
   defs.push_back(toggle(key::kSound, "Sound", "Sound", "Plays the game's sound and music.", true));
   defs.push_back(number(key::kVolume, "Sound", "Volume", "Sets how loud the game's sound is, in percent.", 0, 100, 100));

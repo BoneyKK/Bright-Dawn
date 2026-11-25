@@ -1094,3 +1094,156 @@ TEST(hardware_downscales_a_picture_by_averaging) {
       }
   CHECK(differ == 0);
 }
+
+namespace {
+
+// Smoothed textures (PolygonRenderer::TextureFilter::Bilinear) as the
+// triangles draw them above 1x: a quad over the whole screen, 16 pixels a
+// texel, of an 8 by 8 texture, and the colour each pixel should have, mixed
+// from the four texels around its middle in floating point.
+struct SmoothCase {
+  u32 format;        // 7 (direct colours, top bit: there) or 6 (five bits of alpha).
+  u32 repeat_flip;   // Bits 16 to 19 of the texture word.
+  bool alpha_test;
+  u32 reference;     // The alpha test's, five bits.
+};
+
+constexpr u32 kGrey15 = 16 | 16 << 5 | 16 << 10;
+u32 six(u32 c5) { return c5 == 0 ? 0 : c5 * 2 + 1; }
+
+void smooth_case(const SmoothCase& c) {
+  Frame f;
+  std::mt19937 random(2600 + c.format * 16 + c.repeat_flip);
+  const auto any = [&](u32 below) { return static_cast<u32>(random() % below); };
+  // The texture at 0, eight colours (format 6) in the palette at 0, and a
+  // neighbour in the atlas: a texture of bright red at 0x200.
+  std::array<std::array<float, 4>, 64> texels{};  // Six bits each: red, green, blue, alpha.
+  std::array<u32, 8> palette{};
+  for (u32& p : palette) p = (8 + any(24)) | (8 + any(24)) << 5 | (8 + any(24)) << 10;
+  palette[0] = 0;  // Black, where alpha is 0: it must not darken what is near.
+  f.video.set_control(VideoMemory::kA, VideoMemory::kEnable);
+  f.video.set_control(VideoMemory::kE, VideoMemory::kEnable);
+  for (u32 i = 0; i < 64; ++i) {
+    u32 rgb = 0, a5 = 31;
+    if (c.format == 7) {
+      rgb = (8 + any(24)) | (8 + any(24)) << 5 | (8 + any(24)) << 10;
+      if (any(5) == 0) a5 = 0;
+      f.video.write(0x06800000 + i * 2, 2, rgb | (a5 != 0 ? 0x8000u : 0u));
+    } else {
+      const u32 index = any(8);
+      a5 = index == 0 ? 0 : any(4) == 0 ? 31 : any(32);
+      rgb = palette[index];
+      f.video.write(0x06800000 + i, 1, index | a5 << 3);
+    }
+    texels[i] = {static_cast<float>(six(rgb & 31)), static_cast<float>(six((rgb >> 5) & 31)),
+                 static_cast<float>(six((rgb >> 10) & 31)), static_cast<float>(six(a5))};
+  }
+  for (u32 i = 0; i < 64; ++i) f.video.write(0x06800200 + i * 2, 2, 0x801F);
+  for (u32 i = 0; i < 8; ++i) f.video.write(0x06880000 + i * 2, 2, palette[i]);
+  f.video.set_control(VideoMemory::kA, VideoMemory::kEnable | 3);
+  f.video.set_control(VideoMemory::kE, VideoMemory::kEnable | 3);
+  f.control(PolygonRenderer::kTextures | PolygonRenderer::kAlphaBlending | (c.alpha_test ? PolygonRenderer::kAlphaTest : 0u));
+  f.io.write(PolygonRenderer::kAlphaTestReference, 2, c.reference);
+  f.io.write(PolygonRenderer::kClearColour, 4, kGrey15 | 31u << 16);
+  f.r.set_texture_filter(PolygonRenderer::TextureFilter::Bilinear);
+
+  // s from -4 texels at the left to 12 at the right, t from -2 at the top
+  // to 10 at the bottom (sixteenths of a texel).
+  const auto corner = [](int x, int y, int s, int t) {
+    Vertex v = Frame::vertex(x, y, 0x3FFFF, 0x400000);
+    v.s = static_cast<std::int16_t>(s);
+    v.t = static_cast<std::int16_t>(t);
+    return v;
+  };
+  const Vertex quad[4] = {corner(0, 0, -64, -32), corner(0, 192, -64, 160), corner(256, 192, 192, 160),
+                          corner(256, 0, 192, -32)};
+  f.polygon(quad, 4, kOpaque | number(1), c.format << 26 | c.repeat_flip, 0);
+  // The neighbour, behind and small: in the atlas, not on the pixels looked at.
+  const Vertex small[3] = {corner(0, 0, 0, 0), corner(0, 2, 0, 16), corner(2, 0, 16, 0)};
+  f.polygon(small, 3, kOpaque | number(2), 7u << 26 | (0x200 >> 3), 0);
+
+  constexpr int kScale = 2;
+  const std::vector<u32> pixels = f.graphics_hardware(kScale);
+  const bool repeat_s = (c.repeat_flip & (1u << 16)) != 0, repeat_t = (c.repeat_flip & (1u << 17)) != 0;
+  const bool flip_s = (c.repeat_flip & (1u << 18)) != 0, flip_t = (c.repeat_flip & (1u << 19)) != 0;
+  const auto wrap = [](int v, bool repeat, bool flip) {
+    if (!repeat) return std::clamp(v, 0, 7);
+    if (flip && (v & 8) != 0) v = -1 - v;
+    return v & 7;
+  };
+  int looked = 0, wrong = 0;
+  for (int y = 1; y < 192 * kScale; y += 7) {
+    for (int x = 3; x < 256 * kScale; x += 11) {
+      if (x < 4 * kScale && y < 4 * kScale) continue;  // The neighbour.
+      const double s = -4.0 + 16.0 * (x + 0.5) / kScale / 256.0, t = -2.0 + 12.0 * (y + 0.5) / kScale / 192.0;
+      const double ss = s - 0.5, tt = t - 0.5;
+      const int s0 = static_cast<int>(std::floor(ss)), t0 = static_cast<int>(std::floor(tt));
+      const double fs = ss - s0, ft = tt - t0;
+      // Too near a texel's edge for floating point to agree on which side.
+      if (std::abs(fs - 0.5) > 0.47 || std::abs(ft - 0.5) > 0.47) continue;
+      double parts[3] = {0, 0, 0}, sum = 0;
+      for (int i = 0; i < 4; ++i) {
+        const auto& texel = texels[static_cast<std::size_t>(wrap(t0 + i / 2, repeat_t, flip_t) * 8 + wrap(s0 + i % 2, repeat_s, flip_s))];
+        const double w = (i % 2 != 0 ? fs : 1 - fs) * (i / 2 != 0 ? ft : 1 - ft);
+        const double weight = c.format == 6 ? w * texel[3] / 63.0 : (texel[3] > 0 ? w : 0.0);
+        for (int p = 0; p < 3; ++p) parts[p] += weight * texel[static_cast<std::size_t>(p)];
+        sum += weight;
+      }
+      double alpha = c.format == 6 ? sum : (sum >= 0.5 ? 1.0 : 0.0);
+      if (c.format != 6 && std::abs(sum - 0.5) < 0.03) continue;
+      bool drawn = alpha > 0;
+      if (c.alpha_test) {
+        const double threshold = (c.reference * 2 + 1.5) / 63.0;
+        if (std::abs(alpha - threshold) < 1.5 / 63.0) continue;
+        drawn = alpha >= threshold;
+      }
+      ++looked;
+      const u32 got = pixels[static_cast<std::size_t>(y * 256 * kScale + x)];
+      bool same = true;
+      for (int p = 0; p < 3; ++p) {
+        const double grey = 33.0;
+        const double colour = drawn && sum > 0 ? parts[p] / sum * alpha + grey * (1 - alpha) : grey;
+        const double want = colour * 255.0 / 63.0;
+        same = same && std::abs(want - static_cast<double>((got >> (p * 8)) & 255)) <= 5.0;
+      }
+      if (!same && wrong++ < 4)
+        std::printf("    format %u at %d,%d (s %.2f t %.2f): got %06x\n", c.format, x, y, s, t, got & 0xFFFFFF);
+    }
+  }
+  CHECK(looked > 500);
+  CHECK(wrong == 0);
+}
+
+}  // namespace
+
+// Repeated, mirrored and held at the edge, each across and down on its
+// own; never mixed with a neighbour in the atlas.
+TEST(hardware_smooths_textures_with_the_texture_s_own_wrapping) {
+  for (const u32 repeat_flip : {0u, 1u << 16 | 1u << 18, 1u << 16 | 1u << 17, 1u << 17 | 1u << 19, 0xFu << 16})
+    smooth_case({7, repeat_flip, false, 0});
+}
+
+// Texels that are not there (alpha 0, or a colour 0 of a palette) do not
+// darken those that are: colours are mixed by their alpha, and the alpha
+// test then takes the mixed alpha.
+TEST(hardware_smooths_cut_out_textures_without_dark_edges) {
+  smooth_case({6, 0xFu << 16, false, 0});
+  smooth_case({6, 1u << 16 | 1u << 18, true, 14});
+  smooth_case({7, 1u << 17, true, 20});
+}
+
+// At 1x the rasterizer draws smoothed textures as the processor does,
+// pixel for pixel.
+TEST(hardware_rasterizer_smooths_textures_as_the_processor_at_1x) {
+  std::mt19937 random(20261125);
+  int failed = 0;
+  constexpr int kScenes = 24;
+  for (int round = 0; round < kScenes; ++round) {
+    Frame f;
+    f.r.set_texture_filter(PolygonRenderer::TextureFilter::Bilinear);
+    random_scene(f, random, round % 2 == 0 ? PolygonRenderer::kEdgeMarking : PolygonRenderer::kAntiAliasing);
+    if (compare_raster(f, f.r.control(), "smooth") != 0) ++failed;
+  }
+  std::printf("    %d of %d scenes drawn the same\n", kScenes - failed, kScenes);
+  CHECK(failed == 0);
+}
