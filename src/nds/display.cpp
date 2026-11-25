@@ -229,13 +229,13 @@ void Display::start_hardware_capture() {
   r.second_pixels.clear();
   const unsigned into = (capture_control_ >> 16) & 3;
   const unsigned from = (main_.control() >> 18) & 3;
+  const Kept* held = nullptr;
   if (r.source != 0) {
     // The second source's bank as it is before this capture writes to it
     // (it can be the same bank): a capture of the graphics hardware if it
     // holds one, wherever the capture reads it; else what is there.
     const u32 base = 0x06800000 + from * 0x20000;
     const std::size_t count = static_cast<std::size_t>(r.width) * r.height;
-    const Kept* held = nullptr;
     for (const Kept& kept : kept_) {
       if (kept.number == 0 || kept.bank != from || (held != nullptr && held->number > kept.number)) continue;
       bool same = true;
@@ -252,7 +252,18 @@ void Display::start_hardware_capture() {
       for (u32 at = 0; at < 0x10000; ++at) r.second_pixels[at] = six_bits_each(video_.peek(base + at * 2, 2));
     }
   }
-  kept_at_ = (kept_at_ + 1) % kept_.size();
+  // In place of a capture no longer in video memory, else of the oldest;
+  // not of the one this capture reads. One that a picture shows (a
+  // background behind a menu, say) is kept while it is there.
+  std::size_t pick = kept_.size();
+  for (std::size_t i = 0; i < kept_.size(); ++i) {
+    const Kept& k = kept_[i];
+    if (&k == held) continue;
+    if (pick == kept_.size() || (k.in_memory ? 1 : 0) < (kept_[pick].in_memory ? 1 : 0) ||
+        ((k.in_memory == kept_[pick].in_memory) && k.number < kept_[pick].number))
+      pick = i;
+  }
+  kept_at_ = pick;
   Kept& kept = kept_[kept_at_];
   kept.number = 0;
   kept.bank = into;
@@ -356,12 +367,25 @@ void Display::vertical_blank() {
           left_out;
   }
   frame_capture_ = hardware_capture_ ? kept_[kept_at_].number : 0;
-  if (frame_capture_ != 0) std::swap(frame_recipe_, recipe_);
+  if (frame_capture_ != 0) {
+    // A kept capture in the picture captured (as a background turned and
+    // made smaller, as the start of a battle does), put in by the graphics
+    // hardware at its resolution.
+    recipe_.put_capture = 0;
+    if (!recipe_.only_3d && recipe_.source != 1) {
+      const Shown shown = shown_capture(main_, capture_source_, true);
+      if (shown.kept != nullptr) {
+        put_in(main_, shown, capture_source_, capture_source_, recipe_.put_lines);
+        recipe_.put_capture = shown.kept->number;
+      }
+    }
+    std::swap(frame_recipe_, recipe_);
+  }
   ScreenFill& main_fill = frame_fills_[main_on_top ? 0 : 1];
   ScreenFill& second_fill = frame_fills_[main_on_top ? 1 : 0];
   main_fill = second_fill = ScreenFill{};
   if (scene_this_frame_ && have_scene_ && ((main_.control() >> 16) & 3) == 1)
-    main_fill = {Fill::kScene, 0, main_.master_brightness()};
+    main_fill = {Fill::kScene, 0, main_.master_brightness(), {}};
   // A capture can be on a screen with the scene too, as behind a message
   // box the game draws in 3D.
   if (!by_hardware_[0]) find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
@@ -382,39 +406,119 @@ bool Display::in_video_memory(const Kept& kept) const {
   return true;
 }
 
-void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const {
-  // The capture the engine shows most of, at one pixel in 61, where the
-  // screen would show its bank (as display mode 2 does); it counts if three
-  // quarters of those it covers are the same. Only a capture still in video
-  // memory as it was made, as the frame began, can be shown.
-  const std::vector<std::uint32_t>& shown = engine.unlit_screen();
-  const Kept* best = nullptr;
-  unsigned best_count = 0, best_samples = 0;
+int Display::bitmap_row(const DisplayEngine& engine, int background, int line, unsigned bank) const {
+  const DisplayEngine::BitmapLine& b = engine.bitmap_line(static_cast<unsigned>(background), line);
+  if (!b.on || b.width != 256) return -1;
+  VideoMemory::Bank where;
+  u32 offset = 0;
+  if (!video_.locate(b.data, where, offset) || static_cast<unsigned>(where) != bank || (offset & 0x1FF) != 0) return -1;
+  return static_cast<int>(offset / 512);
+}
+
+namespace {
+
+constexpr u32 kColour = 0x3FFFF;
+
+// The pixel of the bank that bitmap line `b`, from row `row`, shows at `x`;
+// -1 for none. As DisplayEngine::draw_extended() finds it.
+int bank_pixel(const DisplayEngine::BitmapLine& b, int row, int x) {
+  int bx = (b.x0 + b.pa * x) >> 8, by = (b.y0 + b.pc * x) >> 8;
+  if (b.repeated) {
+    bx &= 255;
+    by &= b.height - 1;
+  } else if (bx < 0 || bx >= 256 || by < 0 || by >= b.height) {
+    return -1;
+  }
+  return ((row + by) & 255) * 256 + bx;
+}
+
+}  // namespace
+
+Display::Shown Display::shown_capture(const DisplayEngine& engine, const std::vector<std::uint32_t>& colours,
+                                      bool through_backgrounds) const {
+  Shown best;
+  unsigned best_count = 0;
   for (const Kept& kept : kept_) {
     // A capture made in this frame is not complete until the frame is: what
-    // the engines show now can only be an earlier one.
+    // the engines show now can only be an earlier one. Only one still in
+    // video memory as it was made, as the frame began, can be shown.
     if (kept.number == 0 || kept.number > statistics_.frames || !kept.in_memory) continue;
-    unsigned count = 0, samples = 0;
-    for (std::size_t i = 0; i < shown.size(); i += 61) {
-      if (kept.pixels[i] == kNotCaptured) continue;
-      ++samples;
-      count += shown[i] == kept.pixels[i] ? 1 : 0;
-    }
-    if (count * 4 < samples * 3 || samples == 0) continue;
-    if (count > best_count || (best != nullptr && count == best_count && kept.number > best->number)) {
-      best_count = count;
-      best_samples = samples;
-      best = &kept;
+    for (int background = -1; background <= 3; ++background) {
+      if (background == 0 || background == 1 || (background >= 2 && !through_backgrounds)) continue;
+      unsigned count = 0, samples = 0;
+      if (background < 0) {
+        // Where the screen would show its bank (as display mode 2 does).
+        for (std::size_t i = 0; i < colours.size(); i += 61) {
+          if (kept.pixels[i] == kNotCaptured) continue;
+          ++samples;
+          count += (colours[i] & kColour) == kept.pixels[i] ? 1 : 0;
+        }
+      } else {
+        for (int line = 0; line < kHeight; line += 3) {
+          const int row = bitmap_row(engine, background, line, kept.bank);
+          if (row < 0) continue;
+          const DisplayEngine::BitmapLine& b = engine.bitmap_line(static_cast<unsigned>(background), line);
+          for (int x = line % 7; x < kWidth; x += 7) {
+            const int at = bank_pixel(b, row, x);
+            if (at < 0 || kept.pixels[static_cast<std::size_t>(at)] == kNotCaptured) continue;
+            ++samples;
+            count += (colours[static_cast<std::size_t>(line) * kWidth + x] & kColour) ==
+                             kept.pixels[static_cast<std::size_t>(at)]
+                         ? 1
+                         : 0;
+          }
+        }
+        if (samples < 16) continue;
+      }
+      if (count * 4 < samples * 3 || samples == 0) continue;
+      if (count > best_count || (best.kept != nullptr && count == best_count && kept.number > best.kept->number)) {
+        best_count = count;
+        best = {&kept, background};
+      }
     }
   }
-  if (best == nullptr || best_samples == 0) return;
-  // With the scene, the pixels under the 3D layer.
-  const bool with_scene = fill.fill == Fill::kScene;
-  const u32 mark = with_scene ? DisplayEngine::kCapturedBelow : DisplayEngine::kMark3D;
-  for (std::size_t i = 0; i < shown.size(); ++i)
-    if (shown[i] == best->pixels[i]) screen[i] |= mark;
-  if (with_scene) fill.capture = best->number;
-  else fill = {Fill::kCapture, best->number, engine.master_brightness()};
+  return best;
+}
+
+void Display::put_in(const DisplayEngine& engine, const Shown& shown, const std::vector<std::uint32_t>& colours,
+                     std::vector<std::uint32_t>& marked, CaptureLines& lines) const {
+  const Kept& kept = *shown.kept;
+  for (int line = 0; line < kHeight; ++line) {
+    CaptureLines::Line& l = lines.lines[static_cast<std::size_t>(line)];
+    l = CaptureLines::Line{};
+    const std::size_t first = static_cast<std::size_t>(line) * kWidth;
+    if (shown.background < 0) {
+      l.on = true;
+      l.y0 = line * 256;
+      for (std::size_t i = first; i < first + kWidth; ++i)
+        if (kept.pixels[i] != kNotCaptured && (colours[i] & kColour) == kept.pixels[i])
+          marked[i] |= DisplayEngine::kCapturedBelow;
+      continue;
+    }
+    const int row = bitmap_row(engine, shown.background, line, kept.bank);
+    if (row < 0) continue;
+    const DisplayEngine::BitmapLine& b = engine.bitmap_line(static_cast<unsigned>(shown.background), line);
+    l = {true, b.repeated, b.x0, b.y0, b.pa, b.pb, b.pc, b.pd, static_cast<std::uint16_t>(row), b.height};
+    for (int x = 0; x < kWidth; ++x) {
+      const int at = bank_pixel(b, row, x);
+      if (at < 0 || kept.pixels[static_cast<std::size_t>(at)] == kNotCaptured) continue;
+      if ((colours[first + static_cast<std::size_t>(x)] & kColour) == kept.pixels[static_cast<std::size_t>(at)])
+        marked[first + static_cast<std::size_t>(x)] |= DisplayEngine::kCapturedBelow;
+    }
+  }
+}
+
+void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const {
+  // Through a background only where the screen shows the engine's picture.
+  const bool picture = ((engine.control() >> DisplayEngine::kDisplayModeShift) & 3) == 1;
+  const Shown shown = shown_capture(engine, engine.unlit_screen(), picture);
+  if (shown.kept == nullptr) return;
+  put_in(engine, shown, engine.unlit_screen(), screen, fill.lines);
+  if (fill.fill != Fill::kScene) {
+    fill.fill = Fill::kCapture;
+    fill.brightness = engine.master_brightness();
+  }
+  fill.capture = shown.kept->number;
 }
 
 }  // namespace bd::nds

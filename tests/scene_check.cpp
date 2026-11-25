@@ -77,7 +77,7 @@ struct Replay {
     const bd::nds::HardwareScene& scene = r.build_scene(frame, video);
     const std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, 0x80000000u);
     bool failed = false;
-    hardware.draw(0, screen, &scene, 0, 0, 1, failed);
+    hardware.draw(0, screen, &scene, 0, nullptr, 0, 1, failed);
     std::vector<u32> raster;
     if (failed || !hardware.read_raster(raster)) return -1;
     int count = 0;
@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
     if (dump.fills[static_cast<std::size_t>(which)] != 1 || screen.size() != static_cast<std::size_t>(kWidth) * kHeight) continue;
     bool failed = false;
     const bd::nds::HardwareScene& scene = r.build_scene(dump.inputs.frame, replay.video);
-    replay.hardware.draw(which, screen, &scene, 0, dump.brightness[static_cast<std::size_t>(which)], 1, failed);
+    replay.hardware.draw(which, screen, &scene, 0, nullptr, dump.brightness[static_cast<std::size_t>(which)], 1, failed);
     std::vector<u32> shown_pixels, taken;
     if (failed || !replay.hardware.read_screen(which, shown_pixels)) continue;
     const bool have_taken = replay.hardware.read_raster(taken);
@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
     if (scale > 1 && !out.empty()) {
       r.set_fine_positions(dump.fine_positions);
       const bd::nds::HardwareScene& large = r.build_scene(dump.inputs.frame, replay.video);
-      replay.hardware.draw(which, screen, &large, 0, dump.brightness[static_cast<std::size_t>(which)], scale, failed);
+      replay.hardware.draw(which, screen, &large, 0, nullptr, dump.brightness[static_cast<std::size_t>(which)], scale, failed);
       if (!failed && replay.hardware.read_screen(which, shown_pixels))
         write_ppm(out / ((which == 0 ? "top_hardware_" : "bottom_hardware_") + std::to_string(scale) + "x.ppm"), shown_pixels,
                   kWidth * scale, kHeight * scale, false);
@@ -256,7 +256,7 @@ int main(int argc, char** argv) {
         const bd::nds::HardwareScene& scene = r.build_scene(dump.inputs.frame, replay.video);
         bd::frame_log::restart(bd::frame_log::kHost);
         bool failed = false;
-        replay.hardware.draw(which, screen, &scene, 0, dump.brightness[static_cast<std::size_t>(which)], scale, failed);
+        replay.hardware.draw(which, screen, &scene, 0, nullptr, dump.brightness[static_cast<std::size_t>(which)], scale, failed);
         bd::frame_log::switch_to(bd::frame_log::kHost);
         if (failed) break;
         if (n == 0) continue;  // The first is the textures' upload and the targets' making.

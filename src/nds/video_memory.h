@@ -118,6 +118,10 @@ class VideoMemory {
     return value;
   }
 
+  // Which bank `address` (0x06000000 to 0x06FFFFFF) is in, and where in it.
+  // False where there is none, or more than one.
+  bool locate(std::uint32_t address, Bank& bank, std::uint32_t& offset) const;
+
   // A bank's own contents, wherever it is placed.
   const std::vector<std::uint8_t>& contents(Bank bank) const { return banks_[bank]; }
 

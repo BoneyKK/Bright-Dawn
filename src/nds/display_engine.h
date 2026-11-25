@@ -140,6 +140,22 @@ class DisplayEngine {
   // bit 0 for background 2, bit 1 for background 3.
   static unsigned matrix_backgrounds(std::uint32_t control);
 
+  // A line's background 2 or 3 drawn as a bitmap of colours as such (16
+  // bits a pixel), through its matrix: where its pixels are, from what
+  // place (in 1/256ths of a pixel) and with what matrix. For nds::Display,
+  // to find a display capture shown so. `on` is false where it was not.
+  struct BitmapLine {
+    bool on = false;
+    bool repeated = false;
+    std::uint32_t data = 0;
+    std::int32_t x0 = 0, y0 = 0;
+    std::int16_t pa = 0, pb = 0, pc = 0, pd = 0;
+    std::uint16_t width = 0, height = 0;
+  };
+  const BitmapLine& bitmap_line(unsigned background, int line) const {
+    return bitmap_lines_[background & 1][static_cast<std::size_t>(line)];
+  }
+
   // The screen as shown: kWidth * kHeight colours of six bits a part.
   const std::vector<std::uint32_t>& screen() const { return screen_; }
   // The line last drawn before the display mode and the master brightness:
@@ -206,6 +222,7 @@ class DisplayEngine {
   std::uint16_t blend_control_ = 0, blend_alpha_ = 0, master_brightness_ = 0;
   std::uint8_t blend_brightness_ = 0;
 
+  std::array<std::array<BitmapLine, kHeight>, 2> bitmap_lines_{};  // Of backgrounds 2 and 3.
   std::array<Dot, kWidth> top_{}, below_{};
   std::array<bool, kWidth> sprite_window_{};
   std::array<std::uint32_t, kWidth> mixed_{};

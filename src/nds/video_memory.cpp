@@ -156,6 +156,20 @@ std::uint32_t VideoMemory::read(std::uint32_t address, unsigned size) {
   return value;
 }
 
+bool VideoMemory::locate(std::uint32_t address, Bank& bank, std::uint32_t& offset) const {
+  const Page& page = page_at(address);
+  if (page.count != 1) return false;
+  const std::uint32_t at = page.all_at[0] + (address & (kPageSize - 1));
+  for (unsigned b = 0; b < kBanks; ++b) {
+    if (at >= kBankStarts[b] && at < kBankStarts[b] + kBankSizes[b]) {
+      bank = static_cast<Bank>(b);
+      offset = at - kBankStarts[b];
+      return true;
+    }
+  }
+  return false;
+}
+
 std::uint32_t VideoMemory::peek(std::uint32_t address, unsigned size) const {
   const Page& page = page_at(address);
   const std::uint32_t at = address & (kPageSize - 1);

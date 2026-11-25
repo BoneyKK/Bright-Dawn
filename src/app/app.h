@@ -27,6 +27,7 @@ struct Options {
   std::uint64_t frames = 0;
   std::string capture;
   std::uint64_t capture_every = 0;
+  std::uint64_t capture_from = 0;  // --capture-every from this frame on.
   // Write the 3D scene of the last frame here (nds/scene_dump.h).
   std::filesystem::path dump_3d;
   // Draw the 2D pictures with the processor too, and log where the graphics

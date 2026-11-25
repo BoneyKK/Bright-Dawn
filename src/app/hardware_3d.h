@@ -26,16 +26,22 @@
 // without the master brightness, as its recipe says (nds::CaptureRecipe):
 // the main engine's picture with the scene or the scene alone, blended with
 // a bank of video memory or with a capture made before, into a texture laid
-// out as its bank. The last three are kept. A screen marked where it shows
-// one is drawn with it put in, as with the scene.
+// out as its bank. Four are kept, those the console keeps among them. A
+// screen marked where it shows one (nds::DisplayEngine::kCapturedBelow) is
+// drawn with it put in at its resolution, under the scene, as each line's
+// map says (nds::CaptureLines): shown as its bank is, or as a bitmap
+// background turned and made larger or smaller. A capture's first source
+// can have one put in too.
 //
 // Widescreen (set_wide): the scene, from the geometry engine's wide frame
 // (nds::HardwareScene::wide), is drawn a third wider than the DS's screen
 // (picture_width()), the DS's 256 columns in the middle; a screen is that
 // wide too, its 2D picture in the middle, and at its sides the scene alone
 // (with fog, outlines, the 3D's effect at the line's end and the master
-// brightness) on the lines that show it, else black. Captures stay the
-// DS's size, of the scene's middle. The rasterizer (1x) is not used then.
+// brightness) on the lines that show it, else black. A kept capture is as
+// wide too: one of whole lines has sides as a screen's, and a screen that
+// shows one at a line's end shows its sides there. The rasterizer (1x) is
+// not used then.
 //
 // Made for speed, not to be exact: see nds/hardware_scene.h for what is
 // left out. The program's own drawing (nds::PolygonRenderer) stays for
@@ -85,9 +91,12 @@ class Hardware3D {
 
   // The capture numbered `number`, made as `recipe` says, `scale` times as
   // large: its first source is `source` (256 * 192 colours with marks) with
-  // `scene` put in, or `scene` alone. False if it could not be made.
+  // `scene` put in, or `scene` alone. It takes the place of a capture not
+  // in `keep` (those the console keeps, nds::Display::kept_numbers()), if
+  // there is one. False if it could not be made.
   bool capture(const nds::HardwareScene& scene, const nds::CaptureRecipe& recipe,
-               const std::vector<std::uint32_t>& source, std::uint64_t number, int scale);
+               const std::vector<std::uint32_t>& source, std::uint64_t number, int scale,
+               const std::array<std::uint64_t, 3>& keep = {});
   // A screen's 2D picture: the processor's (`pixels`: 256 * 192 colours
   // with marks), or the lines the graphics hardware draws it from.
   struct Picture {
@@ -95,21 +104,22 @@ class Hardware3D {
     const nds::Frame2D* lines = nullptr;
     const nds::Video2D* video = nullptr;
   };
-  // A screen (`which`: 0 the top, 1 the bottom) with `scene` put in, or
-  // the kept capture numbered `capture` if `scene` is null, or (both null
-  // and 0) nothing put in, `scale` times as large, and `brightness` (the
-  // master brightness register) on what is put in. With `scene`, the kept
-  // capture numbered `capture` (if any) is put in too, under the scene,
-  // where the screen is marked nds::DisplayEngine::kCapturedBelow. The texture to show;
-  // null if it could not be made (`failed`) or that capture is not kept.
+  // A screen (`which`: 0 the top, 1 the bottom) with `scene` (if any) and
+  // the kept capture numbered `capture` (if not 0) put in, `scale` times as
+  // large, and `brightness` (the master brightness register) on what is put
+  // in. The capture goes under the scene, where the screen is marked nds::
+  // DisplayEngine::kCapturedBelow, as `lines` map it. With neither, nothing
+  // is put in. The texture to show; null if it could not be made (`failed`)
+  // or, without the scene, that capture is not kept.
   SDL_Texture* draw(int which, const Picture& picture, const nds::HardwareScene* scene, std::uint64_t capture,
-                    std::uint16_t brightness, int scale, bool& failed);
+                    const nds::CaptureLines* lines, std::uint16_t brightness, int scale, bool& failed);
   // The same with the processor's picture.
   SDL_Texture* draw(int which, const std::vector<std::uint32_t>& screen, const nds::HardwareScene* scene,
-                    std::uint64_t capture, std::uint16_t brightness, int scale, bool& failed) {
+                    std::uint64_t capture, const nds::CaptureLines* lines, std::uint16_t brightness, int scale,
+                    bool& failed) {
     Picture picture;
     picture.pixels = &screen;
-    return draw(which, picture, scene, capture, brightness, scale, failed);
+    return draw(which, picture, scene, capture, lines, brightness, scale, failed);
   }
   // The last picture draw() made of screen `which`, its columns from
   // `from_x` (`from_w` of them) and all its lines, made `width` by `height`
@@ -157,9 +167,7 @@ class Hardware3D {
   // The compose shader's uniforms, as std140 lays them out.
   struct ComposeUniforms {
     float brightness[4];  // 1 towards white, 2 towards black; how far (0 to 1).
-    // 1 for a capture; the lines of the second texture (192, or 256 for a
-    // kept capture); 1 where a screen with the scene has a kept capture too.
-    float options[4];
+    float options[4];  // 1 for a capture.
     std::uint32_t capture[4];  // How a capture is made (shaders/compose.frag).
     std::uint32_t edge[4];     // The rasterizer's pixels: width, height, 0, 1 where they are the scene's.
     std::uint32_t fog[4];      // Fog: 1 with the scene (+2 alpha only), offset, step.
@@ -176,6 +184,9 @@ class Hardware3D {
     // it is (0 to 1 each); 1 where the sides show the scene.
     float wide[4];
     std::uint32_t wide_rows[8];  // The lines whose sides show the scene: a bit each, from bit 0 of the first.
+    // 1 where a kept capture is put in; 1 where the second source is a kept
+    // capture; 1 where there is no scene.
+    std::uint32_t put_info[4];
   };
 
  private:
@@ -189,13 +200,19 @@ class Hardware3D {
   };
 
   bool ready(int scale);
-  // Puts the scene (drawn first if it is new) or `source` into `screen`
-  // where it is marked, into `target`; or makes a capture there, with
-  // `second` as its second source (`bank` uploaded to bank_ first, if
-  // given), as `uniforms` say.
+  // The kept capture numbered `number`; null for none.
+  const Kept* kept(std::uint64_t number) const;
+  // `lines` into put_map_ (each line's map of the capture put in, for the
+  // compose shader: x0, y0, pa, pc; then pb, pd, the bank's row, and 1 if
+  // shown + 2 if it repeats + its rows times 4).
+  void put_lines(const nds::CaptureLines& lines);
+  // Puts the scene (drawn first if it is new) and `put` (a kept capture)
+  // into `screen` where it is marked, into `target`; or makes a capture
+  // there, with `second` as its second source (`bank` uploaded to bank_
+  // first, if given), as `uniforms` say.
   // Without `marks`, the 2D picture's marks are left out (nothing is put
   // in).
-  bool run(const nds::HardwareScene* scene, const Picture& picture, SDL_GPUTexture* source, SDL_GPUTexture* second,
+  bool run(const nds::HardwareScene* scene, const Picture& picture, SDL_GPUTexture* put, SDL_GPUTexture* second,
            const std::vector<std::uint32_t>* bank, SDL_GPUTexture* target, const ComposeUniforms& uniforms,
            bool marks = true);
   // Draws the scene's polygons as the DS does (shaders/raster.comp), then
@@ -261,6 +278,9 @@ class Hardware3D {
   std::uint32_t sprite_copies_size_ = 0;
   SDL_GPUBuffer* changes_ = nullptr;  // nds::Video2D::changes, then nds::Video2D::changed.
   std::uint32_t changes_size_ = 0;
+  std::array<float, 192 * 8> put_map_{};  // put_lines()'s, for the next run(),
+  SDL_GPUBuffer* put_map_buffer_ = nullptr;  // and where the shader reads it.
+  std::uint32_t put_map_size_ = 0;
 
   bool wide_ = false;
   // At the scale in use, and how wide the pictures are (picture_width()).
@@ -281,7 +301,7 @@ class Hardware3D {
   SDL_GPUTexture* depth_ = nullptr;
   std::array<SDL_GPUTexture*, 2> outputs_{};  // For the top and the bottom screen,
   std::array<SDL_Texture*, 2> shown_{};       // as textures of the renderer.
-  std::array<Kept, 3> kept_{};
+  std::array<Kept, 4> kept_{};
   // downscaled()'s pictures, for the top and the bottom screen, and their sizes.
   std::array<SDL_GPUTexture*, 2> smaller_{};
   std::array<SDL_Texture*, 2> smaller_shown_{};

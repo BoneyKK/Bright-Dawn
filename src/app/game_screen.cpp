@@ -252,7 +252,7 @@ bool GameScreen::frame() {
   console_->polygon_renderer().set_fine_positions(app_.settings.toggle(key::kFineCoordinates) && scale_3d() > 1);
   const bool capture_last = app_.options.frames != 0 && frames_run_ == app_.options.frames && !app_.options.capture.empty();
   const bool capture_now = capture_last || (app_.options.capture_every != 0 && !app_.options.capture.empty() &&
-                                            frames_run_ % app_.options.capture_every == 0);
+                                            frames_run_ >= app_.options.capture_from && frames_run_ % app_.options.capture_every == 0);
   const bool show = app_.options.unthrottled || clock_.frame_done(SDL_GetTicksNS());
   if (clock_.drops() != drops_logged_) {
     const std::uint64_t now = SDL_GetTicksNS();
@@ -614,7 +614,7 @@ void GameScreen::upload_screens() {
     bool failed = false;
     SDL_Texture* t = hardware_.draw(i, picture,
                                     fill.fill == nds::Display::Fill::kScene ? &console_->polygon_renderer().scene() : nullptr,
-                                    fill.capture, fill.brightness, scale_3d(), failed);
+                                    fill.capture, &fill.lines, fill.brightness, scale_3d(), failed);
     if (failed) {
       give_up_hardware(lines.by_hardware ? "draw a 2D picture" : "draw a 3D scene");
       break;
@@ -657,7 +657,7 @@ void GameScreen::keep_capture() {
   if (number == 0 || number == capture_kept_ || !hardware_.is_open() || hardware_failed_) return;
   capture_kept_ = number;
   if (!hardware_.capture(console_->polygon_renderer().scene(), display.capture_recipe(), display.capture_source(), number,
-                         scale_3d()))
+                         scale_3d(), display.kept_numbers()))
     give_up_hardware("make a display capture");
 }
 

@@ -186,6 +186,25 @@ struct HardwareScene {
   Raster raster;
 };
 
+// Where a screen (or a capture's first source) shows a display capture kept
+// by the graphics hardware, line by line: as a background bitmap does,
+// through its matrix. For a point (x, line + f) of the DS's screen, f from
+// 0 to 1 within the line, the place in the bitmap, in 1/256ths of a pixel,
+// is (x0 + pa * x + pb * f, y0 + pc * x + pd * f); the bitmap is 256 pixels
+// across, from row `row` of the bank, `rows` down, and repeats if
+// `repeated`. A screen that shows the bank as it is (display mode 2) has
+// x0 = 0, y0 = 256 * line, pa = pd = 256 and pb = pc = 0.
+struct CaptureLines {
+  struct Line {
+    bool on = false;
+    bool repeated = false;
+    std::int32_t x0 = 0, y0 = 0;
+    std::int16_t pa = 256, pb = 0, pc = 0, pd = 256;
+    std::uint16_t row = 0, rows = 256;
+  };
+  std::array<Line, 192> lines{};
+};
+
 // How the graphics hardware makes a display capture (nds::Display), as the
 // DS does, at its own resolution: what is taken, and where it goes in its
 // bank of video memory. A bank is kept as 256 by 256 pixels, as the main
@@ -205,6 +224,10 @@ struct CaptureRecipe {
   // second source is not used).
   std::uint64_t second_capture = 0;
   std::vector<std::uint32_t> second_pixels;
+  // A kept capture the first source shows, where it is marked
+  // nds::DisplayEngine::kCapturedBelow (its number, or 0), and where.
+  std::uint64_t put_capture = 0;
+  CaptureLines put_lines;
 };
 
 }  // namespace bd::nds

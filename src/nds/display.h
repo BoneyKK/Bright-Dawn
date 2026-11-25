@@ -102,12 +102,16 @@ class Display {
   // video memory, for the game, which can read it back (as a texture or a
   // background, as the start of a battle does): with the 3D picture in it,
   // which the processor draws in such a frame too, put in as the graphics
-  // hardware puts in its scene. A screen that then shows it
-  // (the main engine in display mode 2, or the second engine with a copy of
-  // it) is marked where it does, for the graphics hardware's capture. A
+  // hardware puts in its scene. A screen that then shows it (the main
+  // engine in display mode 2, the second engine with a copy of it, or a
+  // bitmap background turned and made larger or smaller, as the start of a
+  // battle and a menu show the field) is marked where it does, with each
+  // line's map (CaptureLines), for the graphics hardware to put it in at
+  // its resolution; and so is a capture's first source that shows one. A
   // capture that reads a bank holding one of the graphics hardware's reads
   // that one, so that a capture blended with the last (a trail behind what
-  // moves) keeps the resolution.
+  // moves) keeps the resolution. One a picture still shows is kept while it
+  // is in video memory.
   void set_hardware_3d(bool on) {
     hardware_3d_ = hardware_wanted_ = on;
     fallback_.clear();
@@ -144,11 +148,12 @@ class Display {
   enum class Fill : std::uint8_t { kNone, kScene, kCapture };
   struct ScreenFill {
     Fill fill = Fill::kNone;
-    // For kCapture: its number (frame_capture()). For kScene, a capture
-    // put in too, under the 3D layer, where marked DisplayEngine::
-    // kCapturedBelow; 0 for none.
+    // A capture put in where the screen is marked DisplayEngine::
+    // kCapturedBelow: for kCapture, its number (frame_capture()); for
+    // kScene, under the 3D layer, 0 for none.
     std::uint64_t capture = 0;
     std::uint16_t brightness = 0;   // The master brightness of the engine shown.
+    CaptureLines lines;             // Where the capture is shown, line by line.
   };
   // Of the frame last completed: 0 the top screen, 1 the bottom screen.
   const ScreenFill& frame_fill(int screen) const { return frame_fills_[screen & 1]; }
@@ -157,6 +162,11 @@ class Display {
   // and its first source: the main engine's picture before the display
   // mode and the master brightness, marked for the scene.
   std::uint64_t frame_capture() const { return frame_capture_; }
+  // The numbers of the captures kept (0 for none): those the graphics
+  // hardware is to keep too.
+  std::array<std::uint64_t, 3> kept_numbers() const {
+    return {kept_[0].number, kept_[1].number, kept_[2].number};
+  }
   const CaptureRecipe& capture_recipe() const { return frame_recipe_; }
   const std::vector<std::uint32_t>& capture_source() const { return capture_source_; }
 
@@ -187,6 +197,26 @@ class Display {
     bool in_memory = false;    // In its bank as the frame began (in_video_memory()).
     std::vector<std::uint32_t> pixels;
   };
+
+  // A kept capture that a picture shows: as it is in its bank (`background`
+  // -1), or as background 2 or 3 of the engine shows a bitmap.
+  struct Shown {
+    const Kept* kept = nullptr;
+    int background = -1;
+  };
+  // The kept capture still in video memory that `colours` (kWidth * kHeight,
+  // the colour in the low 18 bits) show most of, at one pixel in many; it
+  // counts if three quarters of those it covers are the same. Through a
+  // background only with `through_backgrounds`.
+  Shown shown_capture(const DisplayEngine& engine, const std::vector<std::uint32_t>& colours,
+                      bool through_backgrounds) const;
+  // Marks `marked` DisplayEngine::kCapturedBelow where `colours` are those of
+  // `shown`, and says where it is in `lines`.
+  void put_in(const DisplayEngine& engine, const Shown& shown, const std::vector<std::uint32_t>& colours,
+              std::vector<std::uint32_t>& marked, CaptureLines& lines) const;
+  // The first row of bank `bank` that background `background` of `engine`
+  // shows on `line` as a bitmap 256 pixels across, or -1.
+  int bitmap_row(const DisplayEngine& engine, int background, int line, unsigned bank) const;
 
   // Whether what `kept` put in its bank is still there.
   bool in_video_memory(const Kept& kept) const;

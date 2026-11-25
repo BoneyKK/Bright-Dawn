@@ -124,7 +124,7 @@ struct Frame {
     while (scene->serial <= last_serial);
     last_serial = scene->serial;
     bool failed = false;
-    REQUIRE(h.draw(0, screen, scene, 0, 0, scale, failed) != nullptr || !failed);
+    REQUIRE(h.draw(0, screen, scene, 0, nullptr, 0, scale, failed) != nullptr || !failed);
     REQUIRE(!failed);
     std::vector<u32> pixels;
     REQUIRE(h.read_screen(0, pixels));
@@ -365,7 +365,7 @@ std::vector<u32> drawn(const bd::nds::HardwareScene& scene, int scale) {
   Hardware3D& h = hardware();
   const std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
   bool failed = false;
-  REQUIRE(h.draw(0, screen, &scene, 0, 0, scale, failed) != nullptr || !failed);
+  REQUIRE(h.draw(0, screen, &scene, 0, nullptr, 0, scale, failed) != nullptr || !failed);
   REQUIRE(!failed);
   std::vector<u32> pixels;
   REQUIRE(h.read_screen(0, pixels));
@@ -781,8 +781,15 @@ TEST(hardware_captures_as_the_processor_at_1x) {
   const std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
   Hardware3D& h = hardware();
   REQUIRE(h.capture(f.r.scene(), recipe, screen, 77, 1));
+  // Shown as its bank is (display mode 2): each line from its row.
+  bd::nds::CaptureLines lines;
+  for (int y = 0; y < kHeight; ++y) {
+    lines.lines[static_cast<std::size_t>(y)].on = true;
+    lines.lines[static_cast<std::size_t>(y)].y0 = y * 256;
+  }
+  const std::vector<u32> shown(screen.size(), bd::nds::DisplayEngine::kCapturedBelow);
   bool failed = false;
-  REQUIRE(h.draw(0, screen, nullptr, 77, 0, 1, failed) != nullptr);
+  REQUIRE(h.draw(0, shown, nullptr, 77, &lines, 0, 1, failed) != nullptr);
   std::vector<u32> shown_pixels;
   REQUIRE(h.read_screen(0, shown_pixels));
   int differ = 0;
@@ -973,7 +980,7 @@ Held random_2d_frame(bool second, std::mt19937& random, std::uint32_t version) {
   picture.lines = &frame;
   picture.video = &video_2d;
   bool failed = false;
-  REQUIRE(h.draw(0, picture, scene, 0, 0, 1, failed) != nullptr);
+  REQUIRE(h.draw(0, picture, scene, 0, nullptr, 0, 1, failed) != nullptr);
   std::vector<u32> pixels;
   REQUIRE(h.read_2d(pixels));
   int differ = 0;
@@ -1042,7 +1049,7 @@ TEST(hardware_draws_a_wide_scene_with_the_screen_in_the_middle) {
     last_serial = scene->serial;
     CHECK(scene->wide);
     bool failed = false;
-    REQUIRE(h.draw(0, screen, scene, 0, 0, scale, failed) != nullptr && !failed);
+    REQUIRE(h.draw(0, screen, scene, 0, nullptr, 0, scale, failed) != nullptr && !failed);
     std::vector<u32> pixels;
     REQUIRE(h.read_screen(0, pixels));
     const int width = Hardware3D::picture_width(scale, true), left = (width - kWidth * scale) / 2;

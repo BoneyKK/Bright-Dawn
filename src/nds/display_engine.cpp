@@ -157,6 +157,7 @@ void DisplayEngine::place(unsigned background, int x, std::uint32_t colour, bool
 
 void DisplayEngine::draw_line(int line) {
   marked_ = false;
+  for (auto& lines : bitmap_lines_) lines[static_cast<std::size_t>(line)].on = false;
   Dot backdrop;
   backdrop.colour = colour_of(0);
   top_.fill(backdrop);
@@ -557,7 +558,6 @@ void DisplayEngine::draw_matrix_tiles(unsigned background, int line) {
 }
 
 void DisplayEngine::draw_extended(unsigned background, int line) {
-  (void)line;
   const unsigned n = background - 2;
   const u32 bg_control = background_control_[background];
   i32 at_x = line_x_[n] - pa_[n], at_y = line_y_[n] - pc_[n];
@@ -580,6 +580,10 @@ void DisplayEngine::draw_extended(unsigned background, int line) {
     const u32 data = vram_ + ((bg_control << 6) & 0x7C000);
     const int size_x = kBitmapSizes[(bg_control >> 14) & 3][0], size_y = kBitmapSizes[(bg_control >> 14) & 3][1];
     const bool direct = (bg_control & (1u << 2)) != 0;
+    if (direct && line >= 0 && line < kHeight)
+      bitmap_lines_[n][static_cast<std::size_t>(line)] = {
+          true,     repeated, data,     line_x_[n], line_y_[n], pa_[n], pb_[n], pc_[n], pd_[n],
+          static_cast<std::uint16_t>(size_x), static_cast<std::uint16_t>(size_y)};
     for (int i = 0; i < kWidth; ++i) {
       int x, y;
       if (!next(size_x, size_y, x, y)) continue;

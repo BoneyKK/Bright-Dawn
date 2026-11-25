@@ -344,3 +344,15 @@ TEST(video_memory_peek_reads_without_counting) {
   CHECK(vm.peek(0x06200000, 2) == 0);
   CHECK(vm.statistics().reads_with_no_bank == 0);
 }
+
+TEST(video_memory_locates_an_address_in_its_bank) {
+  VideoMemory vm;
+  vm.set_control(VideoMemory::kD, kOn | offset(2) | 1);
+  Bank bank = VideoMemory::kA;
+  std::uint32_t at = 0;
+  CHECK(vm.locate(0x06048000, bank, at) && bank == VideoMemory::kD && at == 0x8000);
+  CHECK(!vm.locate(0x06000000, bank, at));  // Nothing there.
+  // Two banks at the same place: neither is the one.
+  vm.set_control(VideoMemory::kC, kOn | offset(2) | 1);
+  CHECK(!vm.locate(0x06048000, bank, at));
+}

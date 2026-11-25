@@ -1,5 +1,6 @@
 // The display as a whole: the two engines on their screens, the 3D picture,
 // and the display capture.
+#include <algorithm>
 #include <array>
 #include <cstdint>
 
@@ -287,8 +288,77 @@ TEST(display_keeps_hardware_captures_and_finds_where_they_are_shown) {
   f.frame();
   const Display::ScreenFill& fill = f.display.frame_fill(1);
   CHECK(fill.fill == Display::Fill::kCapture && fill.capture == kept && fill.brightness == 0x4008);
-  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kMark3D) != 0);
+  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kCapturedBelow) != 0);
   CHECK(f.display.frame_fill(0).fill == Display::Fill::kNone && f.display.frame_capture() == 0);
+}
+
+// A capture shown as a background turned and made larger (a bitmap of
+// colours as such, as the start of a battle and a menu show the field):
+// found through the background's matrix, line by line, and put in by the
+// graphics hardware where the screen shows it; and so in a capture of that
+// picture too.
+TEST(display_finds_a_capture_shown_through_a_bitmap_background) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  f.io.write(Display::kPowerControl, 2, Display::kMainOnTop);
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20 | 1u << 16);
+  f.frame();
+  const std::uint64_t kept = f.display.frame_capture();
+  REQUIRE(kept != 0);
+  // Bank B as the main engine's backgrounds; background 3 a bitmap of
+  // 256 by 256 from 32 KiB on (row 64), twice as large.
+  f.video.set_control(VideoMemory::kB, VideoMemory::kEnable | 1);
+  f.io.write(0x04000000, 4, kPicture | 5u | 1u << 11);
+  f.io.write(0x0400000E, 2, 0x4084 | 2u << 8);
+  f.io.write(0x04000030, 2, 128);
+  f.io.write(0x04000032, 2, 0);
+  f.io.write(0x04000034, 2, 0);
+  f.io.write(0x04000036, 2, 128);
+  f.io.write(0x04000038, 4, 0);
+  f.io.write(0x0400003C, 4, 0);
+  // And a capture of that picture into bank A.
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20);
+  f.frame();
+  // (With the scene drawn, under it.)
+  const Display::ScreenFill& fill = f.display.frame_fill(0);
+  CHECK(fill.fill == Display::Fill::kScene && fill.capture == kept);
+  const bd::nds::CaptureLines::Line& line = fill.lines.lines[100];
+  CHECK(line.on && line.pa == 128 && line.pd == 128 && line.row == 64 && line.y0 == 100 * 128);
+  // Screen (200, 100) shows bank pixel (100, 64 + 50), which the capture
+  // wrote.
+  CHECK((f.display.top_screen()[100 * 256 + 200] & DisplayEngine::kCapturedBelow) != 0);
+  const bd::nds::CaptureRecipe& recipe = f.display.capture_recipe();
+  CHECK(recipe.put_capture == kept && recipe.put_lines.lines[100].on);
+  CHECK((f.display.capture_source()[100 * 256 + 200] & DisplayEngine::kCapturedBelow) != 0);
+  // Both are kept while bank B holds the first: the graphics hardware
+  // keeps them too.
+  const auto numbers = f.display.kept_numbers();
+  CHECK(std::count(numbers.begin(), numbers.end(), kept) == 1 &&
+        std::count(numbers.begin(), numbers.end(), f.display.frame_capture()) == 1);
+}
+
+// The captures kept: in place of one no longer in video memory first, so
+// that one a picture still shows stays, however many are made after it.
+TEST(display_keeps_a_capture_while_its_bank_holds_it) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20 | 1u << 16);
+  f.frame();
+  const std::uint64_t in_b = f.display.frame_capture();
+  REQUIRE(in_b != 0);
+  // Five more into bank A, each over the last.
+  for (int i = 0; i < 5; ++i) {
+    f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20);
+    f.frame();
+  }
+  const auto numbers = f.display.kept_numbers();
+  CHECK(std::count(numbers.begin(), numbers.end(), in_b) == 1);
 }
 
 // A capture shown for as long as the game likes, as behind a message that
@@ -317,7 +387,7 @@ TEST(display_finds_a_capture_shown_long_after_it_was_made_while_it_is_in_video_m
   for (u32 at = 0; at < 0x18000; at += 2) f.video.write(0x06820000 + at, 2, kGreen15);
   f.frame();
   CHECK(f.display.frame_fill(1).fill == Display::Fill::kNone);
-  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kMark3D) == 0);
+  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kCapturedBelow) == 0);
 }
 
 // A capture shown as a background under the 3D scene, as when the game
@@ -392,7 +462,7 @@ TEST(display_a_screen_shows_the_capture_it_reads_when_the_screens_swap_every_fra
   CHECK(now != 0 && now != into_a);
   const Display::ScreenFill& fill = f.display.frame_fill(0);
   CHECK(fill.fill == Display::Fill::kCapture && fill.capture == into_b);
-  CHECK((f.display.top_screen()[191 * 256] & DisplayEngine::kMark3D) != 0);
+  CHECK((f.display.top_screen()[191 * 256] & DisplayEngine::kCapturedBelow) != 0);
   // Then bank A, with this frame's capture in bank B: the last frame's.
   f.io.write(0x04000000, 4, (picture & ~kPicture) | 2u << 16);
   frame(false, 1);
@@ -492,8 +562,8 @@ TEST(display_hardware_captures_other_sizes_and_places) {
   f.io.write(0x04000000, 4, 2u << 16 | 1u << 18);
   f.frame();
   CHECK(f.display.frame_fill(1).fill == Display::Fill::kCapture && f.display.frame_fill(1).capture == kept);
-  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kMark3D) != 0);
-  CHECK((f.display.bottom_screen()[0] & DisplayEngine::kMark3D) == 0);
+  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kCapturedBelow) != 0);
+  CHECK((f.display.bottom_screen()[0] & DisplayEngine::kCapturedBelow) == 0);
 }
 
 // The second source fed from main memory is not made (as without the

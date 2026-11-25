@@ -158,8 +158,7 @@ stays 256 by 192 in the middle, and the other screen stays 4:3; the stylus
 touches the middle only. Its limits: the 2D (HUD, text, 2D backgrounds) does
 not reach the sides, which show the 3D alone (black on lines without it);
 models the game itself leaves out as out of view appear at the sides late;
-scenes shown through a display capture (battles), and 3D on both screens at once (the
-title), stay 4:3; at 1x the polygon edges are not smoothed. The shaders are
+3D on both screens at once (the title) stays 4:3; at 1x the polygon edges are not smoothed. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 `bd_gpu_tests` (ctest's `gpu`) draws test scenes with the graphics hardware

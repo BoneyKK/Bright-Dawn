@@ -141,6 +141,7 @@ constexpr const char* kUsage =
     "                        -100 to 100, down positive) from frame F to frame L\n"
     "  --capture FILE        with --frames, write the window's last frame to FILE (BMP)\n"
     "  --capture-every N     with --capture, also write every Nth frame, to FILE-N.bmp\n"
+    "  --capture-from F      with --capture-every, from frame F on\n"
     "  --dump-3d FILE        with --frames, write the 3D scene of the last frame to FILE,\n"
     "                        to find faults in its drawing (it holds the game's textures)\n"
     "  --check-2d            draw the 2D pictures with the processor too, and log where\n"
@@ -770,6 +771,9 @@ int main(int argc, char** argv) {
         return 1;
       }
       options.sticks.push_back(*stick);
+      ++i;
+    } else if (arg == "--capture-from" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {
+      options.capture_from = static_cast<std::uint64_t>(number);
       ++i;
     } else if (arg == "--capture-every" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {
       options.capture_every = static_cast<std::uint64_t>(number);

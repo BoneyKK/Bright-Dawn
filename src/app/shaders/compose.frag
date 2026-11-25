@@ -1,16 +1,19 @@
 // Two uses, by u_capture.x:
 //
-// A screen (0): the main engine's screen with the 3D scene put in, or a kept
-// display capture: where the screen is marked (nds::DisplayEngine::kMark3D,
-// here the alpha byte), a pixel of it is mixed as the mark says, then given
-// the master brightness. A screen with the scene can have a kept capture
-// put in too, under the scene, where marked as one's.
+// A screen (0): the main engine's screen with the 3D scene put in where it
+// is marked (nds::DisplayEngine::kMark3D, here the alpha byte), a pixel of
+// it mixed as the mark says, then given the master brightness. A kept
+// display capture (u_put) is put in too, under the scene, where the screen
+// is marked as showing one (nds::DisplayEngine::kCapturedBelow): at its own
+// resolution, through the map of each line (put_map: as the DS shows a
+// bitmap background turned and made larger or smaller).
 //
 // A display capture (1), into a bank of 256 by 256 pixels (nds::
 // CaptureRecipe): for each of its pixels that the capture writes, the first
 // source (the main engine's picture with the scene put in, or the scene
 // alone), the second (a bank), or the two blended; five bits a part, as the
-// DS keeps them in video memory, and blended as nds::Display does.
+// DS keeps them in video memory, and blended as nds::Display does. The
+// first source can have a kept capture put in, as a screen has.
 //
 // Where the scene is put in: its pixels as the scene pass drew them, with
 // fog as the DS does it (nds::HardwareScene::fog); but outlines and
@@ -27,7 +30,12 @@
 // columns, which are in its middle; a screen is drawn as wide as the scene,
 // and at its sides it is the scene alone on the lines that show it (u_wide_rows),
 // with the effect the DS's screen gives the 3D at that line's end, and the
-// master brightness; elsewhere black. A capture takes the scene's middle.
+// master brightness; elsewhere black. Where the line's end shows a kept
+// capture put in, the sides show it there too, under the scene. A kept
+// capture is as wide as the scene, its bank's 256 columns in the middle: a
+// capture of all of each line of a bank has sides made as a screen's are
+// (the second source's sides too, if it is a kept capture); others' sides
+// are black.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -35,8 +43,8 @@ layout(location = 0) out vec4 o_colour;
 
 layout(set = 2, binding = 0) uniform sampler2D u_screen;  // 256 by 192; alpha: the mark.
 layout(set = 2, binding = 1) uniform sampler2D u_scene;   // Colour times alpha, and alpha.
-// For a capture: the second source's bank. For a screen with the scene: a
-// kept capture, where u_options.z is 1.
+// For a capture: the second source: a bank, or a kept capture where
+// u_put_info.y is 1.
 layout(set = 2, binding = 2) uniform sampler2D u_second;
 layout(set = 2, binding = 3) uniform sampler2D u_fog_marks;  // The scene's depths, and alpha 1 where fog is taken.
 // The number of the opaque polygon drawn on each pixel of the scene (red,
@@ -50,12 +58,18 @@ layout(set = 2, binding = 5) uniform sampler2D u_edges;
 layout(set = 2, binding = 6) uniform sampler2D u_nearby;
 // finish.comp's pixels: six bits each of red, green, blue and alpha, plus
 // 1 << 24 where they are to be taken.
-layout(std430, set = 2, binding = 7) readonly buffer Finished { uint finished[]; };
+// A kept capture put in where marked (u_put_info.x is 1).
+layout(set = 2, binding = 7) uniform sampler2D u_put;
+layout(std430, set = 2, binding = 8) readonly buffer Finished { uint finished[]; };
+// For each line, where u_put shows (nds::CaptureLines), two each: in 256ths
+// of a pixel, the place at its start (x, y) and the step across (z, w);
+// then the step down within the line (x, y), the bank's row where the
+// bitmap starts (z), and (w) 1 where shown, plus 2 where it repeats, plus
+// its rows times 4.
+layout(std430, set = 2, binding = 9) readonly buffer PutMap { vec4 put_map[]; };
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
-  // x: 0 a screen, 1 a capture. y: for a screen, the lines u_scene has (192,
-  // or 256 for a kept capture). z: 1 where u_second is a kept capture, put
-  // in where marked as one's.
+  // x: 0 a screen, 1 a capture.
   vec4 u_options;
   // For a capture: x: the source (0 to 2), plus 4 for the 3D alone; y: the
   // two weights, the second times 256; z: width, and height times 65536;
@@ -85,6 +99,9 @@ layout(set = 3, binding = 0) uniform Compose {
   // scene.
   vec4 u_wide;
   uvec4 u_wide_rows[2];  // The lines whose sides show the scene: a bit each.
+  // x: 1 where u_put is put in; y: 1 where u_second is a kept capture; z: 1
+  // where there is no scene (what is marked as 3D shows the 2D picture).
+  uvec4 u_put_info;
 };
 
 uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
@@ -211,6 +228,34 @@ vec4 scene_at(vec2 inside) {
   return fogged(texture(u_scene, inside), inside);
 }
 
+// A kept capture's pixel at `bank` (in its bank's pixels; x can be past
+// either side, where the capture is wide).
+vec3 kept_colour(sampler2D kept, vec2 bank) {
+  vec2 uv = bank / 256.0;
+  if (u_wide.x > 0.5) uv.x = u_wide.y + uv.x * u_wide.z;
+  return texture(kept, uv).rgb;
+}
+
+// Where in its bank u_put shows at `at` of the screen; false where it shows
+// nothing. Past the line's ends (`sides`), as far as the capture is wide.
+bool put_at(vec2 at, bool sides, out vec2 bank) {
+  const vec2 ds = at * vec2(256.0, 192.0);
+  const int line = clamp(int(ds.y), 0, 191);
+  const vec4 l = put_map[2 * line], s = put_map[2 * line + 1];
+  const uint flags = uint(s.w + 0.5);
+  if ((flags & 1u) == 0u) return false;
+  const float rows = float(flags >> 2);
+  const float down = ds.y - float(line);
+  vec2 p = (l.xy + ds.x * l.zw + down * s.xy) / 256.0;
+  if ((flags & 2u) != 0u) {
+    p = vec2(mod(p.x, 256.0), mod(p.y, rows));
+  } else if (p.y < 0.0 || p.y >= rows || (!sides && (p.x < 0.0 || p.x >= 256.0))) {
+    return false;
+  }
+  bank = vec2(p.x, mod(s.z + p.y, 256.0));
+  return true;
+}
+
 vec3 brightened(vec3 c, uint way, float factor) {
   if (way == 2u) return c + (1.0 - c) * factor;
   if (way == 3u) return c - c * factor;
@@ -225,12 +270,14 @@ vec3 composed(vec2 at, vec2 inside, bool lit) {
   const uvec3 six = bytes.rgb >> 2u;
   vec3 below = vec3(six << 2u | six >> 4u) / 255.0;
   // Under the 3D layer, a kept capture's pixel (nds::DisplayEngine::
-  // kCapturedBelow), where u_second is a kept capture.
-  if ((bytes.r & 1u) != 0u && u_options.z > 0.5) {
-    below = texture(u_second, vec2(at.x, at.y * 192.0 / 256.0)).rgb;
+  // kCapturedBelow).
+  vec2 bank;
+  if ((bytes.r & 1u) != 0u && u_put_info.x != 0u && put_at(at, false, bank)) {
+    below = kept_colour(u_put, bank);
     if (lit) below = brightened(below, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
   }
   uint mark = bytes.a;
+  if (u_put_info.z != 0u) return below;
   if ((mark & 128u) == 0u && (mark & 3u) == 1u) {
     // A layer on top blended with the 3D just below it (nds::DisplayEngine::
     // kMark3DBelow): its weight in the mark, the 3D's in the low bits, as
@@ -258,48 +305,59 @@ vec3 composed(vec2 at, vec2 inside, bool lit) {
 }
 
 // A wide screen's side, at `at` of the screen (x outside 0 to 1) and
-// `inside` the scene.
-vec3 side(vec2 at, vec2 inside) {
+// `inside` the scene; with the master brightness if `lit`.
+vec3 side(vec2 at, vec2 inside, bool lit) {
   vec3 c = vec3(0.0);
+  const vec2 end = vec2(clamp(at.x, 0.5 / 256.0, 255.5 / 256.0), at.y);
+  // A kept capture put in at the line's end, past it.
+  vec2 bank;
+  if (u_put_info.x != 0u && (uint(texture(u_screen, end).r * 255.0 + 0.5) & 1u) != 0u && put_at(at, true, bank))
+    c = kept_colour(u_put, bank);
   const uint line = min(uint(at.y * 192.0), 191u);
   const uint word = line / 32u;
   if (u_wide.w > 0.5 && ((u_wide_rows[word / 4u][word % 4u] >> (line % 32u)) & 1u) != 0u) {
     const vec4 scene = scene_at(inside);
     if (scene.a >= 0.5 / 63.0) {
-      c = scene.rgb / scene.a;
+      vec3 s = scene.rgb / scene.a;
       // The effect of the screen's pixel at that end of the line, where it
       // shows the 3D.
-      const uint mark = uint(texture(u_screen, vec2(clamp(at.x, 0.5 / 256.0, 255.5 / 256.0), at.y)).a * 255.0 + 0.5);
+      const uint mark = uint(texture(u_screen, end).a * 255.0 + 0.5);
       const uint effect = (mark & 128u) != 0u ? mark & 3u : 0u;
-      c = brightened(c, effect, float((mark >> 2) & 31u) / 16.0);
-      if (effect == 1u) c *= scene.a;
+      s = brightened(s, effect, float((mark >> 2) & 31u) / 16.0);
+      c = effect == 1u ? mix(c, s, scene.a) : s;
     }
   }
-  return brightened(c, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
+  return lit ? brightened(c, uint(u_brightness.x + 0.5) + 1u, u_brightness.y) : c;
 }
 
 void main() {
   o_colour = vec4(0.0, 0.0, 0.0, 1.0);
   if (u_capture.x == 0u && u_options.x < 0.5) {
     if (u_wide.x > 0.5) {
-      // The screen's 256 columns in the middle; a kept capture put in is the
-      // screen's size.
+      // The screen's 256 columns in the middle.
       const vec2 at = vec2((v_place.x - u_wide.y) / u_wide.z, v_place.y);
-      const vec2 inside = vec2(u_options.y > 200.0 ? at.x : v_place.x, v_place.y * 192.0 / u_options.y);
-      o_colour.rgb = at.x < 0.0 || at.x >= 1.0 ? side(at, inside) : composed(at, inside, true);
+      o_colour.rgb = at.x < 0.0 || at.x >= 1.0 ? side(at, v_place, true) : composed(at, v_place, true);
       return;
     }
-    o_colour.rgb = composed(v_place, vec2(v_place.x, v_place.y * 192.0 / u_options.y), true);
+    o_colour.rgb = composed(v_place, v_place, true);
     return;
   }
-  // The bank's pixel, and where in it (0 to 1 each way).
+  // The bank's pixel, and where in it (0 to 1 each way); in a wide capture,
+  // the bank's columns are in the middle.
   vec2 bank = v_place * 256.0;
-  vec2 pixel = min(floor(bank), vec2(255.0));
+  if (u_wide.x > 0.5) bank.x = (v_place.x - u_wide.y) / u_wide.z * 256.0;
+  const bool in_bank = bank.x >= 0.0 && bank.x < 256.0;
+  vec2 pixel = clamp(floor(bank), vec2(0.0), vec2(255.0));
   vec2 within = bank - pixel;
-  uint n = uint(pixel.y) * 256u + uint(pixel.x);
   uint width = u_capture.z & 0xFFFFu, height = u_capture.z >> 16;
+  uint n = uint(pixel.y) * 256u + uint(pixel.x);
   uint i = (n - (u_capture.w & 0xFFFFu)) & 0xFFFFu;
-  if (i / width >= height) discard;
+  if (!in_bank) {
+    // A side: only for a capture of whole lines from the start of a line.
+    if (width != 256u || (u_capture.w & 0xFFu) != 0u || i / width >= height) return;
+  } else if (i / width >= height) {
+    discard;
+  }
   vec2 at = (vec2(float(i % width), float(i / width)) + within) / vec2(256.0, 192.0);
   // In a wide scene, its middle.
   const vec2 inside = u_wide.x > 0.5 ? vec2(u_wide.y + at.x * u_wide.z, at.y) : at;
@@ -307,11 +365,16 @@ void main() {
   if ((u_capture.x & 4u) != 0u) {
     vec4 scene = scene_at(inside);
     first = scene.a < 0.5 / 63.0 ? vec3(0.0) : scene.rgb / scene.a;
+  } else if (!in_bank) {
+    first = side(at, inside, false);
   } else {
     first = composed(at, inside, false);
   }
   uint j = ((u_capture.w >> 16) + i) & 0xFFFFu;
-  vec3 second = texture(u_second, (vec2(float(j % 256u), float(j / 256u)) + within) / 256.0).rgb;
+  const vec2 from = vec2(float(j % 256u), float(j / 256u)) + within;
+  vec3 second = vec3(0.0);
+  if (u_put_info.y != 0u) second = kept_colour(u_second, from);
+  else if (in_bank) second = texture(u_second, from / 256.0).rgb;
   uint source = u_capture.x & 3u;
   uvec3 kept;
   if (source == 0u) {
