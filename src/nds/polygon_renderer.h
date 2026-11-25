@@ -143,7 +143,9 @@ class PolygonRenderer {
   TextureFilter texture_filter() const { return texture_filter_; }
   // For the graphics hardware: places vertices at the geometry engine's
   // sixteenths of a pixel, not at whole pixels. Only worth it when the 3D
-  // picture is drawn larger than the DS's; off by default.
+  // picture is drawn larger than the DS's; off by default. Polygons drawn
+  // without perspective (GeometryEngine::Polygon::flat) stay at whole
+  // pixels.
   void set_fine_positions(bool on) { fine_positions_ = on; }
   bool fine_positions() const { return fine_positions_; }
 

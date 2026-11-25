@@ -3,7 +3,8 @@
 // A screen (0): the main engine's screen with the 3D scene put in, or a kept
 // display capture: where the screen is marked (nds::DisplayEngine::kMark3D,
 // here the alpha byte), a pixel of it is mixed as the mark says, then given
-// the master brightness.
+// the master brightness. A screen with the scene can have a kept capture
+// put in too, under the scene, where marked as one's.
 //
 // A display capture (1), into a bank of 256 by 256 pixels (nds::
 // CaptureRecipe): for each of its pixels that the capture writes, the first
@@ -28,7 +29,9 @@ layout(location = 0) out vec4 o_colour;
 
 layout(set = 2, binding = 0) uniform sampler2D u_screen;  // 256 by 192; alpha: the mark.
 layout(set = 2, binding = 1) uniform sampler2D u_scene;   // Colour times alpha, and alpha.
-layout(set = 2, binding = 2) uniform sampler2D u_second;  // For a capture: the second source's bank.
+// For a capture: the second source's bank. For a screen with the scene: a
+// kept capture, where u_options.z is 1.
+layout(set = 2, binding = 2) uniform sampler2D u_second;
 layout(set = 2, binding = 3) uniform sampler2D u_fog_marks;  // The scene's depths, and alpha 1 where fog is taken.
 // The number of the opaque polygon drawn on each pixel of the scene (red,
 // times 63; the clear plane's where alpha is 0).
@@ -39,7 +42,8 @@ layout(std430, set = 2, binding = 5) readonly buffer Finished { uint finished[];
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
   // x: 0 a screen, 1 a capture. y: for a screen, the lines u_scene has (192,
-  // or 256 for a kept capture).
+  // or 256 for a kept capture). z: 1 where u_second is a kept capture, put
+  // in where marked as one's.
   vec4 u_options;
   // For a capture: x: the source (0 to 2), plus 4 for the 3D alone; y: the
   // two weights, the second times 256; z: width, and height times 65536;
@@ -165,15 +169,25 @@ vec3 brightened(vec3 c, uint way, float factor) {
 // The screen at `at` with what u_scene holds at `inside` put in.
 vec3 composed(vec2 at, vec2 inside, bool lit) {
   vec4 screen = texture(u_screen, at);
-  uint mark = uint(screen.a * 255.0 + 0.5);
-  if ((mark & 128u) == 0u) return screen.rgb;
+  // Each part's top six bits (the lowest bit of red is a mark).
+  const uvec4 bytes = uvec4(screen * 255.0 + 0.5);
+  const uvec3 six = bytes.rgb >> 2u;
+  vec3 below = vec3(six << 2u | six >> 4u) / 255.0;
+  // Under the 3D layer, a kept capture's pixel (nds::DisplayEngine::
+  // kCapturedBelow), where u_second is a kept capture.
+  if ((bytes.r & 1u) != 0u && u_options.z > 0.5) {
+    below = texture(u_second, vec2(at.x, at.y * 192.0 / 256.0)).rgb;
+    if (lit) below = brightened(below, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
+  }
+  uint mark = bytes.a;
+  if ((mark & 128u) == 0u) return below;
   vec4 scene = scene_at(inside);
-  if (scene.a < 0.5 / 63.0) return screen.rgb;
+  if (scene.a < 0.5 / 63.0) return below;
   vec3 c = scene.rgb / scene.a;
   uint effect = mark & 3u;
   c = brightened(c, effect, float((mark >> 2) & 31u) / 16.0);
   if (lit) c = brightened(c, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
-  return effect == 1u ? mix(screen.rgb, c, scene.a) : c;
+  return effect == 1u ? mix(below, c, scene.a) : c;
 }
 
 void main() {

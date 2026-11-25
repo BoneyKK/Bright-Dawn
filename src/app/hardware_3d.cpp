@@ -7,6 +7,7 @@
 
 #include "app/hardware_shaders.h"
 #include "debug/frame_log.h"
+#include "nds/display_engine.h"
 #include "nds/polygon_renderer.h"
 #include "nds/video_memory.h"
 #include "core/log.h"
@@ -524,21 +525,26 @@ SDL_Texture* Hardware3D::draw(int which, const Picture& picture, const nds::Hard
   if (!ready(scale)) return nullptr;
   SDL_GPUTexture* source = nullptr;
   const bool nothing_put_in = scene == nullptr && capture == 0;
+  SDL_GPUTexture* kept = nullptr;
+  for (const Kept& k : kept_)
+    if (k.number == capture && capture != 0) kept = k.texture;
   if (scene == nullptr && !nothing_put_in) {
-    for (const Kept& k : kept_)
-      if (k.number == capture && capture != 0) source = k.texture;
+    source = kept;
     if (source == nullptr) {
       failed = false;
       return nullptr;
     }
   }
   ComposeUniforms uniforms{};
+  // With the scene, a capture where the screen is marked as one's.
+  SDL_GPUTexture* second = scene != nullptr ? kept : nullptr;
+  uniforms.options[2] = second != nullptr ? 1.0f : 0.0f;
   const unsigned direction = brightness >> 14;
   uniforms.brightness[0] = direction == 1 || direction == 2 ? static_cast<float>(direction) : 0.0f;
   uniforms.brightness[1] = static_cast<float>(std::min(brightness & 0x1F, 16)) / 16.0f;
   uniforms.options[1] = source != nullptr ? 256.0f : static_cast<float>(kScreenHeight);
   log_compose_column_ = (which & 1) == 0 ? frame_log::kComposeTop : frame_log::kComposeBottom;
-  if (!run(scene, picture, source, nullptr, nullptr, outputs_[static_cast<std::size_t>(which & 1)], uniforms,
+  if (!run(scene, picture, source, second, nullptr, outputs_[static_cast<std::size_t>(which & 1)], uniforms,
            !nothing_put_in))
     return nullptr;
   failed = false;
@@ -733,13 +739,16 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   }
   auto* mapped = static_cast<std::uint8_t*>(SDL_MapGPUTransferBuffer(device_, transfer_, true));
   if (mapped == nullptr) return false;
-  // The screen: colours, with the marks (bits 24 to 31) as the alpha.
+  // The screen: colours, with the marks (bits 24 to 31) as the alpha, and
+  // nds::DisplayEngine::kCapturedBelow as the lowest bit of red (the shader
+  // takes each part's top six bits).
   if (lines == nullptr) {
     const std::vector<std::uint32_t>& screen = *picture.pixels;
     for (std::size_t i = 0; i < screen.size(); ++i) {
       const std::uint32_t p = screen[i];
       const auto eight = [](std::uint32_t six) { return static_cast<std::uint8_t>((six & 0x3F) << 2 | (six & 0x3F) >> 4); };
-      mapped[4 * i + 0] = eight(p);
+      const bool captured = marks && (p & nds::DisplayEngine::kCapturedBelow) != 0;
+      mapped[4 * i + 0] = static_cast<std::uint8_t>((eight(p) & 0xFE) | (captured ? 1 : 0));
       mapped[4 * i + 1] = eight(p >> 6);
       mapped[4 * i + 2] = eight(p >> 12);
       mapped[4 * i + 3] = marks ? static_cast<std::uint8_t>(p >> 24) : 0;

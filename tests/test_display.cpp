@@ -291,6 +291,77 @@ TEST(display_keeps_hardware_captures_and_finds_where_they_are_shown) {
   CHECK(f.display.frame_fill(0).fill == Display::Fill::kNone && f.display.frame_capture() == 0);
 }
 
+// A capture shown for as long as the game likes, as behind a message that
+// stops the game: found while its bank holds what it put there, and no
+// longer once the game writes over it.
+TEST(display_finds_a_capture_shown_long_after_it_was_made_while_it_is_in_video_memory) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.display.set_hardware_2d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20 | 1u << 16);
+  f.frame();
+  const std::uint64_t kept = f.display.frame_capture();
+  REQUIRE(kept != 0);
+  // Bank B shown on the bottom screen for 20 frames.
+  f.io.write(0x04000000, 4, 2u << 16 | 1u << 18);
+  for (int i = 0; i < 20; ++i) {
+    f.frame();
+    const Display::ScreenFill& fill = f.display.frame_fill(1);
+    CHECK(fill.fill == Display::Fill::kCapture && fill.capture == kept);
+    CHECK(!f.display.screen_2d(1).by_hardware);
+  }
+  // The game writes over the bank: what is shown is no longer the capture.
+  for (u32 at = 0; at < 0x18000; at += 2) f.video.write(0x06820000 + at, 2, kGreen15);
+  f.frame();
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kNone);
+  CHECK((f.display.bottom_screen()[191 * 256] & DisplayEngine::kMark3D) == 0);
+}
+
+// A capture shown as a background under the 3D scene, as when the game
+// stops for a message box it draws in 3D over a picture of the field: the
+// screen takes the scene where the 3D layer is on top, and the capture
+// where the capture is shown.
+TEST(display_finds_a_capture_on_a_screen_with_the_scene) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.display.set_hardware_2d(true);
+  f.send_triangle();
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20 | 1u << 16);
+  f.frame();
+  const std::uint64_t kept = f.display.frame_capture();
+  REQUIRE(kept != 0);
+  // Bank B as the main engine's backgrounds: background 2 a bitmap of 16
+  // bits a pixel from its start, under background 0 (the 3D).
+  f.video.set_control(VideoMemory::kB, VideoMemory::kEnable | 1);
+  f.io.write(0x04000000, 4, 5u | kPicture | DisplayEngine::kBackground0Is3D | 1u << 8 | 1u << 10);
+  f.io.write(0x0400000C, 2, 1u << 14 | 1u << 7 | 1u << 2 | 1u);
+  f.io.write(0x04000020, 4, 0x00000100);
+  f.io.write(0x04000024, 4, 0x01000000);
+  // For as long as the game shows it (the processor draws the screen, to
+  // find it there).
+  for (int i = 0; i < 20; ++i) {
+    f.frame();
+    const Display::ScreenFill& fill = f.display.frame_fill(1);
+    CHECK(fill.fill == Display::Fill::kScene && fill.capture == kept);
+    CHECK(!f.display.screen_2d(1).by_hardware);
+  }
+  // The 3D layer is on top everywhere (where the scene leaves a pixel
+  // clear, what is below shows); below it, the capture.
+  for (const u32 pixel : f.display.bottom_screen()) {
+    CHECK((pixel & DisplayEngine::kMark3D) != 0);
+    CHECK((pixel & DisplayEngine::kCapturedBelow) != 0);
+  }
+  // Without the bitmap, no capture is shown.
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  CHECK(f.display.frame_fill(1).fill == Display::Fill::kScene && f.display.frame_fill(1).capture == 0);
+}
+
 // 3D on both screens, the screens swapped in every frame, as the game's
 // title does: each frame's scene is captured, and an engine shows a capture
 // made before. Captures of the same picture are the same where the

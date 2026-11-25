@@ -63,40 +63,36 @@ TEST(opening_skip_marks_the_story_as_the_skippable_one_and_presses_a) {
   OpeningSkip skip;
   CHECK((skip.frame(m, 0, true)) == (0u));
   CHECK((press_start(skip, m)) == (OpeningSkip::kA));
-  CHECK(skip.phase() == OpeningSkip::Phase::Ending);
+  CHECK(skip.phase() == OpeningSkip::Phase::Pressing);
   CHECK(skip.skipping());
   CHECK((m.read32(kStory + OpeningSkip::kMovieOffset)) == (OpeningSkip::kSkippableMovie));
   CHECK((m.writes) == (1));
-  // A is pressed anew every eight frames; the player's own buttons are not given.
-  int presses = 0;
-  std::uint32_t before = OpeningSkip::kA;
-  for (int i = 0; i < 64; ++i) {
-    const std::uint32_t given = skip.frame(m, OpeningSkip::kStart | OpeningSkip::kA, true);
-    CHECK((given & ~OpeningSkip::kA) == (0u));
-    if (given != 0 && before == 0) ++presses;
-    before = given;
-  }
-  CHECK((presses) == (8));
+  // A is held for kPressFrames frames, whatever the player holds.
+  for (std::uint32_t i = 1; i < OpeningSkip::kPressFrames; ++i)
+    CHECK((skip.frame(m, OpeningSkip::kStart | OpeningSkip::kB, true)) == (OpeningSkip::kA));
+  // Then the game goes on as usual: the story is ended by the game, at its
+  // title. Nothing more is written.
+  CHECK((skip.frame(m, OpeningSkip::kStart, true)) == (0u));
+  CHECK(skip.phase() == OpeningSkip::Phase::Idle);
+  CHECK(!skip.skipping());
+  CHECK((m.writes) == (1));
 }
 
-TEST(opening_skip_runs_the_walk_after_the_story_then_gives_the_buttons_back) {
+TEST(opening_skip_gives_the_buttons_back_once_let_go) {
   Memory m = with_story();
   OpeningSkip skip;
   press_start(skip, m);
-  // The game ends the story: its object is gone.
-  m.words[kStory] = 0x00650067;
-  CHECK((skip.frame(m, 0, true)) == (0u));
-  CHECK(skip.phase() == OpeningSkip::Phase::Walking);
-  for (std::uint32_t i = 1; i < OpeningSkip::kWalkFrames; ++i) {
-    CHECK((skip.frame(m, OpeningSkip::kA, true)) == (0u));
-    CHECK(skip.skipping());
-  }
-  // A still held at the end is no new press; once let go, it is given again.
-  CHECK((skip.frame(m, OpeningSkip::kA, true)) == (0u));
-  CHECK(!skip.skipping());
-  CHECK((skip.frame(m, OpeningSkip::kA, true)) == (0u));
+  for (std::uint32_t i = 1; i < OpeningSkip::kPressFrames; ++i) skip.frame(m, OpeningSkip::kStart, true);
+  // Start and A still held at the end are no new presses; once let go,
+  // they are given again.
+  CHECK((skip.frame(m, OpeningSkip::kStart | OpeningSkip::kA, true)) == (0u));
+  CHECK((skip.frame(m, OpeningSkip::kStart | OpeningSkip::kA, true)) == (0u));
   CHECK((skip.frame(m, 0, true)) == (0u));
   CHECK((skip.frame(m, OpeningSkip::kA, true)) == (OpeningSkip::kA));
+  // The story is now the skippable one: Start finds no story to skip, and
+  // goes to the game.
+  CHECK((skip.frame(m, OpeningSkip::kStart, true)) == (OpeningSkip::kStart));
+  CHECK(skip.phase() == OpeningSkip::Phase::Idle);
 }
 
 TEST(opening_skip_leaves_memory_alone_without_a_story_running) {
@@ -123,13 +119,4 @@ TEST(opening_skip_does_nothing_when_switched_off) {
   CHECK((skip.frame(m, OpeningSkip::kStart, false)) == (OpeningSkip::kStart));
   CHECK(!skip.skipping());
   CHECK((m.writes) == (0));
-}
-
-TEST(opening_skip_gives_the_story_back_its_movie_if_it_does_not_end) {
-  Memory m = with_story();
-  OpeningSkip skip;
-  press_start(skip, m);
-  for (std::uint32_t i = 0; i <= OpeningSkip::kMostEndingFrames; ++i) skip.frame(m, 0, true);
-  CHECK(skip.phase() == OpeningSkip::Phase::Idle);
-  CHECK((m.read32(kStory + OpeningSkip::kMovieOffset)) == (OpeningSkip::kNewGameMovie));
 }

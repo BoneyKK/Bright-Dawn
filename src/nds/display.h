@@ -127,7 +127,7 @@ class Display {
   // (nds/frame_2d.h): with the 3D drawn by it too, an engine's lines are
   // then recorded in place of drawn, unless the processor needs its
   // picture: the main engine's in a frame with a display capture, and both
-  // while a recent capture of the graphics hardware may be on a screen.
+  // while a capture of the graphics hardware may be on a screen.
   void set_hardware_2d(bool on) { hardware_2d_wanted_ = on; }
   // For checks: the processor draws the pictures the graphics hardware
   // draws too.
@@ -144,7 +144,10 @@ class Display {
   enum class Fill : std::uint8_t { kNone, kScene, kCapture };
   struct ScreenFill {
     Fill fill = Fill::kNone;
-    std::uint64_t capture = 0;      // For kCapture: its number (frame_capture()).
+    // For kCapture: its number (frame_capture()). For kScene, a capture
+    // put in too, under the 3D layer, where marked DisplayEngine::
+    // kCapturedBelow; 0 for none.
+    std::uint64_t capture = 0;
     std::uint16_t brightness = 0;   // The master brightness of the engine shown.
   };
   // Of the frame last completed: 0 the top screen, 1 the bottom screen.
@@ -166,8 +169,9 @@ class Display {
 
  private:
   void capture_line(unsigned line);
-  // Marks `screen` where `engine` shows a recent capture of the graphics
-  // hardware, and says so in `fill`.
+  // Marks `screen` where `engine` shows a capture of the graphics hardware
+  // still in video memory, and says so in `fill` (with the scene already
+  // in `fill`, where the scene does not go).
   void find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const;
 
   // Starts this frame's capture by the graphics hardware.
@@ -180,9 +184,12 @@ class Display {
   struct Kept {
     std::uint64_t number = 0;  // 0 while it is made.
     unsigned bank = 0;         // 0 to 3: A to D.
+    bool in_memory = false;    // In its bank as the frame began (in_video_memory()).
     std::vector<std::uint32_t> pixels;
   };
 
+  // Whether what `kept` put in its bank is still there.
+  bool in_video_memory(const Kept& kept) const;
   // Records this frame's line of each engine the graphics hardware draws.
   void record_lines(unsigned line);
   VideoMemory& video_;
@@ -204,6 +211,7 @@ class Display {
   bool hardware_capture_ = false;
   std::size_t kept_at_ = 0;
   std::array<Kept, 3> kept_;
+  bool capture_shown_ = false;  // A screen showed one in the last frame.
   CaptureRecipe recipe_, frame_recipe_;
   std::vector<std::uint32_t> capture_source_;
   std::uint64_t frame_capture_ = 0;

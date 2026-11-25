@@ -367,6 +367,11 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
       // so nothing of it is left out for its alpha.
       u32 info[4] = {0, 0, (shadow ? 0u : shape.mode) | (shape.fog ? HardwareScene::kFog : 0u), shape.number};
       const GeometryEngine::Polygon& polygon = *shape.polygon;
+      // Polygons drawn without perspective (a HUD, a menu, a message box)
+      // stay at the DS's whole pixels: their pieces are made to meet there,
+      // and between them they can leave gaps of less than a pixel, which a
+      // larger picture would show.
+      const bool fine = fine_positions_ && !polygon.flat;
       HardwareScene::Raster::Polygon& drawn = raster.polygons.emplace_back();
       drawn.first = static_cast<u32>(raster.corners.size());
       drawn.size = polygon.size;
@@ -380,8 +385,8 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         const unsigned k = polygon.strip_order && (i == 2 || i == 3) ? 5 - i : i;
         const Vertex& v = frame.vertices[polygon.first + std::size_t{k}];
         HardwareScene::Raster::Corner& c = raster.corners.emplace_back();
-        c.x = fine_positions_ ? v.fine_x : v.x * 16;
-        c.y = fine_positions_ ? v.fine_y : v.y * 16;
+        c.x = fine ? v.fine_x : v.x * 16;
+        c.y = fine ? v.fine_y : v.y * 16;
         c.z = static_cast<u32>(v.z);
         c.w = v.w;
         c.st = static_cast<std::uint16_t>(v.s) | static_cast<u32>(static_cast<std::uint16_t>(v.t)) << 16;
@@ -404,8 +409,8 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         const Vertex& v = frame.vertices[polygon.first + std::size_t{i}];
         HardwareScene::Vertex& c = corners[i];
         const float w = v.w > 0 ? static_cast<float>(v.w) / 4096.0f : 1.0f / 4096.0f;
-        const float x = fine_positions_ ? static_cast<float>(v.fine_x) / 16.0f : static_cast<float>(v.x);
-        const float y = fine_positions_ ? static_cast<float>(v.fine_y) / 16.0f : static_cast<float>(v.y);
+        const float x = fine ? static_cast<float>(v.fine_x) / 16.0f : static_cast<float>(v.x);
+        const float y = fine ? static_cast<float>(v.fine_y) / 16.0f : static_cast<float>(v.y);
         c.position[0] = (x / 128.0f - 1.0f) * w;
         c.position[1] = (1.0f - y / 96.0f) * w;
         // The depth the frame asks for: z, or w (as the processor's drawing
@@ -463,8 +468,8 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         for (unsigned i = 0; i < polygon.size; ++i) {
           const unsigned k = polygon.strip_order && (i == 2 || i == 3) ? 5 - i : i;
           const Vertex& v = frame.vertices[polygon.first + std::size_t{k}];
-          outline.x[i] = fine_positions_ ? v.fine_x : v.x * 16;
-          outline.y[i] = fine_positions_ ? v.fine_y : v.y * 16;
+          outline.x[i] = fine ? v.fine_x : v.x * 16;
+          outline.y[i] = fine ? v.fine_y : v.y * 16;
         }
         outline.bound();
         const std::size_t runs = scene.runs.size();

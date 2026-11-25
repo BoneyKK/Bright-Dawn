@@ -102,6 +102,10 @@ class DisplayEngine {
   static constexpr std::uint32_t kMark3D = 1u << 31;
   static constexpr unsigned kMarkEffectShift = 24;  // Two bits: 0 as it is, 1 blended by its alpha, 2 brighter, 3 darker.
   static constexpr unsigned kMarkFactorShift = 26;  // Five bits: sixteenths, for brighter and darker.
+  // Not made here: on a screen with the 3D scene, a pixel whose colour
+  // without the 3D layer is a display capture's of the graphics hardware
+  // (nds::Display::find_capture), which has its own copy at its resolution.
+  static constexpr std::uint32_t kCapturedBelow = 1u << 23;
   std::uint16_t master_brightness() const { return master_brightness_; }
 
   // A frame begins: the reference points of the matrix backgrounds start

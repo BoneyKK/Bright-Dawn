@@ -47,7 +47,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (25 November 2026): In a new game, Start skips the long story at the start (about 7 minutes) and the walk after it, up to Isaac's first words at home. Settings, Quality of life, switches it off.
+**Last change** (25 November 2026): In a new game, Start skips the long story at the start, up to the game's title; the walk after it plays as usual. Above 2x, message boxes drawn in 3D no longer show gaps between their parts, and a display capture shown behind them is shown at the internal resolution.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 

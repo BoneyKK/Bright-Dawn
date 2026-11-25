@@ -1016,6 +1016,35 @@ TEST(renderer_scene_can_place_vertices_between_pixels) {
   CHECK(scene.vertices[1].position[0] == 100.0f / 128.0f - 1.0f && scene.vertices[2].position[1] == 1.0f - 80.0f / 96.0f);
 }
 
+// A message box drawn without perspective, in two pieces that meet at line
+// 120 on the DS: the upper ends at 120.5 and the lower starts at 120.75 in
+// sixteenths. Placed between pixels, they would leave a gap a quarter of a
+// pixel high, which pictures three times as large show (a line of pixels at
+// 361.5). They stay at whole pixels, as the DS draws them.
+TEST(renderer_scene_keeps_polygons_without_perspective_at_whole_pixels) {
+  Fixture f;
+  const auto corner = [](int x, int fine_y) {
+    Vertex v = Fixture::vertex(x, fine_y / 16);
+    v.fine_x = x * 16;
+    v.fine_y = fine_y;
+    return v;
+  };
+  f.polygon({corner(10, 60 * 16), corner(200, 60 * 16), corner(200, 120 * 16 + 8)}, kOpaque);
+  f.polygon({corner(10, 120 * 16 + 12), corner(200, 120 * 16 + 12), corner(200, 180 * 16)}, kOpaque);
+  f.r.set_fine_positions(true);
+  const auto& scene = f.r.build_scene(f.frame, f.video);
+  REQUIRE(scene.vertices.size() == 6);
+  const auto line = [&](std::size_t i) { return (1.0f - scene.vertices[i].position[1] / scene.vertices[i].position[3]) * 96.0f; };
+  // With perspective: between pixels.
+  CHECK(line(2) == 120.5f && line(3) == 120.75f);
+  // Without: where the DS draws them, so they meet.
+  for (auto& p : f.frame.polygons) p.flat = true;
+  f.r.build_scene(f.frame, f.video);
+  REQUIRE(scene.vertices.size() == 6);
+  CHECK(line(2) == 120.0f && line(3) == 120.0f);
+  CHECK(scene.raster.corners[2].y == 120 * 16 && scene.raster.corners[3].y == 120 * 16);
+}
+
 // The edge colour is the table's entry for the polygon number's group of
 // eight, as the game writes it: here not black. The graphics hardware gets
 // the same table, the clear plane's number, and each corner's number.

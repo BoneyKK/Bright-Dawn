@@ -10,10 +10,6 @@ bool in_main_memory(std::uint32_t address) {
 
 }  // namespace
 
-bool OpeningSkip::alive(const GuestMemory& memory) const {
-  return memory.read32(story_) == table_ && memory.read32(story_ + kMovieOffset) == kSkippableMovie;
-}
-
 std::uint32_t OpeningSkip::frame(GuestMemory& memory, std::uint32_t held, bool enabled) {
   const bool start_pressed = (held & kStart) != 0 && (previous_held_ & kStart) == 0;
   previous_held_ = held;
@@ -50,42 +46,30 @@ std::uint32_t OpeningSkip::frame(GuestMemory& memory, std::uint32_t held, bool e
     case Phase::Finding: {
       // The story counts its frames (one in two of the console's): its
       // count goes up within a few frames of Start.
-      story_ = 0;
+      std::uint32_t story = 0;
       for (const Candidate& c : candidates_) {
         const std::uint32_t frames = memory.read32(c.address + kFramesOffset);
         if (memory.read32(c.address) == c.table && memory.read32(c.address + kMovieOffset) == kNewGameMovie &&
             frames > c.frames && frames - c.frames <= frames_in_phase_) {
-          story_ = c.address;
-          table_ = c.table;
+          story = c.address;
           break;
         }
       }
-      if (story_ == 0) {
+      if (story == 0) {
         if (frames_in_phase_ < kMostFindingFrames) return own;
         candidates_.clear();
         go_to(Phase::Idle);
         return own;
       }
       candidates_.clear();
-      memory.write32(story_ + kMovieOffset, kSkippableMovie);
-      go_to(Phase::Ending);
+      memory.write32(story + kMovieOffset, kSkippableMovie);
+      go_to(Phase::Pressing);
       return kA;
     }
-    case Phase::Ending:
-      if (!alive(memory)) {
-        go_to(Phase::Walking);
-        return 0;
-      }
-      if (frames_in_phase_ > kMostEndingFrames) {
-        // Not ended: the story is given back its own movie and goes on.
-        memory.write32(story_ + kMovieOffset, kNewGameMovie);
-        go_to(Phase::Idle);
-        return own;
-      }
-      // A for two frames in every eight: each a new press for the game.
-      return frames_in_phase_ % 8 < 2 ? kA : 0;
-    case Phase::Walking:
-      if (frames_in_phase_ < kWalkFrames) return 0;
+    case Phase::Pressing:
+      if (frames_in_phase_ < kPressFrames) return kA;
+      // The game ends the story and goes to its title; the player goes on
+      // from there.
       go_to(Phase::Idle);
       masked_ = held;
       return 0;

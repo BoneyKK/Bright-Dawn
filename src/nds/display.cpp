@@ -88,6 +88,9 @@ void Display::line_begins(unsigned line) {
     // A capture whose second source is main memory is not made at all
     // (capture_line()); any other is made by the graphics hardware too.
     const bool from_main_memory = ((capture_control_ >> 29) & 3) != 0 && (capture_control_ & kCaptureFromMainMemory) != 0;
+    // The captures kept that are still in video memory as the frame begins
+    // (this frame's capture can write over one while a screen shows it).
+    for (Kept& kept : kept_) kept.in_memory = kept.number != 0 && in_video_memory(kept);
     hardware_capture_ = hardware_3d_ && capture && !from_main_memory;
     if (hardware_capture_) start_hardware_capture();
     if (capture) frame_log::state().counts.capture_made = true;
@@ -103,8 +106,10 @@ void Display::line_begins(unsigned line) {
     main_.set_hardware_3d(scene_this_frame_);
     // Which engines' pictures the graphics hardware draws. The processor
     // draws the main engine's where a capture takes it, and both while a
-    // recent capture may be on a screen (find_capture() compares them).
-    bool recent_capture = false;
+    // capture may be on a screen (find_capture() compares them): a recent
+    // one, or one shown in the last frame (the game can show a capture for
+    // as long as it likes, as behind a message that stops the game).
+    bool recent_capture = capture_shown_;
     for (const Kept& kept : kept_)
       if (kept.number != 0 && statistics_.frames + 1 - kept.number <= 3) recent_capture = true;
     const bool by_hardware = hardware_2d_wanted_ && hardware_3d_ && !recent_capture && video_2d_.place(video_);
@@ -346,23 +351,38 @@ void Display::vertical_blank() {
   main_fill = second_fill = ScreenFill{};
   if (scene_this_frame_ && have_scene_ && ((main_.control() >> 16) & 3) == 1)
     main_fill = {Fill::kScene, 0, main_.master_brightness()};
-  else if (!by_hardware_[0])
-    find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
+  // A capture can be on a screen with the scene too, as behind a message
+  // box the game draws in 3D.
+  if (!by_hardware_[0]) find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
   if (!by_hardware_[1]) find_capture(second_, main_on_top ? bottom_ : top_, second_fill);
+  capture_shown_ = main_fill.fill == Fill::kCapture || second_fill.fill == Fill::kCapture || main_fill.capture != 0 ||
+                   second_fill.capture != 0;
   ++statistics_.frames;
 }
 
+bool Display::in_video_memory(const Kept& kept) const {
+  // One pixel in 61 of those it wrote, in the bank wherever it is placed
+  // now (to be shown, the game places it as a background, say).
+  const std::vector<std::uint8_t>& bank = video_.contents(static_cast<VideoMemory::Bank>(kept.bank));
+  for (u32 at = 0; at < 0x10000; at += 61) {
+    const u32 pixel = kept.pixels[at];
+    if (pixel != kNotCaptured && six_bits_each(bank[at * 2] | u32{bank[at * 2 + 1]} << 8) != pixel) return false;
+  }
+  return true;
+}
+
 void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen, ScreenFill& fill) const {
-  // The recent capture the engine shows most of, at one pixel in 61, where
-  // the screen would show its bank (as display mode 2 does); it counts if
-  // three quarters of those it covers are the same.
+  // The capture the engine shows most of, at one pixel in 61, where the
+  // screen would show its bank (as display mode 2 does); it counts if three
+  // quarters of those it covers are the same. Only a capture still in video
+  // memory as it was made, as the frame began, can be shown.
   const std::vector<std::uint32_t>& shown = engine.unlit_screen();
   const Kept* best = nullptr;
   unsigned best_count = 0, best_samples = 0;
   for (const Kept& kept : kept_) {
     // A capture made in this frame is not complete until the frame is: what
     // the engines show now can only be an earlier one.
-    if (kept.number == 0 || kept.number > statistics_.frames || statistics_.frames + 1 - kept.number > 3) continue;
+    if (kept.number == 0 || kept.number > statistics_.frames || !kept.in_memory) continue;
     unsigned count = 0, samples = 0;
     for (std::size_t i = 0; i < shown.size(); i += 61) {
       if (kept.pixels[i] == kNotCaptured) continue;
@@ -377,9 +397,13 @@ void Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_
     }
   }
   if (best == nullptr || best_samples == 0) return;
+  // With the scene, the pixels under the 3D layer.
+  const bool with_scene = fill.fill == Fill::kScene;
+  const u32 mark = with_scene ? DisplayEngine::kCapturedBelow : DisplayEngine::kMark3D;
   for (std::size_t i = 0; i < shown.size(); ++i)
-    if (shown[i] == best->pixels[i]) screen[i] |= DisplayEngine::kMark3D;
-  fill = {Fill::kCapture, best->number, engine.master_brightness()};
+    if (shown[i] == best->pixels[i]) screen[i] |= mark;
+  if (with_scene) fill.capture = best->number;
+  else fill = {Fill::kCapture, best->number, engine.master_brightness()};
 }
 
 }  // namespace bd::nds

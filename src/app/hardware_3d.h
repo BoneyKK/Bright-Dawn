@@ -76,7 +76,9 @@ class Hardware3D {
   // A screen (`which`: 0 the top, 1 the bottom) with `scene` put in, or
   // the kept capture numbered `capture` if `scene` is null, or (both null
   // and 0) nothing put in, `scale` times as large, and `brightness` (the
-  // master brightness register) on what is put in. The texture to show;
+  // master brightness register) on what is put in. With `scene`, the kept
+  // capture numbered `capture` (if any) is put in too, under the scene,
+  // where the screen is marked nds::DisplayEngine::kCapturedBelow. The texture to show;
   // null if it could not be made (`failed`) or that capture is not kept.
   SDL_Texture* draw(int which, const Picture& picture, const nds::HardwareScene* scene, std::uint64_t capture,
                     std::uint16_t brightness, int scale, bool& failed);
@@ -110,7 +112,9 @@ class Hardware3D {
   // The compose shader's uniforms, as std140 lays them out.
   struct ComposeUniforms {
     float brightness[4];  // 1 towards white, 2 towards black; how far (0 to 1).
-    float options[4];     // 1 for a capture; the lines of the second texture (192, or 256 for a kept capture).
+    // 1 for a capture; the lines of the second texture (192, or 256 for a
+    // kept capture); 1 where a screen with the scene has a kept capture too.
+    float options[4];
     std::uint32_t capture[4];  // How a capture is made (shaders/compose.frag).
     std::uint32_t edge[4];     // The rasterizer's pixels: width, height, 0, 1 where they are the scene's.
     std::uint32_t fog[4];      // Fog: 1 with the scene (+2 alpha only), offset, step.

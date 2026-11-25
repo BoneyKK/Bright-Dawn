@@ -126,7 +126,9 @@ processor, and `--check-2d` has the processor draw them as well and logs the
 frames whose pictures differ. Above 1x,
 *High-resolution coordinates* (Settings, Graphics; on by default) places
 vertices between the DS's pixels, as the geometry engine computes them, so
-that slowly moving models do not jump from pixel to pixel. *Outlines*
+that slowly moving models do not jump from pixel to pixel; polygons drawn
+without perspective (message boxes, menus) stay at whole DS pixels, so that
+their parts still meet. *Outlines*
 (Settings, Graphics; `--edge-marking`) sets the outlines the game asks for
 around 3D models (edge marking), in the game's colours: *Original
 thickness* (`original`, the default) keeps them one DS pixel wide, so N
