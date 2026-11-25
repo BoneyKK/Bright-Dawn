@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "The start of a battle looks as on the DS with the 3D on the graphics hardware: the game reads its display captures back as a background and a texture, and they now hold the 3D picture (drawn by the processor in such a frame), not only the 2D layers.",
+    "what": "In a new game, Start skips the long story at the start (about 7 minutes) and the walk after it, up to Isaac's first words at home. Settings, Quality of life, switches it off.",
     "date": "2026-11-25"
   },
   "statuses": {
@@ -410,7 +410,7 @@
     {
       "part": "ui, app",
       "status": "done",
-      "now": "The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. A Debug page switches on the frame log: what each frame costs, part by part."
+      "now": "The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Settings, Quality of life: Start skips the opening of a new game. Report a problem opens a filled-in bug form on GitHub. A Debug page switches on the frame log: what each frame costs, part by part."
     },
     {
       "part": "platform, core",

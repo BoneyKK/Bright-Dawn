@@ -120,6 +120,10 @@ std::vector<SettingDef> game_setting_definitions() {
                          {"spanish", "Spanish (Espa\u00f1ol)"},
                          {"japanese", "Japanese"}},
                         "english"));
+  defs.push_back(toggle(key::kSkipOpening, "Quality of life", "Skip the opening with Start",
+                        "In a new game, Start skips the long story at the start, up to Isaac's first words at "
+                        "home.",
+                        true));
   SettingDef rom;
   rom.key = std::string(key::kRom);
   rom.label = "ROM";

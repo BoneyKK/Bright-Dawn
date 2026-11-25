@@ -177,6 +177,9 @@ add_library(bd_gfx STATIC src/gfx/screen_image.cpp src/gfx/screen_layout.cpp)
 target_link_libraries(bd_gfx PUBLIC bd_core)
 add_library(bd_input STATIC src/input/bindings.cpp)
 target_link_libraries(bd_input PUBLIC bd_core)
+# What Bright Dawn knows of the game itself: the skip of the opening.
+add_library(bd_game STATIC src/game/opening_skip.cpp)
+target_link_libraries(bd_game PUBLIC bd_core)
 # What the window program's own screens show and keep, without the screens:
 # the settings and their descriptions, and following the game builder.
 add_library(bd_ui STATIC src/ui/build_progress.cpp src/ui/game_settings.cpp src/ui/problem_report.cpp
@@ -247,7 +250,7 @@ if(BD_BUILD_APP)
     src/app/settings_book.cpp
     src/app/controls_page.cpp)
   target_include_directories(bd_app PUBLIC src)
-  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_platform bd_ui bd_imgui bd_game_library_host bd_assets bd_debug
+  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_game bd_platform bd_ui bd_imgui bd_game_library_host bd_assets bd_debug
                         ${BD_SDL_TARGET})
 
   # The game runs on the main thread, and translated code nests native calls

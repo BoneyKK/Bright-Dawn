@@ -3,6 +3,8 @@
 // DS's buttons; the left mouse button on the touch screen is the stylus.
 //
 // The game's step and the pictures are kept apart (platform/frame_clock.h).
+// In a new game, Start skips the long story at the start
+// (game/opening_skip.h), unless switched off in Settings, Quality of life.
 // Escape, or a controller's guide button, pauses the game and opens the
 // menu: continue, the settings book, back to the launcher, quit. Settings
 // changed there take effect at once. Keys of the window itself: F11 or
@@ -24,6 +26,7 @@
 #include "app/audio_out.h"
 #include "app/build_tools.h"
 #include "debug/frame_log_file.h"
+#include "game/opening_skip.h"
 #include "app/hardware_3d.h"
 #include "app/settings_book.h"
 #include "gfx/screen_layout.h"
@@ -99,6 +102,8 @@ class GameScreen {
   // Writes the last 3D scene, as made, to --dump-3d's file.
   void dump_3d();
   void count_rates(bool new_frame, bool shown);
+  // While the opening is skipped: the game dimmed, with a word on it.
+  void draw_skipping();
   // The pause menu, until it is closed. False if the run is to end.
   bool run_menu();
   void draw_menu();
@@ -152,6 +157,12 @@ class GameScreen {
   MenuPage menu_page_ = MenuPage::Main;
   SettingsBook book_;
   GameEnd end_ = GameEnd::Running;
+  // Start skips the story at the start of a new game (Settings, Quality of
+  // life): meanwhile the game runs as fast as it can, without sound, with a
+  // picture every tenth of a second.
+  game::OpeningSkip opening_skip_;
+  bool was_skipping_ = false;
+  std::uint64_t skip_shown_at_ = 0;
   // The frame log, when it is on (debug/frame_log.h).
   std::unique_ptr<frame_log::File> frame_log_;
   std::uint64_t log_executed_ = 0, log_interpreted_ = 0;

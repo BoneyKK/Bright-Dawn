@@ -17,6 +17,27 @@ namespace bd::app {
 
 namespace key = ui::key;
 
+static_assert(input::bit(input::DsButton::A) == game::OpeningSkip::kA &&
+              input::bit(input::DsButton::Start) == game::OpeningSkip::kStart);
+
+namespace {
+
+// The console's main memory, for the skip of the opening.
+class ConsoleMemory : public game::GuestMemory {
+ public:
+  explicit ConsoleMemory(nds::Console& console) : console_(console) {}
+  std::uint32_t read32(std::uint32_t address) const override { return console_.bus().main_read(address, 4); }
+  void write32(std::uint32_t address, std::uint32_t value) override {
+    console_.bus().main_write(address, 4, value);
+    console_.machine().note_memory_written(address, 4);
+  }
+
+ private:
+  nds::Console& console_;
+};
+
+}  // namespace
+
 GameScreen::GameScreen(App& app, nds::Console& console, bool can_go_back)
     : app_(app), console_(&console), can_go_back_(can_go_back) {}
 
@@ -211,7 +232,8 @@ void GameScreen::apply_settings(bool first) {
 
 bool GameScreen::frame() {
   ++frames_run_;
-  audio_.play(sound_.take());
+  if (opening_skip_.skipping()) sound_.take();
+  else audio_.play(sound_.take());
   keep_capture();
   if (!handle_events()) return false;
   if (menu_open_ && !run_menu()) return false;
@@ -222,7 +244,27 @@ bool GameScreen::frame() {
   const bool capture_last = app_.options.frames != 0 && frames_run_ == app_.options.frames && !app_.options.capture.empty();
   const bool capture_now = capture_last || (app_.options.capture_every != 0 && !app_.options.capture.empty() &&
                                             frames_run_ % app_.options.capture_every == 0);
-  const bool show = app_.options.unthrottled || clock_.frame_done(SDL_GetTicksNS());
+  const bool skipping = opening_skip_.skipping();
+  if (skipping != was_skipping_) {
+    was_skipping_ = skipping;
+    if (skipping) {
+      log::info("game", "skipping the opening (Start)");
+      skip_shown_at_ = 0;
+    } else {
+      log::info("game", "the opening is skipped");
+      clock_.restart(SDL_GetTicksNS());
+    }
+  }
+  bool show = false;
+  if (app_.options.unthrottled) {
+    show = true;
+  } else if (skipping) {
+    const std::uint64_t now = SDL_GetTicksNS();
+    show = now - skip_shown_at_ >= 100'000'000;
+    if (show) skip_shown_at_ = now;
+  } else {
+    show = clock_.frame_done(SDL_GetTicksNS());
+  }
   if (clock_.drops() != drops_logged_) {
     const std::uint64_t now = SDL_GetTicksNS();
     if (drops_logged_at_ == 0 || now - drops_logged_at_ >= 10'000'000'000ull) {
@@ -247,6 +289,7 @@ bool GameScreen::frame() {
     {
       frame_log::Scope frame_log_scope(frame_log::kFilter);
       draw();
+      if (skipping) draw_skipping();
       if (frame_log::enabled()) SDL_FlushRenderer(app_.renderer);
     }
     if (first && capture_now) capture(capture_last);
@@ -264,7 +307,7 @@ bool GameScreen::frame() {
     }
     ++frame_log::state().counts.pictures;
     count_rates(first, true);
-    if (app_.options.unthrottled) break;
+    if (app_.options.unthrottled || skipping) break;
     if (!vsync_) {
       const std::uint64_t wait = clock_.until_due();
       frame_log::Scope frame_log_scope(frame_log::kPaceWait);
@@ -493,6 +536,8 @@ void GameScreen::read_input() {
     if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >= input::kTriggerThreshold)
       held |= input::bit(input::DsButton::R);
   }
+  ConsoleMemory memory(*console_);
+  held = opening_skip_.frame(memory, held, app_.settings.toggle(key::kSkipOpening));
   if (held != console_->keypad().held()) console_->keypad().set_held(held);
 
   // The stylus: the left button, on the touch screen, while the window has
@@ -678,6 +723,18 @@ void GameScreen::draw() {
   };
   place(shown[0], screens_.top);
   place(shown[1], screens_.bottom);
+}
+
+void GameScreen::draw_skipping() {
+  app_.gui.begin_frame();
+  const ImGuiViewport* view = ImGui::GetMainViewport();
+  ImDrawList* list = ImGui::GetForegroundDrawList();
+  list->AddRectFilled(view->Pos, ImVec2(view->Pos.x + view->Size.x, view->Pos.y + view->Size.y), IM_COL32(0, 0, 0, 170));
+  const char* text = "Skipping the opening...";
+  const ImVec2 size = ImGui::CalcTextSize(text);
+  list->AddText(ImVec2(view->Pos.x + (view->Size.x - size.x) / 2, view->Pos.y + (view->Size.y - size.y) / 2),
+                IM_COL32(255, 255, 255, 255), text);
+  app_.gui.end_frame();
 }
 
 void GameScreen::dump_3d() {

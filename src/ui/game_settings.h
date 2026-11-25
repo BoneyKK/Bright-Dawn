@@ -39,6 +39,7 @@ inline constexpr std::string_view kVolume = "sound.volume";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";
 inline constexpr std::string_view kLanguage = "game.language";
 inline constexpr std::string_view kRom = "game.rom";
+inline constexpr std::string_view kSkipOpening = "quality_of_life.skip_opening";
 inline constexpr std::string_view kBuildJobs = "builder.jobs";
 inline constexpr std::string_view kBuildCompiler = "builder.compiler";
 inline constexpr std::string_view kLogLevel = "log.level";

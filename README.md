@@ -47,7 +47,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (25 November 2026): The start of a battle looks as on the DS with the 3D on the graphics hardware: the game reads its display captures back as a background and a texture, and they now hold the 3D picture (drawn by the processor in such a frame), not only the 2D layers.
+**Last change** (25 November 2026): In a new game, Start skips the long story at the start (about 7 minutes) and the walk after it, up to Isaac's first words at home. Settings, Quality of life, switches it off.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 
@@ -64,7 +64,7 @@ the state of each, and what comes next.
 | `gfx` | 🟢 Works | Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. The 2D engines' pictures by the graphics hardware too, pixel for pixel as the processor draws them, except where a display capture needs the processor's. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel, with the smoothing of polygon edges; above 1x solid outlines that meet the models' edges, without the costly drawing by the DS's rules. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Widescreen: not yet. |
 | `audio` | 🟢 Works | Music and sound effects play through your audio device (SDL 3), kept in step with the frames. Settings, Sound: on or off, and the volume. |
 | `input` | 🟢 Works | Keyboard, any number of controllers, the mouse as the stylus. Keys and buttons can be bound in Settings, Controls. |
-| `ui, app` | 🟢 Works | The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Report a problem opens a filled-in bug form on GitHub. A Debug page switches on the frame log: what each frame costs, part by part. |
+| `ui, app` | 🟢 Works | The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Settings, Quality of life: Start skips the opening of a new game. Report a problem opens a filled-in bug form on GitHub. A Debug page switches on the frame log: what each frame costs, part by part. |
 | `platform, core` | 🟢 Works | Window, files, settings, frame timing, log, checksums. A crash is noted with where it happened; a game that stops finishing frames too. |
 | `CI and releases` | 🟢 Works | Every change is built and tested on Linux and Windows; green changes on main become a pre-release. Its description gives the state first, then the big changes since the last one. Issue forms for bugs, a stuck game or wrong graphics, and wishes. |
 

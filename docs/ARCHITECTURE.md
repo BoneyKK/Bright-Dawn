@@ -49,6 +49,7 @@ in them, not before.
 | `gfx` | Capture of DS-level graphics state, presentation rules, renderer backends | `core`, `assets`, `platform` |
 | `audio` | Sequence playback, mixing, replacement tracks | `core`, `assets`, `platform` |
 | `input` | Devices, mapping, touch replacements | `core`, `platform` |
+| `game` | What Bright Dawn knows of the game's own objects in memory: Start skips the story at the start of a new game (built) | `core` |
 | `ui` | What the settings book and setup screens show and keep, without drawing it: Bright Dawn's settings, each described once; following the game builder (built) | `platform`, `gfx`, `input`, `assets` |
 | `app` | The window program: the setup, the launcher, the settings book and the pause menu drawn with Dear ImGui (the launcher in the look of the game's menus, from the ROM), the game's screens, the game builder run and followed (built) | everything above, SDL 3 |
 

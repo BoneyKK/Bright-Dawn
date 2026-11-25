@@ -35,6 +35,7 @@ add_executable(bd_tests
   test_problem_report.cpp
   test_save_summary.cpp
   test_workers.cpp
+  test_opening_skip.cpp
   test_settings.cpp
   test_system_control.cpp
   test_timing.cpp
@@ -50,7 +51,7 @@ add_executable(bd_tests
   test_narc.cpp
   test_rom.cpp
 )
-target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_nds bd_gfx bd_input bd_ui bd_assets bd_debug)
+target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_nds bd_gfx bd_input bd_game bd_ui bd_assets bd_debug)
 add_test(NAME unit COMMAND bd_tests)
 
 # End-to-end checks of the command-line tool against a generated ROM.
