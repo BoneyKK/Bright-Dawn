@@ -309,6 +309,46 @@ TEST(display_the_3d_picture_is_background_0) {
   CHECK(second.at(0) == kGrey);
 }
 
+// With the 3D drawn by the graphics hardware: a layer on top that the game
+// blends with the 3D layer just below it (the 3D as the second target, as
+// a glow drawn over the field) keeps its own colour, with no master
+// brightness, and is marked with the two weights; the graphics hardware
+// blends it with the 3D.
+TEST(display_marks_a_layer_blended_with_the_3d_below_it) {
+  Fixture f;
+  f.simple_tiles();
+  f.background(0, 1);  // The 3D, priority 1.
+  f.background(1, 2u << 8 | 2u << 2);
+  f.map(2, 0, 0, 0x2001);
+  f.tile_row(2, 1, 0, 0x00000022);  // Green over the first two pixels.
+  f.engine.set_hardware_3d(true);
+  f.control(0 | DisplayEngine::kBackground0Is3D | show(0) | show(1) | kPicture);
+  f.reg(DisplayEngine::kBlendControl, 2, 1u << 1 | 1u << 6 | 1u << 8);
+  f.reg(DisplayEngine::kBlendAlpha, 2, 6 | 12u << 8);
+  f.reg(DisplayEngine::kMasterBrightness, 2, 1u << 14 | 8);
+  f.draw();
+  const u32 marked = kGreen | DisplayEngine::kMark3DBelow | 6u << DisplayEngine::kMarkFactorShift |
+                     12u << DisplayEngine::kMarkBelowWeightShift;
+  CHECK(f.at(0) == marked && f.at(1) == marked);
+  CHECK(DisplayEngine::is_3d_below(f.at(0)));
+  // Where the layer is not there, the 3D is on top.
+  CHECK((f.at(2) & DisplayEngine::kMark3D) != 0 && !DisplayEngine::is_3d_below(f.at(2)));
+  // As the graphics hardware takes it: the 3D's weight (01100) in the low
+  // bits of red (its second bit), green and blue.
+  const u32 packed = DisplayEngine::for_hardware(f.at(0), true);
+  CHECK((packed & 0x2) == 0 && ((packed >> 8) & 3) == 3 && ((packed >> 16) & 3) == 0);
+  CHECK(((packed >> 8) & 0xFC) == (62u << 2 & 0xFC) && (packed >> 24) == (f.at(0) >> 24));
+  // Not chosen as the second target: the 3D is not blended with.
+  f.reg(DisplayEngine::kBlendControl, 2, 1u << 1 | 1u << 6);
+  f.draw();
+  CHECK(!DisplayEngine::is_3d_below(f.at(0)) && (f.at(0) & DisplayEngine::kMark3D) == 0);
+  // A translucent sprite over the 3D is blended with it whatever the effect.
+  f.reg(DisplayEngine::kBlendControl, 2, 1u << 8);
+  f.control(0 | DisplayEngine::kBackground0Is3D | show(0) | kPicture);
+  f.draw();
+  CHECK((f.at(0) & DisplayEngine::kMark3D) != 0);
+}
+
 TEST(display_effects) {
   Fixture f;
   f.simple_tiles();

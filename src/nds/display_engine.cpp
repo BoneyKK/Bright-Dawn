@@ -233,6 +233,8 @@ void DisplayEngine::draw_line(int line) {
   const u32 factor = std::min<u32>(master_brightness_ & 0x1F, 16);
   if ((direction == 1 || direction == 2) && factor != 0) {
     for (int x = 0; x < kWidth; ++x) {
+      // Given by the graphics hardware, after the 3D is blended in.
+      if (marked_ && is_3d_below(marks_[static_cast<std::size_t>(x)])) continue;
       u32 result = 0;
       for (unsigned shift = 0; shift < 18; shift += 6) {
         const u32 part = part_of(shown_line[x], shift);
@@ -423,22 +425,46 @@ void DisplayEngine::draw_3d(int line) {
 
 void DisplayEngine::mark_3d() {
   // Where the 3D layer would be on top, and how a pixel of it would be mixed
-  // with what is then below it, as blend() does.
+  // with what is then below it, as blend() does; and where it would be just
+  // below the top layer, blended with it.
   const unsigned effect = (blend_control_ >> 6) & 3;
   const auto priority = static_cast<std::int8_t>(background_control_[0] & 3);
   marks_.fill(0);
   for (int x = 0; x < kWidth; ++x) {
     const unsigned inside = shown_inside(x);
-    const Dot& below = top_[static_cast<std::size_t>(x)];
-    if ((inside & 1) == 0 || priority > below.priority) continue;
-    u32 mark = kMark3D;
-    if ((blend_control_ & (1u << (8 + below.layer))) != 0)
-      mark |= 1u << kMarkEffectShift;
-    else if (effect >= 2 && (blend_control_ & 1) != 0 && (inside & 0x20) != 0)
-      mark |= effect << kMarkEffectShift | u32{blend_brightness_} << kMarkFactorShift;
+    const Dot& top = top_[static_cast<std::size_t>(x)];
+    if ((inside & 1) == 0 || priority > below_[static_cast<std::size_t>(x)].priority) continue;
+    u32 mark = 0;
+    if (priority <= top.priority) {
+      mark = kMark3D;
+      if ((blend_control_ & (1u << (8 + top.layer))) != 0)
+        mark |= 1u << kMarkEffectShift;
+      else if (effect >= 2 && (blend_control_ & 1) != 0 && (inside & 0x20) != 0)
+        mark |= effect << kMarkEffectShift | u32{blend_brightness_} << kMarkFactorShift;
+    } else if ((blend_control_ & (1u << 8)) != 0 &&
+               (top.translucent || (effect == 1 && (blend_control_ & (1u << top.layer)) != 0 && (inside & 0x20) != 0))) {
+      const u32 weight_top = std::min<u32>(blend_alpha_ & 0x1F, 16), weight_3d = std::min<u32>((blend_alpha_ >> 8) & 0x1F, 16);
+      mark = kMark3DBelow | weight_top << kMarkFactorShift | weight_3d << kMarkBelowWeightShift;
+    } else {
+      continue;
+    }
     marks_[static_cast<std::size_t>(x)] = mark;
     marked_ = true;
   }
+}
+
+std::uint32_t DisplayEngine::for_hardware(std::uint32_t pixel, bool marks) {
+  const auto eight = [](u32 six) { return (six & 0x3F) << 2 | (six & 0x3F) >> 4; };
+  u32 r = eight(pixel), g = eight(pixel >> 6), b = eight(pixel >> 12);
+  if (!marks) return r | g << 8 | b << 16;
+  if ((pixel & kCapturedBelow) != 0) r = (r & 0xFE) | 1;
+  if (is_3d_below(pixel)) {
+    const u32 weight = (pixel >> kMarkBelowWeightShift) & 0x1F;
+    r = (r & 0xFD) | (weight >> 4) << 1;
+    g = (g & 0xFC) | ((weight >> 2) & 3);
+    b = (b & 0xFC) | (weight & 3);
+  }
+  return r | g << 8 | b << 16 | (pixel >> 24) << 24;
 }
 
 void DisplayEngine::draw_tiles(unsigned background, int line) {
@@ -641,6 +667,8 @@ void DisplayEngine::blend(int line) {
   };
 
   for (int x = 0; x < kWidth; ++x) {
+    // Blended with the 3D layer by the graphics hardware.
+    if (marked_ && is_3d_below(marks_[static_cast<std::size_t>(x)])) continue;
     Dot& top = top_[static_cast<std::size_t>(x)];
     const Dot& below = below_[static_cast<std::size_t>(x)];
     bool alpha = false;

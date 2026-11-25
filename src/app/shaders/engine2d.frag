@@ -267,18 +267,30 @@ void draw_sprites(bool window_pass) {
   }
 }
 
+// nds::DisplayEngine::mark_3d(): where the 3D layer would be on top, or
+// just below the top layer and blended with it (nds::DisplayEngine::
+// kMark3DBelow, the 3D's weight at bit 18).
 uint mark_3d() {
-  const uint effect = (blend_control() >> 6) & 3u;
+  const uint bc = blend_control();
+  const uint effect = (bc >> 6) & 3u;
   const int priority = int(background_control(0u) & 3u);
   const uint inside = shown_inside();
-  if ((inside & 1u) == 0u || priority > top.priority) return 0u;
-  uint mark = kMark3D;
-  if ((blend_control() & (1u << (8u + top.layer))) != 0u)
-    mark |= 1u << 24;
-  else if (effect >= 2u && (blend_control() & 1u) != 0u && (inside & 0x20u) != 0u)
-    mark |= effect << 24 | blend_brightness() << 26;
-  return mark;
+  if ((inside & 1u) == 0u || priority > below.priority) return 0u;
+  if (priority <= top.priority) {
+    uint mark = kMark3D;
+    if ((bc & (1u << (8u + top.layer))) != 0u)
+      mark |= 1u << 24;
+    else if (effect >= 2u && (bc & 1u) != 0u && (inside & 0x20u) != 0u)
+      mark |= effect << 24 | blend_brightness() << 26;
+    return mark;
+  }
+  if ((bc & (1u << 8)) != 0u &&
+      (top.translucent || (effect == 1u && (bc & (1u << top.layer)) != 0u && (inside & 0x20u) != 0u)))
+    return 1u << 24 | min(blend_alpha() & 0x1Fu, 16u) << 26 | min((blend_alpha() >> 8) & 0x1Fu, 16u) << 18;
+  return 0u;
 }
+
+bool is_3d_below(uint mark) { return ((mark >> 24) & 0x83u) == 1u; }
 
 void draw_tiles(uint background) {
   const uint bg_control = background_control(background);
@@ -425,7 +437,7 @@ void blend() {
   }
 }
 
-float eight_bits(uint six) { return float((six & 0x3Fu) << 2 | (six & 0x3Fu) >> 4) / 255.0; }
+uint eight_bits(uint six) { return (six & 0x3Fu) << 2 | (six & 0x3Fu) >> 4; }
 
 void main() {
   x = min(int(v_place.x * float(kWidth)), kWidth - 1);
@@ -468,7 +480,7 @@ void main() {
       else draw_tiles(0u);
     }
   }
-  blend();
+  if (!is_3d_below(mark)) blend();
 
   uint shown;
   const uint display_mode = (c >> 16) & 3u;
@@ -483,7 +495,7 @@ void main() {
   }
   const uint direction = master_brightness() >> 14;
   const uint factor = min(master_brightness() & 0x1Fu, 16u);
-  if ((direction == 1u || direction == 2u) && factor != 0u) {
+  if ((direction == 1u || direction == 2u) && factor != 0u && !(display_mode == 1u && is_3d_below(mark))) {
     uint result = 0u;
     for (uint shift = 0u; shift < 18u; shift += 6u) {
       const uint part = part_of(shown, shift);
@@ -492,5 +504,11 @@ void main() {
     shown = result;
   }
   if (display_mode != 1u || u_engine.y != 0u) mark = 0u;
-  o_colour = vec4(eight_bits(shown), eight_bits(shown >> 6), eight_bits(shown >> 12), float(mark >> 24) / 255.0);
+  uvec4 bytes = uvec4(eight_bits(shown), eight_bits(shown >> 6), eight_bits(shown >> 12), mark >> 24);
+  if (is_3d_below(mark)) {
+    // nds::DisplayEngine::for_hardware(): the 3D's weight in the low bits.
+    const uint weight = (mark >> 18) & 31u;
+    bytes.rgb = (bytes.rgb & uvec3(0xFDu, 0xFCu, 0xFCu)) | uvec3((weight >> 4) << 1, (weight >> 2) & 3u, weight & 3u);
+  }
+  o_colour = vec4(bytes) / 255.0;
 }

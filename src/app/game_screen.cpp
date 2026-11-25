@@ -600,20 +600,16 @@ void GameScreen::check_2d(int i, bool with_marks) {
   std::vector<std::uint32_t> pixels;
   if (!hardware_.read_2d(pixels)) return;
   const std::vector<std::uint32_t>& drawn = i == 0 ? display.top_screen() : display.bottom_screen();
-  const auto eight = [](std::uint32_t six) { return (six & 63) << 2 | (six & 63) >> 4; };
   std::size_t differ = 0, first = 0;
   for (std::size_t n = 0; n < pixels.size() && n < drawn.size(); ++n) {
-    const std::uint32_t c = drawn[n];
-    const std::uint32_t wanted = eight(c) | eight(c >> 6) << 8 | eight(c >> 12) << 16 | (with_marks ? c >> 24 << 24 : 0);
-    if (pixels[n] == wanted) continue;
+    if (pixels[n] == nds::DisplayEngine::for_hardware(drawn[n], with_marks)) continue;
     if (differ++ == 0) first = n;
   }
   ++checked_2d_;
   if (differ == 0) return;
   if (++differed_2d_ > 20) return;
   const std::uint32_t* w = &display.screen_2d(i).lines[first / 256 * nds::Frame2D::kWords];
-  const std::uint32_t c = drawn[first];
-  const std::uint32_t wanted = eight(c) | eight(c >> 6) << 8 | eight(c >> 12) << 16 | (with_marks ? c >> 24 << 24 : 0);
+  const std::uint32_t wanted = nds::DisplayEngine::for_hardware(drawn[first], with_marks);
   log::writef(log::Level::Warning, "2d",
               "check: frame %" PRIu64 ", %s screen: %zu pixels differ; the first at (%zu, %zu): %08x, not %08x; "
               "control %08x, backgrounds %08x %08x, blend %08x, brightness %08x",

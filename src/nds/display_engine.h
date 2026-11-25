@@ -106,6 +106,20 @@ class DisplayEngine {
   // without the 3D layer is a display capture's of the graphics hardware
   // (nds::Display::find_capture), which has its own copy at its resolution.
   static constexpr std::uint32_t kCapturedBelow = 1u << 23;
+  // Where a layer on top is blended with the 3D layer just below it (the
+  // 3D as the second target): this mark (no kMark3D), the weight of the
+  // layer on top in sixteenths at kMarkFactorShift, the 3D's at
+  // kMarkBelowWeightShift (five bits). The colour is the top layer's, not
+  // blended and without the master brightness.
+  static constexpr std::uint32_t kMark3DBelow = 1u << kMarkEffectShift;
+  static constexpr unsigned kMarkBelowWeightShift = 18;
+  static bool is_3d_below(std::uint32_t pixel) { return (pixel >> kMarkEffectShift & 0x83) == 1; }
+  // A pixel of the screen as the graphics hardware takes it (red in the
+  // lowest byte): six bits a part made eight, the marks as the alpha, and
+  // the low bits that the marks need: kCapturedBelow as red's lowest bit,
+  // the 3D's weight of kMark3DBelow in red's second bit (its top bit) and
+  // the two lowest of green and blue.
+  static std::uint32_t for_hardware(std::uint32_t pixel, bool marks);
   std::uint16_t master_brightness() const { return master_brightness_; }
 
   // A frame begins: the reference points of the matrix backgrounds start

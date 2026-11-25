@@ -180,6 +180,22 @@ vec3 composed(vec2 at, vec2 inside, bool lit) {
     if (lit) below = brightened(below, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
   }
   uint mark = bytes.a;
+  if ((mark & 128u) == 0u && (mark & 3u) == 1u) {
+    // A layer on top blended with the 3D just below it (nds::DisplayEngine::
+    // kMark3DBelow): its weight in the mark, the 3D's in the low bits, as
+    // DisplayEngine::blend() does, then the master brightness. Where the
+    // scene has no pixel, the layer as it is.
+    vec4 scene = scene_at(inside);
+    vec3 c = below;
+    if (scene.a >= 0.5 / 63.0) {
+      const uint weight_top = (mark >> 2) & 31u;
+      const uint weight_3d = ((bytes.r >> 1) & 1u) << 4 | (bytes.g & 3u) << 2 | (bytes.b & 3u);
+      const uvec3 under = uvec3(scene.rgb / scene.a * 255.0 + 0.5) >> 2u;
+      const uvec3 mixed = min((six * weight_top + under * weight_3d) / 16u, uvec3(63u));
+      c = vec3(mixed << 2u | mixed >> 4u) / 255.0;
+    }
+    return lit ? brightened(c, uint(u_brightness.x + 0.5) + 1u, u_brightness.y) : c;
+  }
   if ((mark & 128u) == 0u) return below;
   vec4 scene = scene_at(inside);
   if (scene.a < 0.5 / 63.0) return below;

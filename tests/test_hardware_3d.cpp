@@ -110,10 +110,11 @@ struct Frame {
   // The processor's picture, as it is drawn: six bits a part.
   std::vector<u32> processor() { return r.draw(frame, video); }
   // The graphics hardware's, at the DS's resolution, as the screen shows
-  // it: eight bits a part. The screen is all 3D.
-  std::vector<u32> graphics_hardware(int scale = 1) {
+  // it: eight bits a part. The screen is all 3D, or `given`.
+  std::vector<u32> graphics_hardware(int scale = 1, const std::vector<u32>* given = nullptr) {
     Hardware3D& h = hardware();
-    const std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
+    const std::vector<u32> all_3d(static_cast<std::size_t>(kWidth) * kHeight, bd::nds::DisplayEngine::kMark3D);
+    const std::vector<u32>& screen = given != nullptr ? *given : all_3d;
     // The graphics hardware draws a scene again only when its serial is
     // new, and each frame here has a renderer of its own.
     static std::uint64_t last_serial = 0;
@@ -680,6 +681,44 @@ TEST(hardware_captures_as_the_processor_at_1x) {
   }
   std::printf("    %d of %zu pixels differ\n", differ, wanted.size());
   CHECK(differ == 0);
+}
+
+// A 2D layer on top blended with the 3D just below it (nds::DisplayEngine::
+// kMark3DBelow): by the two weights, as the DS sums them; where the scene
+// has no pixel, the 2D layer as it is.
+TEST(hardware_blends_a_layer_with_the_3d_below_it_as_the_processor) {
+  using bd::nds::DisplayEngine;
+  std::mt19937 random(311);
+  Frame f;
+  random_scene(f, random, 0);
+  const std::vector<u32> scene_pixels = f.processor();
+  std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight);
+  for (u32& p : screen) {
+    const u32 weight_top = random() % 17, weight_3d = random() % 17;
+    p = (random() & 0x3FFFF) | DisplayEngine::kMark3DBelow | weight_top << DisplayEngine::kMarkFactorShift |
+        weight_3d << DisplayEngine::kMarkBelowWeightShift;
+  }
+  const std::vector<u32> pixels = f.graphics_hardware(1, &screen);
+  int differ = 0, blended = 0;
+  for (std::size_t i = 0; i < screen.size(); ++i) {
+    const u32 p = screen[i], three = scene_pixels[i];
+    const u32 weight_top = (p >> DisplayEngine::kMarkFactorShift) & 31, weight_3d = (p >> DisplayEngine::kMarkBelowWeightShift) & 31;
+    u32 want = p & 0x3FFFF;
+    if (((three >> 18) & 63) != 0) {
+      ++blended;
+      want = 0;
+      for (unsigned shift = 0; shift < 18; shift += 6)
+        want |= std::min<u32>((((p >> shift) & 63) * weight_top + ((three >> shift) & 63) * weight_3d) / 16, 63) << shift;
+    }
+    for (unsigned part = 0; part < 3; ++part)
+      // Six bits as eight, the top two again at the bottom.
+      if (((pixels[i] >> (part * 8)) & 255) != (((want >> (part * 6)) & 63) << 2 | ((want >> (part * 6)) & 63) >> 4)) {
+        ++differ;
+        break;
+      }
+  }
+  std::printf("    %d of %zu pixels differ (%d with the 3D)\n", differ, screen.size(), blended);
+  CHECK(differ == 0 && blended > 1000);
 }
 
 // The 2D pictures the graphics hardware draws (nds/frame_2d.h,

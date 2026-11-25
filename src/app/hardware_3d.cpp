@@ -739,19 +739,16 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   }
   auto* mapped = static_cast<std::uint8_t*>(SDL_MapGPUTransferBuffer(device_, transfer_, true));
   if (mapped == nullptr) return false;
-  // The screen: colours, with the marks (bits 24 to 31) as the alpha, and
-  // nds::DisplayEngine::kCapturedBelow as the lowest bit of red (the shader
-  // takes each part's top six bits).
+  // The screen: colours, with the marks (nds::DisplayEngine::for_hardware;
+  // the shader takes each part's top six bits).
   if (lines == nullptr) {
     const std::vector<std::uint32_t>& screen = *picture.pixels;
     for (std::size_t i = 0; i < screen.size(); ++i) {
-      const std::uint32_t p = screen[i];
-      const auto eight = [](std::uint32_t six) { return static_cast<std::uint8_t>((six & 0x3F) << 2 | (six & 0x3F) >> 4); };
-      const bool captured = marks && (p & nds::DisplayEngine::kCapturedBelow) != 0;
-      mapped[4 * i + 0] = static_cast<std::uint8_t>((eight(p) & 0xFE) | (captured ? 1 : 0));
-      mapped[4 * i + 1] = eight(p >> 6);
-      mapped[4 * i + 2] = eight(p >> 12);
-      mapped[4 * i + 3] = marks ? static_cast<std::uint8_t>(p >> 24) : 0;
+      const std::uint32_t p = nds::DisplayEngine::for_hardware(screen[i], marks);
+      mapped[4 * i + 0] = static_cast<std::uint8_t>(p);
+      mapped[4 * i + 1] = static_cast<std::uint8_t>(p >> 8);
+      mapped[4 * i + 2] = static_cast<std::uint8_t>(p >> 16);
+      mapped[4 * i + 3] = static_cast<std::uint8_t>(p >> 24);
     }
   }
   std::uint32_t at = screen_bytes;

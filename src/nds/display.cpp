@@ -26,6 +26,16 @@ u32 six_bits_each(u32 colour) { return ((colour & 0x1F) << 1) | ((colour & 0x3E0
 // says: as the graphics hardware puts its scene in (app/shaders/compose.frag).
 u32 put_in_3d(u32 below, u32 mark, u32 pixel) {
   const u32 alpha = (pixel >> 18) & 0x3F;
+  if (DisplayEngine::is_3d_below(mark) && alpha != 0) {
+    // `below` is the layer on top, blended with the 3D pixel below it.
+    const u32 weight_top = (mark >> DisplayEngine::kMarkFactorShift) & 31;
+    const u32 weight_3d = (mark >> DisplayEngine::kMarkBelowWeightShift) & 31;
+    u32 result = 0;
+    for (unsigned shift = 0; shift < 18; shift += 6)
+      result |= std::min<u32>((((below >> shift) & 0x3F) * weight_top + ((pixel >> shift) & 0x3F) * weight_3d) / 16, 63)
+                << shift;
+    return result;
+  }
   if ((mark & DisplayEngine::kMark3D) == 0 || alpha == 0) return below;
   const u32 effect = (mark >> DisplayEngine::kMarkEffectShift) & 3;
   const u32 factor = (mark >> DisplayEngine::kMarkFactorShift) & 31;
