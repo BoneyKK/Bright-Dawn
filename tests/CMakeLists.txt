@@ -36,6 +36,7 @@ add_executable(bd_tests
   test_save_summary.cpp
   test_workers.cpp
   test_opening_skip.cpp
+  test_stick_walk.cpp
   test_settings.cpp
   test_system_control.cpp
   test_timing.cpp

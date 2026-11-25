@@ -50,10 +50,22 @@ build/bright-dawn path/to/your-rom.nds
 | Q, W | L, R |
 | Enter, Right Shift | Start, Select |
 | Left mouse button on the touch screen | The stylus |
-| A controller | By position, as on the DS: the right face button is A, the bottom one B, the top one X, the left one Y; the shoulders and triggers L and R; the left stick or the pad the directions |
+| A controller | By position, as on the DS: the right face button is A, the bottom one B, the top one X, the left one Y; the shoulders and triggers L and R; the pad the directions, and the left stick too (on the field it walks, see below) |
 
 These are the defaults. Settings, Controls binds another key or controller
 button to each DS button: click the binding, then press the key or button.
+
+*Left stick: analog walking* (Settings, Controls; on by default): on the
+field, the left stick walks in any direction, from the game's walk to its
+run by how far it is pushed (a dead zone of 20%, the run at 90%). It uses the
+game's own walk to a point, the walk a touch leaves behind
+(`src/game/stick_walk.h`). Where the game's field control does not run (menus,
+text boxes, events, battles) the stick is the d-pad. The d-pad, keys and the
+stylus win over it; B with it runs. Its limits: the slowest pace is the
+game's walk; another button held (A, for example) stops the walk while it is held,
+as in the game; the European release (BO5P, version 0) only, with
+others the stick is the d-pad. `--stick X,Y@F[-L]` pushes it in a scripted
+run (percent, -100 to 100).
 
 Escape, or a controller's guide button, pauses the game and opens its menu:
 continue, the settings, report a problem, back to the launcher, quit. F11 or Alt+Enter switches
@@ -146,7 +158,7 @@ stays 256 by 192 in the middle, and the other screen stays 4:3; the stylus
 touches the middle only. Its limits: the 2D (HUD, text, 2D backgrounds) does
 not reach the sides, which show the 3D alone (black on lines without it);
 models the game itself leaves out as out of view appear at the sides late;
-scenes shown through a display capture, and 3D on both screens at once (the
+scenes shown through a display capture (battles), and 3D on both screens at once (the
 title), stay 4:3; at 1x the polygon edges are not smoothed. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
