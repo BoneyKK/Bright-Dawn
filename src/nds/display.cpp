@@ -20,6 +20,27 @@ u32 five_bits_each(u32 colour) {
 // Five bits a part made six, as the display engines read video memory.
 u32 six_bits_each(u32 colour) { return ((colour & 0x1F) << 1) | ((colour & 0x3E0) << 2) | ((colour & 0x7C00) << 3); }
 
+// `pixel` of the processor's 3D picture (six bits a part, alpha from bit
+// 18) put into `below`, a pixel of the main engine's picture mixed as if the
+// 3D layer were empty, as `mark` (DisplayEngine::kMark3D and the rest)
+// says: as the graphics hardware puts its scene in (app/shaders/compose.frag).
+u32 put_in_3d(u32 below, u32 mark, u32 pixel) {
+  const u32 alpha = (pixel >> 18) & 0x3F;
+  if ((mark & DisplayEngine::kMark3D) == 0 || alpha == 0) return below;
+  const u32 effect = (mark >> DisplayEngine::kMarkEffectShift) & 3;
+  const u32 factor = (mark >> DisplayEngine::kMarkFactorShift) & 31;
+  u32 result = 0;
+  for (unsigned shift = 0; shift < 18; shift += 6) {
+    u32 part = (pixel >> shift) & 0x3F;
+    if (effect == 2) part += (63 - part) * factor / 16;
+    if (effect == 3) part -= part * factor / 16;
+    // Blended by the 3D pixel's own alpha, as DisplayEngine::blend() does.
+    if (effect == 1 && alpha != 63) part = std::min<u32>((part * (alpha + 1) + ((below >> shift) & 0x3F) * (63 - alpha)) / 64, 63);
+    result |= part << shift;
+  }
+  return result;
+}
+
 // The sizes a capture can have, across and down.
 constexpr unsigned kCaptureSizes[4][2] = {{128, 128}, {256, 64}, {256, 128}, {256, 192}};
 
@@ -104,6 +125,16 @@ void Display::line_begins(unsigned line) {
         renderer_.build_scene(geometry_.finished(), video_);
         have_scene_ = true;
         ++statistics_.pictures_3d;
+      }
+      // A capture is also written to video memory, where the game can read
+      // it back (as a texture or a background, as the start of a battle
+      // does): with the 3D picture in it, drawn by the processor.
+      if (hardware_capture_ && swaps != swaps_drawn_) {
+        swaps_drawn_ = swaps;
+        frame_log::Scope frame_log_scope(frame_log::kProcessor3D);
+        renderer_.draw(geometry_.finished(), video_);
+        have_3d_ = true;
+        ++statistics_.pictures_3d_for_captures;
       }
     } else if (swaps != swaps_drawn_) {
       swaps_drawn_ = swaps;
@@ -226,11 +257,18 @@ void Display::capture_line(unsigned line) {
 
   // The first source: the main engine's picture before the display mode and
   // the master brightness, or the 3D picture alone.
+  // With the graphics hardware's scene, the processor's 3D picture is put
+  // in as the scene would be.
   const bool only_3d = (capture_control_ & kCapture3DOnly) != 0;
+  const bool picture_3d = have_3d_ && line < static_cast<unsigned>(kHeight);
+  const auto* marks = hardware_capture_ && !only_3d ? main_.line_marks() : nullptr;
   const auto first = [&](unsigned x) {
-    if (!only_3d) return five_bits_each(main_.mixed_line()[x]);
-    if (!have_3d_ || hardware_capture_) return u32{0x8000};
-    return five_bits_each(renderer_.image()[static_cast<std::size_t>(line) * kWidth + x]);
+    const u32 pixel_3d = picture_3d ? renderer_.image()[static_cast<std::size_t>(line) * kWidth + x] : 0;
+    if (!only_3d) {
+      const u32 below = main_.mixed_line()[x];
+      return five_bits_each(marks != nullptr && picture_3d ? put_in_3d(below, (*marks)[x], pixel_3d) : below);
+    }
+    return picture_3d ? five_bits_each(pixel_3d) : u32{0x8000};
   };
   // The second: a bank of video memory, as 16 bits a pixel.
   const auto second = [&](unsigned x) { return video_.peek(from + ((read_at + x * 2) & 0x1FFFF), 2); };
@@ -239,11 +277,9 @@ void Display::capture_line(unsigned line) {
   } else {
     const u32 weight_first = std::min<u32>(capture_control_ & 0x1F, 16);
     const u32 weight_second = std::min<u32>((capture_control_ >> 8) & 0x1F, 16);
-    // Where the graphics hardware puts the 3D scene, the processor has no
-    // colour for it, and a picture all 3D is the same in every capture. The
-    // lowest bits there tell this capture from the ones made before it, to
-    // find which one an engine shows.
-    const auto* marks = hardware_capture_ && !only_3d ? main_.line_marks() : nullptr;
+    // Where the graphics hardware puts the 3D scene, two captures of the
+    // same picture are the same. The lowest bits there tell this capture
+    // from the ones made before it, to find which one an engine shows.
     const auto is_3d = [&](unsigned x) {
       if (!hardware_capture_ || source == 1) return false;
       return only_3d || (marks != nullptr && ((*marks)[x] & DisplayEngine::kMark3D) != 0);

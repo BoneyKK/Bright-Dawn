@@ -47,7 +47,7 @@ The project map below shows each part of Bright Dawn, how the parts connect,
 the state of each, and what comes next. 
 
 <!-- project-map:start: made by tools/status/render_map.py from tools/status/project_map.json; change that file, not this part -->
-**Last change** (24 November 2026): The 3D scene on the graphics hardware needs about eleven times fewer draw calls in the first cave (46 a frame, not 508), with the same pictures: translucent polygons that share no pixel are drawn together.
+**Last change** (25 November 2026): The start of a battle looks as on the DS with the 3D on the graphics hardware: the game reads its display captures back as a background and a texture, and they now hold the 3D picture (drawn by the processor in such a frame), not only the 2D layers.
 
 ![Bright Dawn project map: each part and its status](docs/status/project-map.svg)
 

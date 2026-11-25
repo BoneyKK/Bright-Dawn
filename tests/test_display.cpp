@@ -329,7 +329,44 @@ TEST(display_a_screen_shows_the_capture_it_reads_when_the_screens_swap_every_fra
 }
 
 // Captures the graphics hardware makes with the 3D scene, whatever they
-// take and wherever they go; in each, the processor draws no 3D picture.
+// take and wherever they go; the frames are the graphics hardware's.
+
+// What a capture by the graphics hardware puts in video memory, where the
+// game can read it back (as a texture or a background, as the start of a
+// battle does): the 3D picture too, drawn by the processor, put in as the
+// graphics hardware puts in its scene.
+TEST(display_hardware_captures_put_the_3d_picture_in_video_memory) {
+  Fixture f;
+  f.display.set_hardware_3d(true);
+  f.send_triangle();
+  f.backdrop(false, kGreen15);
+  f.io.write(0x04000000, 4, kPicture | DisplayEngine::kBackground0Is3D | 1u << 8);
+  f.frame();
+  CHECK(f.display.statistics().pictures_3d_for_captures == 0);
+  // The lowest bit of each part can tell captures apart where the 3D goes.
+  const auto same = [](u32 a, u32 b) { return (a & 0xFBDE) == (b & 0xFBDE); };
+  // The main engine's picture, into bank B: the red triangle over the lower
+  // left half, the green backdrop elsewhere.
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20 | 1u << 16);
+  f.frame();
+  CHECK(f.display.frame_capture() != 0 && f.display.statistics().pictures_3d_for_captures == 1);
+  CHECK(same(f.bank_b(0, 191), 0x8000 | kRed15) && same(f.bank_b(255, 0), 0x8000 | kGreen15));
+  // Darkened by half by the blend effect, as the scene would be (the
+  // triangle's red is 63 in six bits).
+  f.io.write(0x04000050, 2, 1u | 3u << 6);
+  f.io.write(0x04000054, 2, 8);
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | 3u << 20 | 1u << 16);
+  f.frame();
+  CHECK(same(f.bank_b(0, 191), 0x8000 | 16) && same(f.bank_b(255, 0), 0x8000 | kGreen15));
+  // The 3D alone, into bank A: the triangle where it is. The picture was
+  // drawn for the first capture of these polygons and not again.
+  f.io.write(0x04000050, 2, 0);
+  f.io.write(Display::kCaptureControl, 4, Display::kCaptureOn | Display::kCapture3DOnly | 3u << 20);
+  f.frame();
+  CHECK(same(f.bank_a(0, 191), 0x8000 | kRed15));
+  CHECK(f.display.statistics().pictures_3d_for_captures == 1 && f.display.statistics().pictures_3d == 1);
+  CHECK(f.display.statistics().frames_3d_processor == 0);
+}
 
 TEST(display_hardware_captures_the_3d_picture_alone) {
   Fixture f;

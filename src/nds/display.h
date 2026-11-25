@@ -61,6 +61,9 @@ class Display {
   struct Statistics {
     std::uint64_t frames = 0;             // Shown.
     std::uint64_t pictures_3d = 0;        // 3D pictures drawn.
+    // With the graphics hardware's scene: 3D pictures the processor drew
+    // too, for the captures written to video memory.
+    std::uint64_t pictures_3d_for_captures = 0;
     std::uint64_t captures = 0;           // Display captures finished.
     // Once the game uses 3D, with the graphics hardware asked for: the
     // frames its scene draws, and the frames the processor draws instead
@@ -96,8 +99,10 @@ class Display {
   // (frame_capture()), at its resolution, whatever it takes: the main
   // engine's picture or the 3D alone, a bank of video memory, or the two
   // blended, of any size, anywhere in its bank. Here it is still written to
-  // video memory, for the game, with what the processor has: the 2D
-  // pictures, and no colour where the 3D goes. A screen that then shows it
+  // video memory, for the game, which can read it back (as a texture or a
+  // background, as the start of a battle does): with the 3D picture in it,
+  // which the processor draws in such a frame too, put in as the graphics
+  // hardware puts in its scene. A screen that then shows it
   // (the main engine in display mode 2, or the second engine with a copy of
   // it) is marked where it does, for the graphics hardware's capture. A
   // capture that reads a bank holding one of the graphics hardware's reads
