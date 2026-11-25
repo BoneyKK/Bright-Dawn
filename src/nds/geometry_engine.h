@@ -280,7 +280,9 @@ class GeometryEngine {
   // (a text band) is made a third longer on each side, its depth, texture
   // and colour going on as across it. Each polygon has corners of its own,
   // in the order they run around it. The frame the game sees, its counts
-  // and its limits are finished()'s alone.
+  // and its limits are finished()'s alone. The box test (kBoxTest) finds a
+  // box in view by the wide view's sides too: the game sees that, so it
+  // draws the models at the sides that it would leave out.
   void set_wide(bool on) { wide_ = on; }
   bool wide() const { return wide_; }
   const Frame& wide_finished() const { return wide_finished_; }

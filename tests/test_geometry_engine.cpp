@@ -547,3 +547,22 @@ TEST(geometry_registers) {
   CHECK(io.unmodelled().count(0x04000474) == 1);
   CHECK(f.g.statistics().unknown_commands == 0);
 }
+
+TEST(geometry_box_test_in_a_wide_frame_finds_the_wide_view) {
+  // With identity matrices the DS's view is x from -1 to 1; a wide frame's
+  // (set_wide) from -4/3 to 4/3. A box from 1.0625 to 1.125 across is in
+  // the wide view only; one from 1.375 to 1.4375 in neither.
+  const auto box = [](bool wide, std::uint32_t x, std::uint32_t across) {
+    Fixture f;
+    f.g.set_wide(wide);
+    f.send(GeometryEngine::kBoxTest, {x | 0xF800u << 16, 0xF800u | across << 16, 0x1000u | 0x1000u << 16});
+    return (f.g.status() & GeometryEngine::kBoxInView) != 0;
+  };
+  CHECK(!box(false, 0x1100, 0x100));
+  CHECK(box(true, 0x1100, 0x100));
+  CHECK(!box(true, 0x1600, 0x100));
+  CHECK(!box(false, 0x1600, 0x100));
+  // On the left as on the right.
+  CHECK(box(true, 0xEE00, 0x100));
+  CHECK(!box(false, 0xEE00, 0x100));
+}

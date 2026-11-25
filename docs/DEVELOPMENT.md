@@ -166,7 +166,9 @@ log) is made longer, its texture not stretched.
 Its limits: where the graphics hardware draws the 2D (the field), the 2D
 (HUD, text, 2D backgrounds) does not reach the sides, which show the 3D
 alone (black on lines without it);
-models the game itself leaves out as out of view appear at the sides late;
+the DS's box test (which the field uses to leave out models out of view) finds
+boxes by the wide view, so those models are drawn at the sides too; models
+a game leaves out by a test of its own can still appear at the sides late;
 3D on both screens at once (the title) stays 4:3; at 1x the polygon edges are not smoothed. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).

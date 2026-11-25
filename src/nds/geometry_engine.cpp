@@ -545,7 +545,10 @@ void GeometryEngine::box_test(const std::uint32_t* p) {
     Vertex corner[10];
     for (int i = 0; i < 4; ++i) corner[i] = v[face[i]];
     std::size_t size = 4;
-    cut_to_view(corner, size);
+    // In a wide frame (set_wide), the wide view's: a game that leaves out
+    // what the test finds out of view (a field's models) shows them at the
+    // sides too.
+    cut_to_view(corner, size, wide_);
     if (size != 0) {
       flags_ |= kBoxInView;
       break;
