@@ -37,9 +37,10 @@ affiliated with or endorsed by Nintendo or Camelot Software Planning.
 
 ## Roadmap and current state
 
-In short: **not playable yet.** The game runs through its opening to the name
-entry, built or interpreted, and has not been tried beyond that. There is no
-sound. The game's save is kept between runs. Every part in detail:
+In short: **playable through the early game.** From its opening, Saha Town,
+the first cave, battles and saving in the game have been tried; later parts
+have not been tried yet. Music and sound effects play. The game's save is
+kept between runs. Every part in detail:
 [docs/STATUS.md](docs/STATUS.md). 
 
 The project map below shows each part of Bright Dawn, how the parts connect,

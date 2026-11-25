@@ -1,7 +1,8 @@
 > [!WARNING]
-> **Not playable yet.** The game starts from a ROM you supply yourself and
-> runs through its opening to the name entry. It has not been tried beyond
-> that. There is no sound. The game's save is kept between runs.
-> Interpreted, the game runs at about a third of the DS's speed; built from
-> your ROM, about twice as fast as that. Expect crashes: please report them
+> **Playable through the early game.** The game starts from a ROM you supply
+> yourself and can be played from its opening through the early game: Saha
+> Town, the first cave, battles and saving in the game have been tried.
+> Later parts have not been tried yet. Music and sound effects play. The
+> game's save is kept between runs. Built from your ROM, the game runs about
+> twice as fast as interpreted. Expect bugs and crashes: please report them
 > with the log (see the end of this page).
