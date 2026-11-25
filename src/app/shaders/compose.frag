@@ -16,12 +16,12 @@
 // fog as the DS does it (nds::HardwareScene::fog); but outlines and
 // anti-aliased edges as raster.comp and finish.comp drew them, as the
 // processor does. At the DS's resolution all its pixels are theirs. Above
-// it, outlines are drawn here from the scene pass's own pixels, solid: a
-// pixel of an opaque polygon with one of another polygon number further
-// away, up to u_outline.x pixels across or down (past the picture's edge,
-// the clear plane), takes its number's edge colour, then fog. A gap
-// narrower than a DS pixel with the same number on its far side does not
-// count: the triangles leave such holes where the DS's spans do not.
+// it, outlines are drawn from the edges of the scene's opaque polygons
+// (edges.frag; nearby.frag says which pixels are far from all): a pixel of
+// an opaque polygon less than u_outline.x pixels from an edge of its own
+// polygon number takes its number's edge colour, as far as it is within
+// that distance (soft on the inner side), then fog. So an outline is as wide on every side, on the
+// nearer of two groups only, and never inside a group.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -36,9 +36,15 @@ layout(set = 2, binding = 3) uniform sampler2D u_fog_marks;  // The scene's dept
 // The number of the opaque polygon drawn on each pixel of the scene (red,
 // times 63; the clear plane's where alpha is 0).
 layout(set = 2, binding = 4) uniform sampler2D u_numbers;
+// edges.frag's: where the edges of the opaque polygons are, a bit for each
+// pixel, 16 pixels across to each of its own.
+layout(set = 2, binding = 5) uniform sampler2D u_edges;
+// nearby.frag's: 1 (red) for each block of 16 by 16 pixels with an edge
+// less than u_outline.x pixels away.
+layout(set = 2, binding = 6) uniform sampler2D u_nearby;
 // finish.comp's pixels: six bits each of red, green, blue and alpha, plus
 // 1 << 24 where they are to be taken.
-layout(std430, set = 2, binding = 5) readonly buffer Finished { uint finished[]; };
+layout(std430, set = 2, binding = 7) readonly buffer Finished { uint finished[]; };
 layout(set = 3, binding = 0) uniform Compose {
   vec4 u_brightness;  // x: 1 towards white, 2 towards black, else none; y: how far, 0 to 1.
   // x: 0 a screen, 1 a capture. y: for a screen, the lines u_scene has (192,
@@ -64,6 +70,10 @@ layout(set = 3, binding = 0) uniform Compose {
   // a DS pixel is wide.
   uvec4 u_outline;
   vec4 u_outline_colours[8];
+  // Where outlines can be, in u_numbers's pixels (the opaque polygons'
+  // bounds): left, top, right and bottom, the last two past the last.
+  // u_edges holds nothing outside.
+  uvec4 u_outline_bounds;
 };
 
 uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
@@ -72,19 +82,6 @@ uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
 uint depth_of(vec4 mark) {
   uvec3 b = uvec3(mark.rgb * 255.0 + 0.5);
   return b.r << 16 | b.g << 8 | b.b;
-}
-
-uint number_at(ivec2 p) { return uint(texelFetch(u_numbers, p, 0).r * 63.0 + 0.5); }
-
-// Whether polygon number `number` is there again within a DS pixel past
-// `q`, the way `way` goes.
-bool gap(ivec2 q, ivec2 way, uint number, ivec2 size) {
-  for (int j = 1; j < int(u_outline.w); ++j) {
-    const ivec2 r = q + j * way;
-    if (any(lessThan(r, ivec2(0))) || any(greaterThanEqual(r, size))) return false;
-    if (number_at(r) == number) return true;
-  }
-  return false;
 }
 
 // `scene`, the scene's pixel at `inside`, with fog, by the processor's sums
@@ -124,6 +121,44 @@ float eight_bits(uint six) { return float(six << 2 | six >> 4) / 255.0; }
 // five).
 uvec3 five_bits(vec3 c) { return uvec3(c * 255.0 + 0.5) >> 3u; }
 
+// edges.frag's bits for the 16 pixels from 16 * `group` on line `y`.
+uint edge_bits(int group, int y) {
+  const vec2 b = texelFetch(u_edges, ivec2(group, y), 0).rg * 255.0 + 0.5;
+  return uint(b.r) | uint(b.g) << 8;
+}
+
+// The square of the distance from `p` to the nearest edge of `number` on
+// line `y`, from `from` to `to` across, if less than `nearest`; else
+// `nearest`. The nearest edges on each side, up to three, are looked at.
+int nearest_edge(ivec2 p, int y, uint number, int from, int to, int nearest) {
+  const int dy = y - p.y, group = from >> 4, base = group << 4;
+  uint bits = edge_bits(group, y);
+  if (to >> 4 != group) bits |= edge_bits(group + 1, y) << 16;
+  bits &= (0xFFFFFFFFu << uint(from - base)) & (0xFFFFFFFFu >> uint(31 - (to - base)));
+  if (bits == 0u) return nearest;
+  const uint at_or_before = (2u << uint(p.x - base)) - 1u;
+  uint left = bits & at_or_before, right = bits & ~at_or_before;
+  for (int i = 0; i < 3 && left != 0u; ++i) {
+    const int x = base + findMSB(left), d = (p.x - x) * (p.x - x) + dy * dy;
+    if (d >= nearest) break;
+    if (uint(texelFetch(u_numbers, ivec2(x, y), 0).r * 63.0 + 0.5) == number) {
+      nearest = d;
+      break;
+    }
+    left &= ~(1u << uint(x - base));
+  }
+  for (int i = 0; i < 3 && right != 0u; ++i) {
+    const int x = base + findLSB(right), d = (x - p.x) * (x - p.x) + dy * dy;
+    if (d >= nearest) break;
+    if (uint(texelFetch(u_numbers, ivec2(x, y), 0).r * 63.0 + 0.5) == number) {
+      nearest = d;
+      break;
+    }
+    right &= ~(1u << uint(x - base));
+  }
+  return nearest;
+}
+
 // The scene's pixel at `inside`: finish.comp's where it is to be taken.
 vec4 scene_at(vec2 inside) {
   if (u_edge.w != 0u) {
@@ -136,24 +171,29 @@ vec4 scene_at(vec2 inside) {
     }
   }
   if (u_outline.x != 0u) {
+    // The outline: where an edge of this pixel's own polygon number
+    // (edges.frag) is less than the outline's width away, as far as it is
+    // within the last pixel (soft on its inner side), over the pixel. The
+    // lines nearest first, so that the search ends early.
     const ivec2 size = textureSize(u_numbers, 0);
     const ivec2 p = clamp(ivec2(inside * vec2(size)), ivec2(0), size - 1);
-    const vec4 me = texelFetch(u_numbers, p, 0);
-    if (me.a > 0.5) {
+    const ivec4 bounds = ivec4(u_outline_bounds);
+    const vec4 me = all(greaterThanEqual(p, bounds.xy)) && all(lessThan(p, bounds.zw)) ? texelFetch(u_numbers, p, 0) : vec4(0.0);
+    if (me.a > 0.5 && texelFetch(u_nearby, p >> 4, 0).r > 0.5) {
       const uint number = uint(me.r * 63.0 + 0.5);
-      const uint depth = depth_of(texelFetch(u_fog_marks, p, 0));
-      const ivec2 ways[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
-      for (int k = 1; k <= int(u_outline.x); ++k) {
-        for (int w = 0; w < 4; ++w) {
-          const ivec2 q = p + k * ways[w];
-          uint other = u_outline.y, further = u_outline.z;
-          if (all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, size))) {
-            other = number_at(q);
-            further = depth_of(texelFetch(u_fog_marks, q, 0));
-          }
-          if (other != number && depth < further && !gap(q, ways[w], number, size))
-            return fogged(vec4(u_outline_colours[number >> 3].rgb, 1.0), inside);
-        }
+      const int reach = int(u_outline.x) - 1;
+      const int from = max(p.x - reach, bounds.x), to = min(p.x + reach, bounds.z - 1);
+      int nearest = 1 << 20;
+      for (int dy = 0; dy <= reach && dy * dy < nearest; ++dy) {
+        if (p.y - dy >= bounds.y) nearest = nearest_edge(p, p.y - dy, number, from, to, nearest);
+        if (dy != 0 && p.y + dy < bounds.w) nearest = nearest_edge(p, p.y + dy, number, from, to, nearest);
+      }
+      const float cover = clamp(float(u_outline.x) - sqrt(float(nearest)), 0.0, 1.0);
+      if (cover > 0.0) {
+        const vec4 scene = texture(u_scene, inside);
+        const vec3 c = mix(scene.a > 0.0 ? scene.rgb / scene.a : u_clear_colour.rgb, u_outline_colours[number >> 3].rgb, cover);
+        const float a = mix(scene.a, 1.0, cover);
+        return fogged(vec4(c * a, a), inside);
       }
     }
   }

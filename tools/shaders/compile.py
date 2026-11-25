@@ -15,7 +15,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHADERS = ROOT / "src" / "app" / "shaders"
 HEADER = ROOT / "src" / "app" / "hardware_shaders.h"
-NAMES = ["scene.vert", "scene.frag", "compose.vert", "compose.frag", "raster.comp", "finish.comp", "engine2d.frag"]
+NAMES = ["scene.vert", "scene.frag", "compose.vert", "compose.frag", "raster.comp", "finish.comp", "engine2d.frag", "edges.frag", "nearby.frag"]
 
 
 def compiled(name: str) -> bytes:

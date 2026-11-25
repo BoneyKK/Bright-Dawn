@@ -134,8 +134,9 @@ around 3D models (edge marking), in the game's colours: *Original
 thickness* (`original`, the default) keeps them one DS pixel wide, so N
 pixels wide at N times the resolution; *1 pixel* (`pixel`) makes them one
 pixel wide at any resolution; *Off* (`off`) leaves them out. Above 1x they
-are solid, drawn from the triangles' own pixels, and the game's smoothing
-of polygon edges (anti-aliasing) is left out. The shaders are
+are drawn from the triangles' own pixels, as wide on every side and soft on
+their inner side, and the game's smoothing of polygon edges (anti-aliasing)
+is left out. The shaders are
 kept compiled in `src/app/hardware_shaders.h`; after a change to
 `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 `bd_gpu_tests` (ctest's `gpu`) draws test scenes with the graphics hardware
@@ -156,7 +157,9 @@ with both and compares them, at 1x: how many pixels of the graphics
 hardware's own rasterizer (outlines, anti-aliased edges) differ from the
 processor's, and the first polygon after which they do, with its corners;
 and for each screen, how far the pixels put in from the triangles and from
-the rasterizer are from the processor's. Its text holds only numbers, and
+the rasterizer are from the processor's. With `--time N` it draws the scene
+N times at `--scale` and gives the frame log's mean time (sync mode) of the
+scene pass and of putting it in (outlines included). Its text holds only numbers, and
 can be shared; the dump and the pictures `--out` writes hold the game's
 textures and are never to be committed (`*.scene` is ignored by git).
 `bd_gpu_tests` with `BD_FAILED_SCENES=DIR` writes a dump of each test

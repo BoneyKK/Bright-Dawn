@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 
@@ -141,7 +142,8 @@ Hardware3D::~Hardware3D() {
   for (SDL_GPUGraphicsPipeline* p : scene_pipelines_)
     if (p != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, p);
   if (compose_pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, compose_pipeline_);
-  if (engine2d_pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, engine2d_pipeline_);
+  for (SDL_GPUGraphicsPipeline* p : {engine2d_pipeline_, edges_pipeline_, nearby_pipeline_})
+    if (p != nullptr) SDL_ReleaseGPUGraphicsPipeline(device_, p);
   for (SDL_GPUComputePipeline* p : {raster_pipeline_, finish_pipeline_})
     if (p != nullptr) SDL_ReleaseGPUComputePipeline(device_, p);
   if (nearest_ != nullptr) SDL_ReleaseGPUSampler(device_, nearest_);
@@ -177,10 +179,15 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
   SDL_GPUShader* compose_vertex = make_shader(device, shaders::kComposeVert, sizeof shaders::kComposeVert,
                                               SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
   SDL_GPUShader* compose_fragment = make_shader(device, shaders::kComposeFrag, sizeof shaders::kComposeFrag,
-                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1, 1);
+                                                SDL_GPU_SHADERSTAGE_FRAGMENT, 7, 1, 1);
   SDL_GPUShader* engine2d_fragment = make_shader(device, shaders::kEngine2dFrag, sizeof shaders::kEngine2dFrag,
                                                  SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 1, 6);
-  const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment && engine2d_fragment;
+  SDL_GPUShader* edges_fragment = make_shader(device, shaders::kEdgesFrag, sizeof shaders::kEdgesFrag,
+                                              SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+  SDL_GPUShader* nearby_fragment = make_shader(device, shaders::kNearbyFrag, sizeof shaders::kNearbyFrag,
+                                               SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+  const bool shaders_made = scene_vertex && scene_fragment && compose_vertex && compose_fragment && engine2d_fragment &&
+                            edges_fragment && nearby_fragment;
 
   // The depth buffer: the most exact format the device has, with a stencil
   // buffer if it can.
@@ -325,10 +332,18 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     compose_pipeline_ = SDL_CreateGPUGraphicsPipeline(device, &info);
     info.fragment_shader = engine2d_fragment;
     engine2d_pipeline_ = SDL_CreateGPUGraphicsPipeline(device, &info);
+    target.format = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM;
+    info.fragment_shader = edges_fragment;
+    edges_pipeline_ = SDL_CreateGPUGraphicsPipeline(device, &info);
+    target.format = SDL_GPU_TEXTUREFORMAT_R8_UNORM;
+    info.fragment_shader = nearby_fragment;
+    nearby_pipeline_ = SDL_CreateGPUGraphicsPipeline(device, &info);
     raster_pipeline_ = make_compute(device, shaders::kRasterComp, sizeof shaders::kRasterComp, 1, 2, 1);
     finish_pipeline_ = make_compute(device, shaders::kFinishComp, sizeof shaders::kFinishComp, 0, 1, 1);
   }
-  for (SDL_GPUShader* s : {scene_vertex, scene_fragment, compose_vertex, compose_fragment, engine2d_fragment})
+  for (SDL_GPUShader* s :
+       {scene_vertex, scene_fragment, compose_vertex, compose_fragment, engine2d_fragment, edges_fragment,
+        nearby_fragment})
     if (s != nullptr) SDL_ReleaseGPUShader(device, s);
 
   bool made = shaders_made;
@@ -338,7 +353,7 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     error = "the graphics device has no depth buffer format";
     made = false;
   } else if (std::count(std::begin(scene_pipelines_), std::end(scene_pipelines_), nullptr) != 0 || !compose_pipeline_ ||
-             !raster_pipeline_ || !finish_pipeline_ || !engine2d_pipeline_) {
+             !raster_pipeline_ || !finish_pipeline_ || !engine2d_pipeline_ || !edges_pipeline_ || !nearby_pipeline_) {
     made = fail("3D pipelines");
   }
   if (made) {
@@ -374,9 +389,10 @@ void Hardware3D::release_targets() {
     if (k.texture != nullptr) SDL_ReleaseGPUTexture(device_, k.texture);
     k = Kept{};
   }
-  for (SDL_GPUTexture* t : {scene_target_, fog_marks_, numbers_, depth_})
+  for (SDL_GPUTexture* t : {scene_target_, fog_marks_, numbers_, depth_, edges_, nearby_})
     if (t != nullptr) SDL_ReleaseGPUTexture(device_, t);
-  scene_target_ = fog_marks_ = numbers_ = depth_ = nullptr;
+  scene_target_ = fog_marks_ = numbers_ = depth_ = edges_ = nearby_ = nullptr;
+  outlined_ = false;
   for (SDL_GPUBuffer* b : {layers_, finished_})
     if (b != nullptr) SDL_ReleaseGPUBuffer(device_, b);
   layers_ = finished_ = nullptr;
@@ -398,6 +414,11 @@ bool Hardware3D::make_targets(int scale) {
   scene_target_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   fog_marks_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
   numbers_ = make(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, colour);
+  // A bit for each pixel (shaders/edges.frag).
+  edges_ = make_texture(device_, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, colour, width / 16, height);
+  // A pixel for each block of 16 by 16 (shaders/nearby.frag).
+  nearby_ = make_texture(device_, SDL_GPU_TEXTUREFORMAT_R8_UNORM, colour, width / 16, height / 16);
+  made = made && edges_ != nullptr && nearby_ != nullptr;
   depth_ = make(depth_format_, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
   const auto make_buffer = [&](SDL_GPUBufferUsageFlags usage, std::uint32_t bytes_a_pixel) {
     SDL_GPUBufferCreateInfo info{};
@@ -995,6 +1016,44 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
       rasterize_scene(commands, scene);
     }
     if (!frame_log_pass(log_compose_column_)) return false;
+    outlined_ = false;
+  }
+  // Above 1x, the edges for the outlines, where the screen shows the scene
+  // (or all of it for a capture): found anew if this needs more than was.
+  if (given != nullptr && source == nullptr && scene.edge_marking && scale_ > 1) {
+    const bool capture = given_uniforms.options[0] != 0.0f;
+    std::array<std::uint32_t, 4> shown{0, 0, kScreenWidth, kScreenHeight};
+    if (!marks) {
+      shown = {0, 0, 0, 0};
+    } else if (!capture && lines != nullptr) {
+      // The lines where the 3D layer (background 0, as 3D) is on.
+      shown = {0, kScreenHeight, kScreenWidth, 0};
+      for (std::uint32_t y = 0; y < kScreenHeight && !lines->second_engine; ++y) {
+        const std::uint32_t control = lines->lines[y * nds::Frame2D::kWords];
+        if ((control & (1u << 8)) == 0 || (control & (1u << 3)) == 0) continue;
+        shown[1] = std::min(shown[1], y);
+        shown[3] = y + 1;
+      }
+    } else if (!capture) {
+      shown = {kScreenWidth, kScreenHeight, 0, 0};
+      for (std::uint32_t y = 0; y < kScreenHeight; ++y)
+        for (std::uint32_t x = 0; x < kScreenWidth; ++x) {
+          const std::uint32_t pixel = (*picture.pixels)[y * kScreenWidth + x];
+          if ((pixel & nds::DisplayEngine::kMark3D) == 0 && !nds::DisplayEngine::is_3d_below(pixel)) continue;
+          shown = {std::min(shown[0], x), std::min(shown[1], y), std::max(shown[2], x + 1), std::max(shown[3], y + 1)};
+        }
+    }
+    const std::array<std::uint32_t, 4> needed = outline_area(scene, shown, scale_);
+    const auto holds = [](const std::array<std::uint32_t, 4>& a, const std::array<std::uint32_t, 4>& b) {
+      return b[2] == 0 || (a[2] != 0 && a[0] <= b[0] && a[1] <= b[1] && a[2] >= b[2] && a[3] >= b[3]);
+    };
+    if (!outlined_ || outline_bounds_[2] == 0) {
+      if (!outlined_ || needed[2] != 0) find_edges(commands, scene, needed);
+    } else if (!holds(outline_bounds_, needed)) {
+      find_edges(commands, scene,
+                 {std::min(outline_bounds_[0], needed[0]), std::min(outline_bounds_[1], needed[1]),
+                  std::max(outline_bounds_[2], needed[2]), std::max(outline_bounds_[3], needed[3])});
+    }
   }
 
   // 2. The screen with the scene (or the kept capture) put in.
@@ -1005,11 +1064,13 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   colour.cycle = true;
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, compose_pipeline_);
-  const std::array<SDL_GPUTextureSamplerBinding, 5> sources{{{screen_, nearest_},
+  const std::array<SDL_GPUTextureSamplerBinding, 7> sources{{{screen_, nearest_},
                                                              {source != nullptr ? source : scene_target_, nearest_},
                                                              {second != nullptr ? second : bank_, nearest_},
                                                              {fog_marks_, nearest_},
-                                                             {numbers_, nearest_}}};
+                                                             {numbers_, nearest_},
+                                                             {edges_, nearest_},
+                                                             {nearby_, nearest_}}};
   SDL_BindGPUFragmentSamplers(pass, 0, sources.data(), static_cast<Uint32>(sources.size()));
   SDL_BindGPUFragmentStorageBuffers(pass, 0, &finished_, 1);
   // Outlines and anti-aliased edges where the scene is put in.
@@ -1019,9 +1080,9 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
     uniforms.edge[1] = static_cast<std::uint32_t>(kScreenHeight * scale_);
     uniforms.edge[3] = 1;
   }
-  // Above the DS's resolution, outlines where the scene is put in: solid,
-  // in the edge colours, as wide as asked.
-  if (given != nullptr && source == nullptr && scene.edge_marking && scale_ > 1) {
+  // Above the DS's resolution, outlines where the scene is put in, from the
+  // edges find_edges() found: in the edge colours, as wide as asked.
+  if (given != nullptr && source == nullptr && scene.edge_marking && scale_ > 1 && outline_bounds_[2] != 0) {
     using Marking = nds::PolygonRenderer::EdgeMarking;
     uniforms.outline[0] = static_cast<std::uint32_t>(
         nds::PolygonRenderer::edge_width(scene.edge_one_pixel ? Marking::OnePixel : Marking::OriginalThickness, scale_));
@@ -1029,6 +1090,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
     uniforms.outline[2] = clear_depth_bits(scene);
     uniforms.outline[3] = static_cast<std::uint32_t>(scale_);
     std::memcpy(uniforms.outline_colours, scene.edge_colours.data(), sizeof uniforms.outline_colours);
+    std::memcpy(uniforms.outline_bounds, outline_bounds_.data(), sizeof uniforms.outline_bounds);
   }
   // Fog, where the scene is put in.
   if (given != nullptr && source == nullptr && scene.fog) {
@@ -1057,6 +1119,89 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
     return false;
   }
   return true;
+}
+
+std::array<std::uint32_t, 4> Hardware3D::opaque_bounds(const nds::HardwareScene& scene, std::uint32_t width,
+                                                       std::uint32_t height) {
+  // In clip space, y up.
+  float left = HUGE_VALF, top = -HUGE_VALF, right = -HUGE_VALF, bottom = HUGE_VALF;
+  for (const Scene::Run& run : scene.runs) {
+    if (run.kind != Scene::Kind::Opaque && run.kind != Scene::Kind::Solid) continue;
+    for (std::uint32_t i = run.first; i < run.first + run.count && i < scene.vertices.size(); ++i) {
+      const float* position = scene.vertices[i].position;
+      // Behind the eye: it could be anywhere.
+      if (!(position[3] > 0.0f)) return {0, 0, width, height};
+      const float x = position[0] / position[3], y = position[1] / position[3];
+      left = std::min(left, x);
+      right = std::max(right, x);
+      top = std::max(top, y);
+      bottom = std::min(bottom, y);
+    }
+  }
+  if (left > right || bottom > top) return {0, 0, 0, 0};
+  // A pixel more on each side, whatever the rounding.
+  const auto at = [](float place, std::uint32_t size, bool after) {
+    const float edge = (place + 1.0f) * 0.5f * static_cast<float>(size);
+    const float pixel = after ? std::ceil(edge) + 1.0f : std::floor(edge) - 1.0f;
+    return static_cast<std::uint32_t>(std::clamp(pixel, 0.0f, static_cast<float>(size)));
+  };
+  const std::array<std::uint32_t, 4> bounds{at(left, width, false), at(-top, height, false), at(right, width, true),
+                                            at(-bottom, height, true)};
+  if (bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) return {0, 0, 0, 0};
+  return bounds;
+}
+
+std::array<std::uint32_t, 4> Hardware3D::outline_area(const nds::HardwareScene& scene,
+                                                      const std::array<std::uint32_t, 4>& shown, int scale) {
+  if (shown[0] >= shown[2] || shown[1] >= shown[3]) return {0, 0, 0, 0};
+  const auto width = static_cast<std::uint32_t>(kScreenWidth * scale), height = static_cast<std::uint32_t>(kScreenHeight * scale);
+  const std::array<std::uint32_t, 4> opaque = opaque_bounds(scene, width, height);
+  // An outline is at most a DS pixel wide: its edge is at most that far
+  // from where it is shown.
+  const auto s = static_cast<std::uint32_t>(scale);
+  const std::array<std::uint32_t, 4> area{std::max(opaque[0], shown[0] * s - std::min(shown[0] * s, s)),
+                                          std::max(opaque[1], shown[1] * s - std::min(shown[1] * s, s)),
+                                          std::min(opaque[2], std::min(shown[2] * s + s, width)),
+                                          std::min(opaque[3], std::min(shown[3] * s + s, height))};
+  if (area[0] >= area[2] || area[1] >= area[3]) return {0, 0, 0, 0};
+  return area;
+}
+
+void Hardware3D::find_edges(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene,
+                            const std::array<std::uint32_t, 4>& area) {
+  using Marking = nds::PolygonRenderer::EdgeMarking;
+  const std::array<std::uint32_t, 4>& b = area;
+  outline_bounds_ = b;
+  outlined_ = true;
+  if (b[2] == 0) return;
+  const std::uint32_t outline[8] = {
+      static_cast<std::uint32_t>(
+          nds::PolygonRenderer::edge_width(scene.edge_one_pixel ? Marking::OnePixel : Marking::OriginalThickness, scale_)),
+      scene.clear_number & 63u, clear_depth_bits(scene), static_cast<std::uint32_t>(scale_), b[0], b[1], b[2], b[3]};
+  const auto run = [&](SDL_GPUTexture* into, SDL_GPUGraphicsPipeline* pipeline, const SDL_Rect& scissor,
+                       const SDL_GPUTextureSamplerBinding* from, Uint32 count) {
+    SDL_GPUColorTargetInfo colour{};
+    colour.texture = into;
+    colour.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    colour.store_op = SDL_GPU_STOREOP_STORE;
+    colour.cycle = true;
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, pipeline);
+    SDL_SetGPUScissor(pass, &scissor);
+    SDL_BindGPUFragmentSamplers(pass, 0, from, count);
+    SDL_PushGPUFragmentUniformData(commands, 0, outline, sizeof outline);
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+  };
+  const auto rect = [](std::uint32_t left, std::uint32_t top, std::uint32_t right, std::uint32_t bottom) {
+    return SDL_Rect{static_cast<int>(left), static_cast<int>(top), static_cast<int>(right - left),
+                    static_cast<int>(bottom - top)};
+  };
+  // A pixel of edges_ holds 16 of the scene's across; one of nearby_, 16 by 16.
+  const SDL_GPUTextureSamplerBinding scene_pixels[2] = {{fog_marks_, nearest_}, {numbers_, nearest_}};
+  run(edges_, edges_pipeline_, rect(b[0] / 16, b[1], (b[2] + 15) / 16, b[3]), scene_pixels, 2);
+  const SDL_GPUTextureSamplerBinding edges{edges_, nearest_};
+  run(nearby_, nearby_pipeline_, rect(b[0] / 16, b[1] / 16, (b[2] + 15) / 16, (b[3] + 15) / 16), &edges, 1);
 }
 
 void Hardware3D::rasterize_scene(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene) {

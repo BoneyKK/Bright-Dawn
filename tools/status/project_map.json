@@ -2,7 +2,7 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "In a new game, Start skips the long story at the start, up to the game's title; the walk after it plays as usual. Above 2x, message boxes drawn in 3D no longer show gaps between their parts, and a display capture shown behind them is shown at the internal resolution.",
+    "what": "Above 1x, outlines are as wide on every side and smooth, on the nearer of two models only, at a sixth of their former cost at 4x. A glow the game blends over the 3D (as the star on the cliff) shows over it on the graphics hardware, not in a black box.",
     "date": "2026-11-25"
   },
   "statuses": {
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. The 2D engines' pictures by the graphics hardware too, pixel for pixel as the processor draws them, except where a display capture needs the processor's. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel, with the smoothing of polygon edges; above 1x solid outlines that meet the models' edges, without the costly drawing by the DS's rules. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Widescreen: not yet."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. The 2D engines' pictures by the graphics hardware too, pixel for pixel as the processor draws them, except where a display capture needs the processor's. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel, with the smoothing of polygon edges; above 1x outlines that meet the models' edges, as wide on every side and smooth, without the costly drawing by the DS's rules. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Widescreen: not yet."
     },
     {
       "part": "audio",

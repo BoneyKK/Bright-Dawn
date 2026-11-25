@@ -5,6 +5,7 @@
 // one the tests are skipped.
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -475,6 +476,123 @@ TEST(hardware_outlines_keep_their_thickness_at_3x) {
       CHECK(at(45, i) == (edge ? kGreen : inside ? kRed : 0u));
     }
   }
+}
+
+// Above 1x, outlines are as thick on every side: one DS pixel (4 pixels at
+// 4x) across a straight edge and across a slanting one, measured square to
+// the edge, soft on the inner side; none along an edge two polygons of one
+// number share; and one line, on the nearer group, where two groups touch.
+TEST(hardware_outlines_are_even_soft_and_on_the_nearer_group_at_4x) {
+  constexpr int kScale = 4, kRow = kWidth * kScale;
+  const auto green = [](u32 p) { return static_cast<double>((p >> 8) & 255) / 255.0; };
+  const auto blue = [](u32 p) { return static_cast<double>((p >> 16) & 255) / 255.0; };
+  {
+    // A square, from (10, 10) to (40, 40), and a diamond about (100, 60).
+    Frame f;
+    f.control(PolygonRenderer::kEdgeMarking);
+    f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);  // Green, for numbers 8 to 15.
+    f.polygon({Frame::vertex(10, 10, 63, 0x100), Frame::vertex(10, 40, 63, 0x100), Frame::vertex(40, 40, 63, 0x100),
+               Frame::vertex(40, 10, 63, 0x100)},
+              kOpaque | number(8));
+    f.polygon({Frame::vertex(100, 30, 63, 0x100), Frame::vertex(70, 60, 63, 0x100), Frame::vertex(100, 90, 63, 0x100),
+               Frame::vertex(130, 60, 63, 0x100)},
+              kOpaque | number(9));
+    const std::vector<u32> pixels = f.graphics_hardware(kScale);
+    const auto at = [&](int x, int y) { return pixels[static_cast<std::size_t>(y * kRow + x)]; };
+    // Across the square's left edge, on a row through its middle: 4.
+    double straight = 0;
+    for (int x = 30; x < 120; ++x) straight += green(at(x, 25 * kScale));
+    // Across the diamond's left edge, on a row half way down its top half:
+    // the edge slants at 45 degrees, so 4 square to it is 4 times the root
+    // of 2 along the row.
+    double slanting = 0;
+    for (int x = 70 * kScale; x < 100 * kScale; ++x) slanting += green(at(x, 45 * kScale));
+    std::printf("    across a straight edge %.2f pixels, a slanting one %.2f (%.2f square to it)\n", straight, slanting,
+                slanting / std::sqrt(2.0));
+    CHECK(std::fabs(straight - kScale) < 0.01);
+    CHECK(std::fabs(slanting / std::sqrt(2.0) - kScale) < 0.75);
+    // Soft: some pixels along the slanting edge are part outline.
+    int part = 0;
+    for (int x = 70 * kScale; x < 100 * kScale; ++x) part += green(at(x, 45 * kScale)) > 0.05 && green(at(x, 45 * kScale)) < 0.95;
+    CHECK(part >= 1);
+  }
+  {
+    // One number, two triangles: no line along the edge they share.
+    Frame f;
+    f.control(PolygonRenderer::kEdgeMarking);
+    f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);
+    f.polygon({Frame::vertex(10, 10, 63, 0x100), Frame::vertex(10, 60, 63, 0x100), Frame::vertex(60, 60, 63, 0x100)},
+              kOpaque | number(8));
+    f.polygon({Frame::vertex(10, 10, 63, 0x100), Frame::vertex(60, 60, 63, 0x100), Frame::vertex(60, 10, 63, 0x100)},
+              kOpaque | number(8));
+    const std::vector<u32> pixels = f.graphics_hardware(kScale);
+    int inside = 0;
+    for (int i = 20 * kScale; i < 50 * kScale; ++i) inside += green(pixels[static_cast<std::size_t>(i * kRow + i)]) > 0.0;
+    CHECK(inside == 0);
+  }
+  {
+    // Two groups side by side, the left one nearer: one line where they
+    // meet, the left one's, as wide as any other.
+    Frame f;
+    f.control(PolygonRenderer::kEdgeMarking);
+    f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);  // Green, 8 to 15.
+    f.io.write(PolygonRenderer::kEdgeColours + 4, 2, 0x7C00);  // Blue, 16 to 23.
+    f.polygon({Frame::vertex(10, 10, 63, 0x100), Frame::vertex(10, 40, 63, 0x100), Frame::vertex(30, 40, 63, 0x100),
+               Frame::vertex(30, 10, 63, 0x100)},
+              kOpaque | number(8));
+    f.polygon({Frame::vertex(30, 10, 63, 0x200), Frame::vertex(30, 40, 63, 0x200), Frame::vertex(50, 40, 63, 0x200),
+               Frame::vertex(50, 10, 63, 0x200)},
+              kOpaque | number(16));
+    const std::vector<u32> pixels = f.graphics_hardware(kScale);
+    double near_line = 0, far_line = 0;
+    for (int x = 20 * kScale; x < 40 * kScale; ++x) {
+      const u32 p = pixels[static_cast<std::size_t>(25 * kScale * kRow + x)];
+      near_line += green(p);
+      far_line += blue(p);
+    }
+    std::printf("    where two groups meet: the nearer's line %.2f pixels, the further's %.2f\n", near_line, far_line);
+    CHECK(std::fabs(near_line - kScale) < 0.01 && far_line == 0.0);
+  }
+}
+
+TEST(outlines_are_looked_for_only_near_the_opaque_polygons_shown) {
+  // An opaque square from (10, 10) to (40, 40) and a translucent one from
+  // (100, 100) to (200, 180), in the DS's pixels; w is 2.
+  bd::nds::HardwareScene scene;
+  const auto square = [&](float left, float top, float right, float bottom, bd::nds::HardwareScene::Kind kind) {
+    bd::nds::HardwareScene::Run run;
+    run.first = static_cast<std::uint32_t>(scene.vertices.size());
+    run.count = 6;
+    run.kind = kind;
+    const float corners[6][2] = {{left, top}, {left, bottom}, {right, bottom}, {left, top}, {right, bottom}, {right, top}};
+    for (const auto& c : corners) {
+      bd::nds::HardwareScene::Vertex v;
+      v.position[0] = (c[0] / 128.0f - 1.0f) * 2.0f;
+      v.position[1] = (1.0f - c[1] / 96.0f) * 2.0f;
+      v.position[2] = 1.0f;
+      v.position[3] = 2.0f;
+      scene.vertices.push_back(v);
+    }
+    scene.runs.push_back(run);
+  };
+  square(10, 10, 40, 40, bd::nds::HardwareScene::Kind::Opaque);
+  square(100, 100, 200, 180, bd::nds::HardwareScene::Kind::Translucent);
+  using Area = std::array<std::uint32_t, 4>;
+  // At 4x: the opaque square only, a pixel more on each side.
+  CHECK((Hardware3D::opaque_bounds(scene, 1024, 768) == Area{39, 39, 161, 161}));
+  // Where the screen shows the 3D: within a DS pixel of that.
+  CHECK((Hardware3D::outline_area(scene, {0, 0, 256, 192}, 4) == Area{39, 39, 161, 161}));
+  CHECK((Hardware3D::outline_area(scene, {0, 0, 20, 192}, 4) == Area{39, 39, 84, 161}));
+  CHECK((Hardware3D::outline_area(scene, {0, 30, 256, 192}, 4) == Area{39, 116, 161, 161}));
+  // Shown away from it, or not at all: nowhere.
+  CHECK((Hardware3D::outline_area(scene, {100, 0, 256, 192}, 4) == Area{0, 0, 0, 0}));
+  CHECK((Hardware3D::outline_area(scene, {0, 0, 0, 0}, 4) == Area{0, 0, 0, 0}));
+  // A corner behind the eye: anywhere.
+  scene.vertices[0].position[3] = -1.0f;
+  CHECK((Hardware3D::opaque_bounds(scene, 1024, 768) == Area{0, 0, 1024, 768}));
+  // No opaque polygon: nowhere.
+  scene.runs.erase(scene.runs.begin());
+  CHECK((Hardware3D::opaque_bounds(scene, 1024, 768) == Area{0, 0, 0, 0}));
 }
 
 namespace {

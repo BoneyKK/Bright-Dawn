@@ -1,7 +1,7 @@
 // bd_scene_check: a 3D scene dumped from the game (bright-dawn --dump-3d)
 // drawn by the processor and by the graphics hardware, compared, at 1x.
 //
-//   bd_scene_check DUMP [--out DIR] [--scale N]
+//   bd_scene_check DUMP [--out DIR] [--scale N] [--time N]
 //
 // Says how many pixels of the rasterizer's picture (shaders/raster.comp,
 // finish.comp) differ from the processor's and, if any do, the first
@@ -10,10 +10,15 @@
 // together with the processor's picture put in the same way, apart for the
 // pixels taken from the rasterizer and the rest. With --out, writes the
 // pictures (PPM) there. With --scale, draws at that scale too (pictures
-// only). Needs a Vulkan device.
+// only). With --time, draws the scene at that scale and puts it into each
+// screen showing it N times, a new scene each time, waiting for the
+// graphics hardware after each pass (the frame log's sync mode), and says
+// the mean time of the scene pass and of putting the scene in (the frame
+// log's compose columns, outlines included). Needs a Vulkan device.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -22,6 +27,7 @@
 
 #include "app/hardware_3d.h"
 #include "core/log.h"
+#include "debug/frame_log.h"
 #include "nds/arm9_io.h"
 #include "nds/polygon_renderer.h"
 #include "nds/scene_dump.h"
@@ -97,14 +103,15 @@ void describe(const bd::nds::SceneDump& dump, std::size_t index) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fprintf(stderr, "usage: bd_scene_check DUMP [--out DIR] [--scale N]\n");
+    std::fprintf(stderr, "usage: bd_scene_check DUMP [--out DIR] [--scale N] [--time N]\n");
     return 2;
   }
   std::filesystem::path out;
-  int scale = 1;
+  int scale = 1, times = 0;
   for (int i = 2; i + 1 < argc; i += 2) {
     const std::string arg = argv[i];
     if (arg == "--out") out = argv[i + 1];
+    else if (arg == "--time") times = std::max(std::atoi(argv[i + 1]), 0);
     else if (arg == "--scale") scale = std::clamp(std::atoi(argv[i + 1]), 1, bd::app::Hardware3D::kLargestScale);
   }
   bd::log::set_standard_error(true);  // What the graphics hardware notes, such as a full texture atlas.
@@ -227,6 +234,37 @@ int main(int argc, char** argv) {
         write_ppm(out / ((which == 0 ? "top_hardware_" : "bottom_hardware_") + std::to_string(scale) + "x.ppm"), shown_pixels,
                   kWidth * scale, kHeight * scale, false);
       r.set_fine_positions(false);
+    }
+  }
+  if (times > 0) {
+    // The frame log's clock, in ticks a microsecond.
+    const auto began = std::chrono::steady_clock::now();
+    const std::uint64_t ticks_began = bd::frame_log::ticks();
+    while (std::chrono::steady_clock::now() - began < std::chrono::milliseconds(50)) {
+    }
+    const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - began).count();
+    const double ticks_per_us = static_cast<double>(bd::frame_log::ticks() - ticks_began) / us;
+    bd::frame_log::set_enabled(true);
+    bd::frame_log::state().sync = true;
+    r.set_fine_positions(dump.fine_positions);
+    for (int which = 0; which < 2; ++which) {
+      const std::vector<u32>& screen = dump.screens[static_cast<std::size_t>(which)];
+      if (dump.fills[static_cast<std::size_t>(which)] != 1 || screen.size() != static_cast<std::size_t>(kWidth) * kHeight) continue;
+      const int compose = which == 0 ? bd::frame_log::kComposeTop : bd::frame_log::kComposeBottom;
+      double scene_us = 0, compose_us = 0;
+      for (int n = 0; n <= times; ++n) {
+        const bd::nds::HardwareScene& scene = r.build_scene(dump.inputs.frame, replay.video);
+        bd::frame_log::restart(bd::frame_log::kHost);
+        bool failed = false;
+        replay.hardware.draw(which, screen, &scene, 0, dump.brightness[static_cast<std::size_t>(which)], scale, failed);
+        bd::frame_log::switch_to(bd::frame_log::kHost);
+        if (failed) break;
+        if (n == 0) continue;  // The first is the textures' upload and the targets' making.
+        scene_us += static_cast<double>(bd::frame_log::state().spent[bd::frame_log::kScenePass]) / ticks_per_us;
+        compose_us += static_cast<double>(bd::frame_log::state().spent[compose]) / ticks_per_us;
+      }
+      std::printf("%s screen at %dx, %d times: scene pass %.0f us, compose %.0f us\n", which == 0 ? "top" : "bottom", scale,
+                  times, scene_us / times, compose_us / times);
     }
   }
   return 0;

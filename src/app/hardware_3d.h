@@ -107,6 +107,17 @@ class Hardware3D {
   // 1 << 24 where the screen takes it), row after row at the scale drawn.
   // False if the last scene was not drawn so.
   bool read_raster(std::vector<std::uint32_t>& pixels);
+  // The pixels the opaque polygons of `scene` (those that keep a polygon
+  // number) can cover in a picture `width` by `height`, a pixel more on
+  // each side: left, top, right and bottom, the right and bottom ones past
+  // the last. All 0 if there are none. Outlines are looked for only there.
+  static std::array<std::uint32_t, 4> opaque_bounds(const nds::HardwareScene& scene, std::uint32_t width,
+                                                    std::uint32_t height);
+  // Where outlines are looked for at `scale`, where the DS's pixels
+  // `shown` (left, top, right and bottom, as above) show the scene: the
+  // opaque polygons' bounds, within a DS pixel of those.
+  static std::array<std::uint32_t, 4> outline_area(const nds::HardwareScene& scene,
+                                                   const std::array<std::uint32_t, 4>& shown, int scale);
 
  public:
   // The compose shader's uniforms, as std140 lays them out.
@@ -126,6 +137,7 @@ class Hardware3D {
     // the scale.
     std::uint32_t outline[4];
     float outline_colours[8][4];
+    std::uint32_t outline_bounds[4];  // Where outlines can be: opaque_bounds().
   };
 
  private:
@@ -151,6 +163,10 @@ class Hardware3D {
   // Draws the scene's polygons as the DS does (shaders/raster.comp), then
   // finishes them (shaders/finish.comp), into finished_.
   void rasterize_scene(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene);
+  // Above 1x: the edges of the scene's opaque polygons within `area`
+  // (outline_area()), for the outlines the compose pass draws.
+  void find_edges(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene,
+                  const std::array<std::uint32_t, 4>& area);
   bool make_targets(int scale);
   void release_targets();
   // A place in the atlas for a texture, or false when it is full.
@@ -175,6 +191,8 @@ class Hardware3D {
   SDL_GPUComputePipeline* raster_pipeline_ = nullptr;  // shaders/raster.comp
   SDL_GPUComputePipeline* finish_pipeline_ = nullptr;  // shaders/finish.comp
   SDL_GPUGraphicsPipeline* engine2d_pipeline_ = nullptr;  // shaders/engine2d.frag
+  SDL_GPUGraphicsPipeline* edges_pipeline_ = nullptr;     // shaders/edges.frag
+  SDL_GPUGraphicsPipeline* nearby_pipeline_ = nullptr;    // shaders/nearby.frag
   SDL_GPUSampler* nearest_ = nullptr;
   SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
   SDL_GPUTexture* atlas_ = nullptr;
@@ -210,6 +228,12 @@ class Hardware3D {
   SDL_GPUTexture* scene_target_ = nullptr;
   SDL_GPUTexture* fog_marks_ = nullptr;  // The scene's depths, and where fog is taken.
   SDL_GPUTexture* numbers_ = nullptr;    // The numbers of the opaque polygons drawn (scene.frag).
+  // Above 1x, for outlines: the edges of the opaque polygons, a bit for
+  // each pixel, 16 across to each of its own (shaders/edges.frag).
+  SDL_GPUTexture* edges_ = nullptr;
+  SDL_GPUTexture* nearby_ = nullptr;  // Where edges are near: a pixel for each 16 by 16 (shaders/nearby.frag).
+  bool outlined_ = false;  // edges_ is for the scene in scene_target_,
+  std::array<std::uint32_t, 4> outline_bounds_{};  // where it is (all 0 for nowhere).
   SDL_GPUBuffer* layers_ = nullptr;      // The rasterizer's two layers, 16 bytes a pixel.
   SDL_GPUBuffer* finished_ = nullptr;    // And its pixels when finished, 4 bytes each.
   bool rasterized_ = false;              // The scene in scene_target_ is in finished_ too.
