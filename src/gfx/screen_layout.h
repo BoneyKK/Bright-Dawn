@@ -19,6 +19,7 @@
 #pragma once
 
 #include <optional>
+#include <vector>
 
 namespace bd::gfx {
 
@@ -90,9 +91,23 @@ int prescale_factor(double scale, int largest_texture);
 // (smoothed but for Sharp). `made_at` when it is not enlarged.
 int enlarge_factor(ScreenFilter filter, double scale, int largest_texture, int made_at);
 
+// A place on a wide touch screen where the picture shows something moved
+// across (the widescreen HUD, nds::HudPlan::touches): x0 up to x1 and y0
+// up to y1 in DS pixels from the DS screen's left edge (less than 0 at the
+// left side); a touch there is at x - dx on the DS's screen.
+struct TouchMove {
+  int x0 = 0, y0 = 0, x1 = 0, y1 = 0, dx = 0;
+};
+
 // The touch screen pixel (0-255 across, 0-191 down) under a point of the
 // window, or nothing when the point is not on the touch screen. On a wide
-// touch screen, only its 256 columns in the middle are the DS's.
-std::optional<Point> touch_point(const ScreenLayout& layout, double x, double y);
+// touch screen, its 256 columns in the middle are the DS's, and a place in
+// `moves` is the DS's where its element came from.
+std::optional<Point> touch_point(const ScreenLayout& layout, double x, double y,
+                                 const std::vector<TouchMove>& moves = {});
+// A touch at x, y on a wide touch screen (DS pixels, x from the DS screen's
+// left edge): on the DS's screen, through `moves`; nothing at the sides
+// where nothing was moved.
+std::optional<Point> wide_touch(double x, double y, const std::vector<TouchMove>& moves);
 
 }  // namespace bd::gfx

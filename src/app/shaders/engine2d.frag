@@ -14,12 +14,18 @@
 // background). A tiled background goes on as its map does at the same
 // scroll (one 512 across only if scrolled across), one through a matrix as
 // it goes on if it repeats; else mirrored at the edge. Text, icons and
-// sprites stay on the DS's 256 columns; the windows are as at the edge.
+// sprites stay on the DS's 256 columns (but for the HUD's, below); the
+// windows are as at the edge.
 // Where that background is a bitmap in the place of a kept display capture
 // (bit 0 or 1 of the line's word 23, for background 2 or 3: nds::Display::
 // capture_at_sides()), the pixel is marked to show the capture (the lowest
 // bit of red: nds::DisplayEngine::kCapturedBelow), and where nothing is
 // drawn over it.
+//
+// The widescreen HUD (nds::WideHud): after the lines, its moves for the
+// frame (nds::HudPlan::to_words()): sprites drawn further across by entry,
+// and areas of backgrounds moved across, on the screen and at the sides
+// (where the moved ones are drawn too). All 0: drawn as without it.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -164,6 +170,43 @@ bool sprite_window;
 int x;
 int window_x;  // x, or at a side the screen's edge.
 
+// --- The widescreen HUD's moves (nds::HudPlan).
+
+const int kHudAt = kHeight * 24;
+const int kEmpty = -100000;  // nds::HudPlan::kEmpty
+bool hud_on;
+uint hud_areas;
+int hud_x;  // x before a side's background is mirrored.
+
+// nds::HudPlan::source_x().
+int hud_source(uint layer, int at) {
+  if (!hud_on) return at;
+  for (uint pass = 0u; pass < 2u; ++pass) {
+    for (uint i = 0u; i < hud_areas; ++i) {
+      const uint w0 = lines[kHudAt + 33 + 3 * int(i)], w1 = lines[kHudAt + 34 + 3 * int(i)];
+      const uint w2 = lines[kHudAt + 35 + 3 * int(i)];
+      const int dx = int(w2 << 16) >> 16;
+      if ((((w2 >> 16) & 0xFFu) & (1u << layer)) == 0u || line < (int(w1 << 16) >> 16) || line >= (int(w1) >> 16))
+        continue;
+      const int x0 = int(w0 << 16) >> 16, x1 = int(w0) >> 16;
+      if (pass == 0u && at >= x0 + dx && at < x1 + dx) return at - dx;
+      if (pass == 1u && at >= x0 && at < x1) return kEmpty;
+    }
+  }
+  return at;
+}
+
+// Whether the HUD moved a pixel of background `layer` here.
+bool hud_moved_here(uint layer) {
+  const int q = hud_source(layer, hud_x);
+  return q != hud_x && q != kEmpty;
+}
+
+int hud_sprite_dx(uint i) {
+  if (!hud_on) return 0;
+  return int(lines[kHudAt + 1 + int(i / 4u)] << (24u - 8u * (i % 4u))) >> 24;
+}
+
 uint shown_inside() {
   if ((control() & (7u << 13)) == 0u) return 0x3Fu;
   for (uint n = 0u; n < 2u; ++n) {
@@ -202,6 +245,9 @@ void draw_sprites(bool window_pass) {
     if (((a0 >> 8) & 3u) == 2u || (kind == 2u) != window_pass) continue;
     const uint shape = a0 >> 14;
     if (shape == 3u) continue;
+    // The widescreen HUD can draw it further across; at a side, only those.
+    const int hud_dx = hud_sprite_dx(i);
+    if (u_engine.w != 0u && hud_dx == 0) continue;
     const uint a1 = sprite_word(i * 8u + 2u);
     const ivec2 size = kSizes[shape * 4u + (a1 >> 14)];
     const int width = size.x, height = size.y;
@@ -215,6 +261,7 @@ void draw_sprites(bool window_pass) {
     if (in_y < 0 || in_y >= room_y) continue;
     int sx = int(a1 & 0x1FFu);
     if (sx >= kWidth) sx -= 512;
+    sx += hud_dx;
     // Which pixel of its room is at this pixel.
     const bool mirrored = !matrix && (a1 & (1u << 12)) != 0u;
     const int j = mirrored ? sx + width - 1 - x : x - sx;
@@ -323,7 +370,16 @@ void draw_tiles(uint background) {
   const uint slot = background + ((background < 2u && (bg_control & (1u << 13)) != 0u) ? 2u : 0u);
   const bool extended = colours_256 && (control() & (1u << 30)) != 0u && extended_palette(slot, 0u) >= 0;
 
-  const uint x_in = (uint(x) + scroll_x(background)) & 0x1FFu;
+  // Where the widescreen HUD moved one here, that one; where it moved one
+  // away, none; else as without it (at a side, on the picture as moved).
+  int hx = x;
+  if (hud_on) {
+    const int q = hud_source(background, hud_x);
+    if (q == kEmpty) return;
+    hx = q != hud_x ? q : hud_source(background, x);
+    if (hx == kEmpty) return;
+  }
+  const uint x_in = (uint(hx) + scroll_x(background)) & 0x1FFu;
   uint entry_at = map + ((x_in & 0xF8u) >> 2);
   if (x_in >= 256u && (bg_control & (1u << 14)) != 0u) entry_at += 0x800u;
   const uint entry = read16(entry_at);
@@ -508,7 +564,11 @@ int side_base() {
     top = Dot(0u, 4, 5u, false);
     below = top;
     x = keep < 0 ? 0 : kWidth - 1;
+    // The edge's pixel, as the widescreen HUD has the picture.
+    const int keep_hud = hud_x;
+    hud_x = x;
     draw_layer(n);
+    hud_x = keep_hud;
     if (top.layer == n) {
       found = int(n);
       found_priority = priority;
@@ -532,6 +592,9 @@ void main() {
     x = min(int(v_place.x * float(kWidth)), kWidth - 1);
   }
   window_x = clamp(x, 0, kWidth - 1);
+  hud_x = x;
+  hud_on = (lines[kHudAt] >> 31) != 0u;
+  hud_areas = min(lines[kHudAt] & 0xFu, 8u);
   for (int i = 0; i < 24; ++i) w[i] = lines[uint(line) * 24u + uint(i)];
   palette_at = w[21] * 256u;
   sprites_at = w[22] * 256u;
@@ -541,7 +604,7 @@ void main() {
   below = top;
   sprite_window = false;
   const uint c = control();
-  if ((c & (1u << 12)) != 0u && !side) {
+  if ((c & (1u << 12)) != 0u && (!side || hud_on)) {
     if ((c & (1u << 15)) != 0u) draw_sprites(true);
     draw_sprites(false);
   }
@@ -552,10 +615,11 @@ void main() {
   const int base = side ? side_base() : -1;
   if (side) {
     // Only that background, and the 3D layer.
-    shown0 = shown0 && (base == 0 || (!second_engine && (c & (1u << 3)) != 0u));
-    shown1 = shown1 && base == 1;
-    shown2 = shown2 && base == 2;
-    shown3 = shown3 && base == 3;
+    // And what the widescreen HUD moved here.
+    shown0 = shown0 && (base == 0 || (!second_engine && (c & (1u << 3)) != 0u) || hud_moved_here(0u));
+    shown1 = shown1 && (base == 1 || hud_moved_here(1u));
+    shown2 = shown2 && (base == 2 || hud_moved_here(2u));
+    shown3 = shown3 && (base == 3 || hud_moved_here(3u));
     // Mirrored at the edge: one through a matrix that does not repeat, and
     // a tiled one 512 across that is not scrolled across (what is past the
     // screen in its map is not shown, so need not be a picture).

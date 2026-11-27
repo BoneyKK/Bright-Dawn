@@ -363,6 +363,20 @@ TEST(scripted_touches_are_read_and_found_by_frame) {
   CHECK(scripted_touch(script, 1) == &script[1]);
 }
 
+// The wide form reaches the sides of a wide touch screen (the widescreen
+// HUD's moved icons); the plain form does not.
+TEST(scripted_wide_touches_reach_the_sides) {
+  using namespace bd::input;
+  const auto left = parse_scripted_wide_touch("-27,176@780-786");
+  REQUIRE(left.has_value());
+  CHECK(left->wide && left->x == -27 && left->y == 176 && left->first == 780 && left->last == 786);
+  const auto right = parse_scripted_wide_touch("319,0@1");
+  REQUIRE(right.has_value());
+  CHECK(right->x == 319);
+  CHECK(!parse_scripted_touch("128,96@5")->wide);
+  for (const char* bad : {"-65,0@5", "320,0@5", "0,192@5", "0,-1@5", "1,2@0"}) CHECK(!parse_scripted_wide_touch(bad).has_value());
+}
+
 TEST(frame_clock_shows_frames_run_on_time) {
   bd::platform::FrameClock clock;
   clock.tick(0);

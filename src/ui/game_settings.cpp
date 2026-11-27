@@ -105,8 +105,14 @@ std::vector<SettingDef> game_setting_definitions() {
                         {{"original", "Original thickness"}, {"pixel", "1 pixel"}, {"off", "Off"}}, "original"));
   defs.push_back(toggle(key::kWidescreen, "Graphics", "Widescreen (3D)",
                         "With the graphics hardware, shows the 3D scene on the main screen a third wider (16:9). "
-                        "The 2D pictures and the touch screen stay 4:3.",
+                        "The 2D pictures stay 4:3, but for the HUD (Widescreen HUD).",
                         false));
+  SettingDef hud = choice(key::kWidescreenHud, "Graphics", "Widescreen HUD",
+                          "In widescreen, draws the boxes, icons and bars of the menus and the field at the wide "
+                          "screen's edges (Wide), or where the game puts them, in the middle (Centred).",
+                          {{"wide", "Wide"}, {"centred", "Centred"}}, "wide");
+  hud.shown_with = std::string(key::kWidescreen);
+  defs.push_back(hud);
   defs.push_back(choice(key::kTextures, "Graphics", "Textures in 3D scenes",
                         "Sets whether 3D textures are drawn sharp, as on the DS, or smoothed.",
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));

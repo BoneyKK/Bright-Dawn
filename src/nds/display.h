@@ -41,6 +41,7 @@
 #include "nds/geometry_engine.h"
 #include "nds/polygon_renderer.h"
 #include "nds/video_memory.h"
+#include "nds/wide_hud.h"
 
 namespace bd::nds {
 
@@ -144,6 +145,17 @@ class Display {
   // For checks: the processor draws the pictures the graphics hardware
   // draws too.
   void set_check_2d(bool on) { check_2d_ = on; }
+  // Widescreen with the graphics hardware's scene: the HUD drawn at the wide
+  // screen's edges (WideHud), moved by `shift` DS pixels (a side's width);
+  // 0 for none. The geometry engine is to keep the polygons it needs
+  // (GeometryEngine::set_wide_hud).
+  void set_wide_hud(int shift) {
+    if (shift != hud_.shift()) swaps_built_ = ~std::uint64_t{0};  // The scene again.
+    hud_.set_shift(shift);
+  }
+  // This frame's moves: for the touch screen (HudPlan::touch_x()).
+  const HudPlan& hud_plan() const { return hud_.plan(); }
+  const WideHud& wide_hud() const { return hud_; }
   // Of the frame last completed: screen 0 (top) or 1 (bottom), as the
   // graphics hardware draws it; by_hardware is false where the processor
   // drew it (top_screen(), bottom_screen()).
@@ -262,6 +274,8 @@ class Display {
   bool in_video_memory(const Kept& kept) const;
   // Records this frame's line of each engine the graphics hardware draws.
   void record_lines(unsigned line);
+  // The widescreen HUD's moves for the frame, as it begins (set_wide_hud).
+  void plan_hud();
   VideoMemory& video_;
   const std::uint8_t* const palette_;  // Both engines' palette memory, the main engine's first,
   const std::uint8_t* const sprites_;  // and their sprite attribute memory.
@@ -298,6 +312,8 @@ class Display {
   Video2DRecorder video_2d_;
   std::vector<std::uint32_t> top_, bottom_;
   Statistics statistics_;
+  WideHud hud_;
+  GeometryEngine::Frame hud_frame_;  // The wide frame as the HUD draws it.
   std::map<std::string, std::uint64_t> notes_;
 };
 

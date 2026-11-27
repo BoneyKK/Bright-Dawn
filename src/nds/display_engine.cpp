@@ -425,8 +425,11 @@ void DisplayEngine::draw_sprites(int line, bool window_pass) {
     if (in_y < 0 || in_y >= room_y) continue;
     int x = static_cast<int>(a1 & 0x1FF);
     if (x >= kWidth) x -= 512;
-    // At the sides, only those that reach the screen.
-    if (origin_ != 0 && (x >= kWidth || x + room_x <= 0)) continue;
+    // The widescreen HUD can draw it further across.
+    const int hud_dx = hud_ != nullptr ? hud_->sprite_dx[i] : 0;
+    x += hud_dx;
+    // At the sides, only those that reach the screen (or are moved there).
+    if (origin_ != 0 && hud_dx == 0 && (x >= kWidth || x + room_x <= 0)) continue;
     const std::int8_t priority = static_cast<std::int8_t>(static_cast<int>((a2 >> 10) & 3) - 1);
 
     // The matrix: one of 32 sets of four numbers, kept in the gaps between
@@ -701,8 +704,41 @@ bool DisplayEngine::tile_pixel(unsigned background, int line, int x, std::uint32
   return true;
 }
 
+bool DisplayEngine::has_pixels(unsigned layer, int x0, int y0, int x1, int y1) {
+  u32 colour = 0;
+  for (int y = std::max(y0, 0); y < std::min(y1, kHeight); ++y)
+    for (int x = std::max(x0, 0); x < std::min(x1, kWidth); ++x)
+      if (tile_pixel(layer, y, x, colour)) return true;
+  return false;
+}
+
+void DisplayEngine::draw_tiles_moved(unsigned background, int line) {
+  // Pixel by pixel: where the HUD moved one here, that one; where it moved
+  // one away, none; else as draw_tiles() has it (at a side, on the picture
+  // as moved).
+  const u32 bg_control = background_control_[background];
+  u32 colour = 0;
+  for (int i = 0; i < columns_; ++i) {
+    const int x = origin_ + i;
+    int from = hud_->source_x(background, line, x);
+    if (from == HudPlan::kEmpty) continue;
+    if (from == x && origin_ != 0) {
+      const int at = (bg_control & (1u << 14)) != 0         ? x
+                     : (scroll_x_[background] & 0x1FF) == 0 ? (origin_ < 0 ? 0 : kWidth - 1)
+                                                            : mirrored(x);
+      from = hud_->source_x(background, line, at);
+      if (from == HudPlan::kEmpty) continue;
+    }
+    if (tile_pixel(background, line, from, colour)) place(background, i, colour);
+  }
+}
+
 void DisplayEngine::draw_tiles(unsigned background, int line) {
   const u32 bg_control = background_control_[background];
+  if (hud_ != nullptr && hud_->moves(background, line)) {
+    draw_tiles_moved(background, line);
+    return;
+  }
   if (origin_ != 0) {
     // A side. A background 512 across goes on as its map does. One 256
     // across, the screen's width, has nothing past the edge but itself

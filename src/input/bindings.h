@@ -63,8 +63,14 @@ std::uint32_t scripted_buttons(const std::vector<ScriptedPress>& script, std::ui
 struct ScriptedTouch {
   int x = 0, y = 0;
   std::uint64_t first = 0, last = 0;
+  // On a wide touch screen (widescreen): x from kWideLeast to kWideMost, the
+  // DS's columns 0 to 255 in the middle, as the player sees the screen.
+  bool wide = false;
 };
+inline constexpr int kWideLeast = -64, kWideMost = 319;
 std::optional<ScriptedTouch> parse_scripted_touch(std::string_view text);
+// The same, written "X,Y@F[-L]" with X from kWideLeast to kWideMost.
+std::optional<ScriptedTouch> parse_scripted_wide_touch(std::string_view text);
 // The script's touch in `frame`, if any: the first that covers it.
 const ScriptedTouch* scripted_touch(const std::vector<ScriptedTouch>& script, std::uint64_t frame);
 

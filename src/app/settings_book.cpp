@@ -66,7 +66,7 @@ std::vector<std::string> SettingsBook::draw(platform::Settings& settings) {
   ImGui::PopStyleColor();
   ImGui::Separator();
   for (const SettingDef& def : settings.definitions())
-    if (def.chapter == chapters[chapter_]) draw_setting(settings, def, changed);
+    if (def.chapter == chapters[chapter_] && settings.shown(def)) draw_setting(settings, def, changed);
   if (chapters[chapter_] == ui::kControlsChapter) controls_.draw(settings, nullptr, changed);
   ImGui::EndChild();
   return changed;
@@ -172,7 +172,7 @@ void SettingsBook::draw_in_look(platform::Settings& settings, const std::vector<
   }
   ImGui::BeginChild("page", ImVec2(0, 0));
   for (const SettingDef& def : settings.definitions())
-    if (def.chapter == chapters[chapter_]) draw_setting_in_look(settings, def, changed);
+    if (def.chapter == chapters[chapter_] && settings.shown(def)) draw_setting_in_look(settings, def, changed);
   if (chapters[chapter_] == ui::kControlsChapter) {
     controls_.draw(settings, look_, changed);
     if (!controls_.hovered_help().empty()) hovered_help_ = controls_.hovered_help();

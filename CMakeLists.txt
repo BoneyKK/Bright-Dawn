@@ -146,6 +146,7 @@ add_library(bd_nds STATIC
   src/nds/dma.cpp
   src/nds/display.cpp
   src/nds/display_engine.cpp
+  src/nds/wide_hud.cpp
   src/nds/frame_2d.cpp
   src/nds/geometry_engine.cpp
   src/nds/polygon_outline.cpp

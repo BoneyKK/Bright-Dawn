@@ -1068,17 +1068,33 @@ void GeometryEngine::add_wide_polygon(const Polygon& polygon, const Vertex* corn
   // HUD, a menu): as on the DS, as such polygons are placed on its screen;
   // but one across the whole screen (a box behind a message) goes on to
   // the wider picture's sides.
-  cut_to_view(corner, size, !polygon.flat);
+  const bool cut = cut_to_view(corner, size, !polygon.flat);
   if (polygon.flat && size >= 3) widen_across(corner, size);
-  if (size == 0 || wide_building_.polygons.size() >= kMostWidePolygons ||
-      wide_building_.vertices.size() + size > kMostWideVertices)
-    return;
-  Polygon wide = polygon;
-  wide.first = static_cast<std::uint16_t>(wide_building_.vertices.size());
-  wide.size = static_cast<std::uint8_t>(size);
-  wide.strip_order = false;
-  wide_building_.vertices.insert(wide_building_.vertices.end(), corner, corner + size);
-  wide_building_.polygons.push_back(wide);
+  // For the widescreen HUD: a flat polygon the DS's view cuts, as far as the
+  // wide picture goes too, unless that is the same.
+  Vertex beyond[10];
+  std::size_t beyond_size = 0;
+  if (wide_hud_ && polygon.flat && cut) {
+    std::copy(corners, corners + count, beyond);
+    beyond_size = count;
+    cut_to_view(beyond, beyond_size, true);
+    if (beyond_size == size && std::equal(beyond, beyond + size, corner)) beyond_size = 0;
+  }
+  const auto add = [&](const Vertex* v, std::size_t n, bool is_beyond, bool has_beyond) {
+    if (n == 0 || wide_building_.polygons.size() >= kMostWidePolygons ||
+        wide_building_.vertices.size() + n > kMostWideVertices)
+      return;
+    Polygon wide = polygon;
+    wide.first = static_cast<std::uint16_t>(wide_building_.vertices.size());
+    wide.size = static_cast<std::uint8_t>(n);
+    wide.strip_order = false;
+    wide.beyond = is_beyond;
+    wide.has_beyond = has_beyond;
+    wide_building_.vertices.insert(wide_building_.vertices.end(), v, v + n);
+    wide_building_.polygons.push_back(wide);
+  };
+  add(corner, size, false, beyond_size >= 3 && size != 0);
+  if (beyond_size >= 3) add(beyond, beyond_size, true, false);
 }
 
 }  // namespace bd::nds

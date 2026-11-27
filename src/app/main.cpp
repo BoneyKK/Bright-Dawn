@@ -137,6 +137,8 @@ constexpr const char* kUsage =
     "                        as if pressed; may be given more than once\n"
     "  --touch X,Y@F[-L]     touch the touch screen at pixel X,Y from frame F to frame L;\n"
     "                        may be given more than once\n"
+    "  --touch-wide X,Y@F[-L]  the same on a wide touch screen (widescreen): X from -64\n"
+    "                        to 319, the DS's columns 0 to 255 in the middle\n"
     "  --stick X,Y@F[-L]     push a controller's left stick to X,Y (percent of its reach,\n"
     "                        -100 to 100, down positive) from frame F to frame L\n"
     "  --capture FILE        with --frames, write the window's last frame to FILE (BMP)\n"
@@ -756,8 +758,9 @@ int main(int argc, char** argv) {
       }
       options.script.push_back(*press);
       ++i;
-    } else if (arg == "--touch" && has_value) {
-      const auto touch = input::parse_scripted_touch(argv[i + 1]);
+    } else if ((arg == "--touch" || arg == "--touch-wide") && has_value) {
+      const auto touch = arg == "--touch" ? input::parse_scripted_touch(argv[i + 1])
+                                          : input::parse_scripted_wide_touch(argv[i + 1]);
       if (!touch) {
         complain(nullptr, std::string("Not a point and frames: ") + argv[i + 1] + "\n\n" + kUsage);
         return 1;

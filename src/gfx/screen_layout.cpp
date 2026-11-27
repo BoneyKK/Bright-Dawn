@@ -74,8 +74,27 @@ Point window_size(int scale, const LayoutOptions& options) {
   return {static_cast<int>(std::lround(size.x)), static_cast<int>(std::lround(size.y))};
 }
 
-std::optional<Point> touch_point(const ScreenLayout& layout, double x, double y) {
+std::optional<Point> wide_touch(double x, double y, const std::vector<TouchMove>& moves) {
+  if (y < 0 || y >= kScreenHeight) return std::nullopt;
+  const int across = static_cast<int>(std::floor(x)), down = static_cast<int>(std::floor(y));
+  for (const TouchMove& m : moves)
+    if (across >= m.x0 && across < m.x1 && down >= m.y0 && down < m.y1)
+      return Point{std::clamp(across - m.dx, 0, kScreenWidth - 1), down};
+  if (across < 0 || across >= kScreenWidth) return std::nullopt;
+  return Point{across, down};
+}
+
+std::optional<Point> touch_point(const ScreenLayout& layout, double x, double y, const std::vector<TouchMove>& moves) {
   Rect r = layout.bottom;
+  if (layout.bottom_wide && !moves.empty() && r.w > 0 && r.h > 0 && x >= r.x && y >= r.y && x < r.x + r.w &&
+      y < r.y + r.h) {
+    // On a moved element: where it came from. Elsewhere as without it.
+    const double across = (x - r.x) * kWideWidth / r.w - (kWideWidth - kScreenWidth) / 2;
+    const double down = (y - r.y) * kScreenHeight / r.h;
+    const int a = static_cast<int>(std::floor(across)), d = static_cast<int>(std::floor(down));
+    for (const TouchMove& m : moves)
+      if (a >= m.x0 && a < m.x1 && d >= m.y0 && d < m.y1) return wide_touch(across, down, moves);
+  }
   if (layout.bottom_wide) {
     // The DS's screen: the columns in the middle.
     const double w = r.w * kScreenWidth / kWideWidth;

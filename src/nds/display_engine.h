@@ -47,6 +47,7 @@
 #include "nds/arm9_io.h"
 #include "nds/frame_2d.h"
 #include "nds/video_memory.h"
+#include "nds/wide_hud.h"
 
 namespace bd::nds {
 
@@ -178,6 +179,13 @@ class DisplayEngine {
   // the effects; without the processor's 3D picture.
   static constexpr int kSideColumns = 44;
   void set_sides(bool on) { sides_ = on; }
+  // The widescreen HUD's moves for this frame (WideHud), or null: sprites
+  // drawn further across by entry, areas of backgrounds moved, on the
+  // screen and at the sides. Null draws as without it.
+  void set_hud(const HudPlan* plan) { hud_ = plan; }
+  // Whether background `layer` (tiled) has a pixel in x0..x1, y0..y1 of the
+  // screen (not including x1 and y1), with the registers as they are now.
+  bool has_pixels(unsigned layer, int x0, int y0, int x1, int y1);
   bool sides() const { return sides_; }
   // Of each line, the kSideColumns left of the screen then those right of
   // it (kHeight * 2 * kSideColumns): the colours mixed, with the marks
@@ -286,6 +294,9 @@ class DisplayEngine {
   // The columns being drawn: from origin_ (of the screen), columns_ of them
   // (into top_ and the rest from their start).
   int origin_ = 0, columns_ = kWidth;
+  const HudPlan* hud_ = nullptr;
+  // draw_tiles() where the HUD moves an area of the background on the line.
+  void draw_tiles_moved(unsigned background, int line);
   bool sides_ = false;
   std::vector<std::uint32_t> side_mixed_, side_shown_;
   std::vector<std::uint8_t> side_layers_;

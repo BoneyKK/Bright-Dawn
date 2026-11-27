@@ -196,6 +196,10 @@ void GameScreen::apply_settings(bool first) {
   console_->geometry().set_wide(wide_);
   console_->display().set_sides(wide_);
   layout_.wide_screen = wide_ ? main_screen() : -1;
+  // The widescreen HUD: at the wide screen's edges, or centred as the game
+  // puts it (nds::WideHud).
+  wide_hud_ = wide_ && s.choice(key::kWidescreenHud) == "wide";
+  console_->geometry().set_wide_hud(wide_hud_);
   console_->polygon_renderer().set_edge_marking(ui::edge_marking(s));
   console_->polygon_renderer().keep_inputs(!app_.options.dump_3d.empty());
   const bool smooth = ui::smooth_textures(s);
@@ -251,6 +255,8 @@ bool GameScreen::frame() {
   read_input();
   // The scene is made during the frame, for the resolution it is drawn at.
   console_->polygon_renderer().set_fine_positions(app_.settings.toggle(key::kFineCoordinates) && scale_3d() > 1);
+  // The HUD moves by a side's width, in whole DS pixels.
+  console_->display().set_wide_hud(wide_hud_ ? Hardware3D::side_shift(scale_3d()) : 0);
   const bool capture_last = app_.options.frames != 0 && frames_run_ == app_.options.frames && !app_.options.capture.empty();
   const bool capture_now = capture_last || (app_.options.capture_every != 0 && !app_.options.capture.empty() &&
                                             frames_run_ >= app_.options.capture_from && frames_run_ % app_.options.capture_every == 0);
@@ -540,16 +546,30 @@ void GameScreen::read_input() {
   // the mouse. Off the screen is not touching it.
   bool touching = false;
   gfx::Point at;
+  // The widescreen HUD's moved elements on the touch screen.
+  std::vector<gfx::TouchMove> moves;
+  if (wide_hud_ && layout_.wide_screen == 1) {
+    const nds::HudPlan& plan = console_->display().hud_plan();
+    for (unsigned i = 0; i < plan.touch_count; ++i) {
+      const nds::HudPlan::Touch& t = plan.touches[i];
+      moves.push_back({t.x0, t.y0, t.x1, t.y1, t.dx});
+    }
+  }
   if (const input::ScriptedTouch* scripted = input::scripted_touch(app_.options.touches, frames_run_)) {
-    touching = true;
-    at = {scripted->x, scripted->y};
+    if (!scripted->wide) {
+      touching = true;
+      at = {scripted->x, scripted->y};
+    } else if (const auto point = gfx::wide_touch(scripted->x + 0.5, scripted->y + 0.5, moves)) {
+      touching = true;
+      at = *point;
+    }
   }
   float wx = 0, wy = 0;
   const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&wx, &wy);
   if (!touching && (buttons & SDL_BUTTON_LMASK) != 0 && SDL_GetMouseFocus() == app_.window) {
     float rx = 0, ry = 0;
     if (SDL_RenderCoordinatesFromWindow(app_.renderer, wx, wy, &rx, &ry)) {
-      if (const auto point = gfx::touch_point(screens_, rx, ry)) {
+      if (const auto point = gfx::touch_point(screens_, rx, ry, moves)) {
         touching = true;
         at = *point;
       }
@@ -677,6 +697,9 @@ void GameScreen::give_up_hardware(const char* why) {
   hardware_.set_wide(false);
   console_->geometry().set_wide(false);
   console_->display().set_sides(false);
+  wide_hud_ = false;
+  console_->geometry().set_wide_hud(false);
+  console_->display().set_wide_hud(0);
   layout_.wide_screen = -1;
   hardware_problem_ = std::string("the graphics hardware failed to ") + why;
   console_->display().hardware_3d_failed(hardware_problem_);

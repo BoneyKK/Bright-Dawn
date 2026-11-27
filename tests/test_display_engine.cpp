@@ -7,6 +7,7 @@
 #include "nds/arm9_io.h"
 #include "nds/display_engine.h"
 #include "nds/video_memory.h"
+#include "nds/wide_hud.h"
 #include "test.h"
 
 namespace {
@@ -960,4 +961,88 @@ TEST(display_widescreen_sides_of_a_background_filled_from_a_wider_picture) {
   memory[base + 3 * 512 + 99] ^= 0xFF;
   f.draw();
   CHECK(left(-1) == shown(picture(64, 3)));
+}
+
+// The widescreen HUD (nds::HudPlan) on the processor's picture: a sprite at
+// the bottom left corner (where the field's map icon is) is drawn the side's
+// width further left, at the wide screen's corner, and none of it is left
+// where it was; with no plan it is drawn as before.
+TEST(engine_draws_a_moved_hud_sprite_at_the_wide_corner) {
+  Fixture f;
+  f.simple_sprite_tile();
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.control(0 | kSprites | kPicture);
+  f.sprite(0, 160, 0, kTile3Palette1);  // 8 by 8 at (0, 160).
+  constexpr int kShift = 43, kSide = DisplayEngine::kSideColumns;
+  bd::nds::WideHud hud;
+  hud.set_shift(kShift);
+  bd::nds::WideHud::Screen2D screen;
+  screen.sprites = f.sprites.data();
+  screen.sprites_on = true;
+  const bd::nds::HudPlan& plan = hud.plan_2d(screen);
+  REQUIRE(plan.on && plan.sprite_dx[0] == -kShift);
+  const auto left = [&f](int x, int line) {
+    return f.engine.side_mixed()[static_cast<std::size_t>(line * 2 * kSide + kSide + x)] & 0x3FFFF;
+  };
+  f.engine.set_sides(true);
+  f.engine.set_hud(&plan);
+  f.draw(160);
+  CHECK(left(-kShift, 160) == kRed && left(-kShift + 1, 160) == kGreen && left(-kShift + 2, 160) == kBlue);
+  CHECK(f.at(0, 160) == kGrey && f.at(2, 160) == kGrey);
+  // A touch on it goes to its own place.
+  CHECK(plan.touch_x(-kShift + 1, 161) == 1 && plan.touch_x(100, 100) == 100);
+  f.engine.set_hud(nullptr);
+  f.draw(160);
+  CHECK(f.at(0, 160) == kRed && left(-kShift, 160) == kGrey);
+}
+
+// A text area of background 1 is drawn moved: its pixels the side's width
+// further left (at the side too), and lines outside it as without the plan.
+TEST(engine_draws_a_moved_hud_text_area) {
+  Fixture f;
+  f.background(1, 1u << 8 | 1u << 2);  // Map in block 1, tiles in block 1.
+  f.map(1, 0, 0, 0x2001);
+  f.map(1, 0, 21, 0x2001);
+  f.tile_row(1, 1, 0, 0x21);
+  f.colour(33, kRed15);
+  f.colour(34, kGreen15);
+  f.control(0 | show(1) | kPicture);
+  constexpr int kShift = 43, kSide = DisplayEngine::kSideColumns;
+  bd::nds::HudPlan plan;
+  plan.add_area(0, 166, 224, 192, -kShift, 1u << 1);
+  plan.on = true;
+  const auto left = [&f](int x, int line) {
+    return f.engine.side_mixed()[static_cast<std::size_t>(line * 2 * kSide + kSide + x)] & 0x3FFFF;
+  };
+  f.engine.set_sides(true);
+  f.engine.set_hud(&plan);
+  f.draw(168);
+  CHECK(left(-kShift, 168) == kRed && left(-kShift + 1, 168) == kGreen);
+  CHECK(f.at(0, 168) == kGrey);
+  CHECK(f.at(0, 0) == kRed && f.at(1, 0) == kGreen);
+  const std::vector<u32> first(f.engine.screen().begin(), f.engine.screen().begin() + 256);
+  f.engine.set_hud(nullptr);
+  f.draw(168);
+  CHECK(std::equal(first.begin(), first.end(), f.engine.screen().begin()));
+  CHECK(f.at(0, 168) == kRed);
+}
+
+// An empty plan draws as no plan, pixel for pixel (the setting "Centred").
+TEST(engine_with_an_empty_hud_plan_draws_as_without_one) {
+  Fixture f;
+  f.simple_sprite_tile();
+  for (unsigned n = 1; n < 128; ++n) f.sprite(n, kOff, 0, 0);
+  f.sprite(0, 160, 0, kTile3Palette1);
+  f.background(1, 1u << 8 | 1u << 2);
+  f.map(1, 0, 21, 0x2001);
+  f.tile_row(1, 1, 0, 0x21);
+  f.colour(33, kRed15);
+  f.control(0 | show(1) | kSprites | kPicture);
+  f.engine.set_sides(true);
+  f.draw(191);
+  const std::vector<u32> screen = f.engine.screen(), sides = f.engine.side_mixed();
+  const bd::nds::HudPlan empty;
+  f.engine.set_hud(&empty);
+  f.draw(191);
+  CHECK(f.engine.screen() == screen && f.engine.side_mixed() == sides);
 }

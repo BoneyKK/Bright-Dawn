@@ -156,7 +156,7 @@ is left out. *Widescreen (3D)* (Settings, Graphics; off by default;
 `--widescreen`) shows the screen with the 3D scene 16:9 with the graphics
 hardware: the scene goes on a third further on each side, the 2D picture
 stays 256 by 192 in the middle, and the other screen stays 4:3; the stylus
-touches the middle only. Where the processor draws the 2D (battles), the
+touches the middle (and the HUD's moved icons, below). Where the processor draws the 2D (battles), the
 2D goes on at the sides too: a battle's backdrop shows more of its picture
 (the game keeps all 512 columns of it in main memory and puts 256 of them in
 video memory as it scrolls; `DisplayEngine::streamed_source` finds it there),
@@ -169,8 +169,10 @@ side, the lowest background under the 3D (without 3D, under the top
 priority in use) that has a pixel at the screen's edge goes on past the 256
 columns. A tiled one goes on at the same scroll, a repeating affine one
 through its matrix; a 512-wide map at scroll 0, or an affine one that does
-not repeat, is mirrored. Text, icons, the cursor and sprites stay at their
-DS places in the middle; the stylus still touches the middle only. Under a
+not repeat, is mirrored. With *Widescreen HUD: Wide* (Settings, Graphics,
+shown with widescreen; the default) the HUD goes to the wide screen's edges
+(see the list below); with *Centred* (`centred`) it stays in the middle, as
+the DS has it. Under a
 menu the game shows a display capture of the field as a bitmap (background
 2), changed in its bank (blurred and lightened); the sides show the kept
 capture's own sides, changed to match (see the list below). The DS's box
@@ -199,6 +201,26 @@ picture is the DS's, pixel for pixel (`bd_gpu_tests` compares them).
 - *Box test by a wider view* (`GeometryEngine::kWideBoxTimes`): the DS
   tests boxes against its 4:3 view. For widescreen: x within 3/2 of w (the
   wide picture shows 4/3). The game draws more models than it would.
+- *Widescreen HUD* (`nds/wide_hud`; `engine2d.frag` and
+  `DisplayEngine::draw_tiles_moved` for the 2D): the game places its HUD on
+  the DS's 256 columns. For *Widescreen HUD: Wide*: each frame the HUD's
+  elements are found by what they are on the screen (their place, size and
+  layer: the flat 3D polygons of the menus' frames, sprites, the text
+  background's tiles), and drawn at the wide edges by the side's width (43
+  DS pixels at 1x and 2x, 42 above; `Hardware3D::side_shift`). Boxes and
+  icons move (the coins, a shop's price and item boxes, the field's L, R, Y
+  and X icons, the party's numbers, the battle log's text); bars are made
+  longer, their middle going on with its texture at the same rate and their
+  ends moved (the help box and its B button, the ring of commands, whose
+  icons past the DS's view come from the flat polygons the geometry engine
+  keeps for it, `Polygon::beyond`). The text, numbers and cursor in a moved
+  box move with it, and a touch on a moved element reaches the game at its
+  DS place (`gfx::touch_point` with `TouchMove`; `--touch-wide X,Y@F` for
+  runs). The game, its memory and its sprite attributes are not changed.
+  An element not found whole in a frame (in a fade, while a box opens) is
+  drawn centred that frame. It differs from the DS in that the HUD is
+  further apart; elements not in the list stay centred (a dialogue's
+  speech bubble, the status screen).
 - *Smooth 3D textures* (`scene.frag`, `raster.comp`): the DS takes one texel.
   For *Textures in 3D scenes: Smooth*: four texels mixed in each texture's
   own place in the atlas, with its wrap, mirror and clamp. Polygons that use
@@ -236,7 +258,8 @@ scene that differs.
 `bright-dawn --help` lists the options. Some change a setting for one run
 (`--scale`, `--side-by-side`, `--textures smooth`, ...); `--no-settings` uses
 the defaults. `--hold` and `--touch` press a button or touch the screen over
-given frames, and `--frames` with `--capture` write the window's last frame to
+given frames (`--touch-wide` also at the sides of a wide touch screen, X from
+-64 to 319), and `--frames` with `--capture` write the window's last frame to
 a file: together they reproduce a run without a person at the keyboard.
 
 The game's buttons, for such runs: A accepts or interacts, B goes back, X

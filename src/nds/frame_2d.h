@@ -45,6 +45,10 @@ struct Frame2D {
   std::array<std::uint32_t, kHeight * kWords> lines{};
   std::vector<std::uint8_t> palettes;  // Copies of the engine's palette memory, 1 KiB each.
   std::vector<std::uint8_t> sprites;   // And of its sprite attribute memory.
+  // The widescreen HUD's moves for the frame (HudPlan::to_words()): all 0
+  // when nothing moves.
+  static constexpr std::size_t kHudWords = 64;
+  std::array<std::uint32_t, kHudWords> hud{};
 };
 
 // Video memory as the 2D engines read it, taken as a frame begins.

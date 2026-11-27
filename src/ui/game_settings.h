@@ -35,6 +35,7 @@ inline constexpr std::string_view k3DResolution = "graphics.resolution_3d";
 inline constexpr std::string_view kFineCoordinates = "graphics.fine_coordinates";
 inline constexpr std::string_view kEdgeMarking = "graphics.edge_marking";
 inline constexpr std::string_view kWidescreen = "graphics.widescreen";
+inline constexpr std::string_view kWidescreenHud = "graphics.widescreen_hud";
 inline constexpr std::string_view kSound = "sound.enabled";
 inline constexpr std::string_view kVolume = "sound.volume";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";

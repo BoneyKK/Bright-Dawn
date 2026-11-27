@@ -52,6 +52,8 @@ struct SettingDef {
   std::string default_value;
   long long low = 0, high = 0;          // Number.
   std::vector<SettingChoice> choices;   // Choice.
+  // Shown only while the toggle with this key is on (empty: always).
+  std::string shown_with;
 };
 
 class Settings {
@@ -71,6 +73,8 @@ class Settings {
   long long number(std::string_view key) const;
   const std::string& choice(std::string_view key) const;
   bool is_default(std::string_view key) const;
+  // Whether a setting is shown now (SettingDef::shown_with).
+  bool shown(const SettingDef& def) const { return def.shown_with.empty() || toggle(def.shown_with); }
 
   // Sets a value, after checking it; ends an override of that key.
   Status set(std::string_view key, std::string_view value);

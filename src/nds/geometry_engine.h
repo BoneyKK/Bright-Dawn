@@ -125,6 +125,13 @@ class GeometryEngine {
     // and menus in 3D. A presentation choice for 3D scenes, such as smoothed
     // textures, leaves such polygons as they are.
     bool flat = false;
+    // A wide frame with the widescreen HUD on (set_wide_hud) only. `beyond`:
+    // a flat polygon as far as the wide picture goes, where the DS's view
+    // cuts it (or leaves it out): not drawn as it is, but kept for the HUD
+    // (WideHud), which can show it in a bar made longer. It comes just after
+    // its cut version, if there is one; that one is `has_beyond`.
+    bool beyond = false;
+    bool has_beyond = false;
   };
 
   struct Frame {
@@ -285,6 +292,11 @@ class GeometryEngine {
   // kWideBoxTimes): the game sees that, so it draws the models at the sides
   // that it would leave out.
   void set_wide(bool on) { wide_ = on; }
+  // In a wide frame, also the flat polygons the DS's view cuts at its sides,
+  // as far as the wide picture goes (Polygon::beyond): for the widescreen
+  // HUD. Off, the wide frame is as without it.
+  void set_wide_hud(bool on) { wide_hud_ = on; }
+  bool wide_hud() const { return wide_hud_; }
   // The box test's view in a wide frame: x within kWideBoxTimes /
   // kWideBoxOver of w each way (3/2), past the wide picture's 4/3 (an
   // eighth of a side more), so that models just outside the picture are
@@ -372,6 +384,7 @@ class GeometryEngine {
   std::array<std::uint16_t, 4> viewport_now_ = {0, 0, 256, 192}, viewport_next_ = {0, 0, 256, 192};
   Frame building_, finished_;
   bool wide_ = false;
+  bool wide_hud_ = false;
   Frame wide_building_, wide_finished_;  // See set_wide().
   std::size_t wide_placed_ = 0;
   std::array<std::int32_t, 4> position_result_{};

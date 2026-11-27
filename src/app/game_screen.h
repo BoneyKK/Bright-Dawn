@@ -135,6 +135,7 @@ class GameScreen {
   Hardware3D hardware_;
   bool hardware_tried_ = false, hardware_failed_ = false;
   bool wide_ = false;  // Widescreen, with the graphics hardware (Hardware3D::set_wide).
+  bool wide_hud_ = false;  // And its HUD at the wide screen's edges (nds::WideHud).
   // The screen the main engine was last on, and for how many pictures in a
   // row: the wide one only once it stays (the 3D on both screens, as the
   // title has it, switches it every frame).

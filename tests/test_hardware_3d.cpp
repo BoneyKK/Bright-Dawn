@@ -23,6 +23,7 @@
 #include "nds/polygon_renderer.h"
 #include "nds/scene_dump.h"
 #include "nds/video_memory.h"
+#include "nds/wide_hud.h"
 #include "test.h"
 
 namespace {
@@ -1358,6 +1359,45 @@ TEST(hardware_2d_sides_go_on_with_the_background_s_tiles) {
       if (at(x, y) != want && differ++ < 5) std::printf("    (%d, %d): %06x, not %06x\n", x, y, at(x, y), want);
     }
   CHECK(differ == 0);
+  h.set_wide(false);
+}
+
+// Widescreen HUD on the graphics hardware's 2D (engine2d.frag): a text
+// area of background 1 drawn the side's width further left, as the
+// processor draws it (DisplayEngine::draw_tiles_moved); where it was, the
+// background under it. With no plan, as before.
+TEST(hardware_2d_draws_a_moved_hud_text_area) {
+  Hardware3D& h = hardware();
+  h.set_wide(true);
+  Handmade2D m;
+  tiles_under_a_bar(m);
+  const std::vector<u32> before = m.draw();
+  constexpr int kShift = 43;
+  bd::nds::HudPlan plan;
+  plan.add_area(0, 80, 64, 88, -kShift, 1u << 1);
+  plan.on = true;
+  plan.to_words(m.frame.hud.data());
+  const std::vector<u32> pixels = m.draw();
+  const int width = Hardware3D::picture_width(1, true), left = (width - kWidth) / 2;
+  const auto at = [&](int x, int y) { return pixels[static_cast<std::size_t>(y) * width + left + x] & 0xFFFFFF; };
+  const auto tiles = [&](int x) {
+    const unsigned n = static_cast<unsigned>(((x + 4) & 255) >> 3) % 32 + 1;
+    return shown_colour((n & 31) | ((31 - (n & 31)) << 10));
+  };
+  const u32 bar = shown_colour(8 | 0x3E0u | 23u << 10);
+  int differ = 0;
+  for (int x = -left; x < kWidth + left; ++x) {
+    const u32 want = x >= -kShift && x < 64 - kShift ? bar : x >= 64 && x < kWidth ? bar : tiles(x);
+    if (at(x, 82) != want && differ++ < 5) std::printf("    (%d, 82): %06x, not %06x\n", x, at(x, 82), want);
+  }
+  CHECK(differ == 0);
+  // Other lines as without the plan.
+  for (const int y : {0, 79, 88, 191})
+    for (int x = -left; x < kWidth + left; ++x)
+      if (pixels[static_cast<std::size_t>(y) * width + left + x] != before[static_cast<std::size_t>(y) * width + left + x]) ++differ;
+  CHECK(differ == 0);
+  m.frame.hud.fill(0);
+  CHECK(m.draw() == before);
   h.set_wide(false);
 }
 

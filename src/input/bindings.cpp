@@ -1,6 +1,7 @@
 #include "input/bindings.h"
 
 #include <charconv>
+#include <string>
 
 namespace bd::input {
 
@@ -76,6 +77,21 @@ std::optional<ScriptedTouch> parse_scripted_touch(std::string_view text) {
   const auto frames = frame_range(text.substr(at + 1));
   if (!x || !y || !frames) return std::nullopt;
   return ScriptedTouch{*x, *y, frames->first, frames->second};
+}
+
+std::optional<ScriptedTouch> parse_scripted_wide_touch(std::string_view text) {
+  const std::size_t comma = text.find(',');
+  if (comma == std::string_view::npos) return std::nullopt;
+  const bool negative = text[0] == '-';
+  const std::string_view x_text = text.substr(negative ? 1 : 0, comma - (negative ? 1 : 0));
+  const std::optional<int> magnitude = coordinate(x_text, negative ? -kWideLeast : kWideMost);
+  if (!magnitude) return std::nullopt;
+  // The rest as a plain touch at x 0.
+  std::optional<ScriptedTouch> touch = parse_scripted_touch(std::string("0") + std::string(text.substr(comma)));
+  if (!touch) return std::nullopt;
+  touch->x = negative ? -*magnitude : *magnitude;
+  touch->wide = true;
+  return touch;
 }
 
 std::optional<ScriptedStick> parse_scripted_stick(std::string_view text) {

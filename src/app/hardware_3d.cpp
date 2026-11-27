@@ -847,7 +847,8 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
     for (unsigned page = 0; page < video.versions.size(); ++page)
       if (all || video_versions_[page] != video.versions[page]) video_pages.push_back(page);
     layout_bytes = static_cast<std::uint32_t>(video.layout.size() * 4);
-    lines_bytes = static_cast<std::uint32_t>(lines->lines.size() * 4);
+    // The lines, then the widescreen HUD's moves (engine2d.frag).
+    lines_bytes = static_cast<std::uint32_t>((lines->lines.size() + lines->hud.size()) * 4);
     palette_bytes = static_cast<std::uint32_t>(lines->palettes.size());
     sprite_bytes = static_cast<std::uint32_t>(lines->sprites.size());
     changes_bytes = static_cast<std::uint32_t>(video.changes.size() * 4 + video.changed.size());
@@ -909,7 +910,8 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
     }
     std::memcpy(mapped + at, video.layout.data(), layout_bytes);
     at += aligned(layout_bytes);
-    std::memcpy(mapped + at, lines->lines.data(), lines_bytes);
+    std::memcpy(mapped + at, lines->lines.data(), lines->lines.size() * 4);
+    std::memcpy(mapped + at + lines->lines.size() * 4, lines->hud.data(), lines->hud.size() * 4);
     at += aligned(lines_bytes);
     std::memcpy(mapped + at, lines->palettes.data(), palette_bytes);
     at += aligned(palette_bytes);

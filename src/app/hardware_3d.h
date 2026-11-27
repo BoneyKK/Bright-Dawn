@@ -89,6 +89,13 @@ class Hardware3D {
   static int picture_width(int scale, bool wide) {
     return wide ? 2 * ((1024 * scale + 3) / 6) : 256 * scale;
   }
+  // A wide picture's side at `scale`, in whole DS pixels (rounded down): how
+  // far the widescreen HUD moves an element (nds::WideHud): 43 at 1x and 2x,
+  // 42 at 3x and 4x.
+  static int side_shift(int scale) {
+    scale = scale < 1 ? 1 : scale;
+    return (picture_width(scale, true) - 256 * scale) / (2 * scale);
+  }
 
   // The capture numbered `number`, made as `recipe` says, `scale` times as
   // large: its first source is `source` (256 * 192 colours with marks) with

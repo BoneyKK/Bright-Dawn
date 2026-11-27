@@ -139,8 +139,14 @@ void Display::line_begins(unsigned line) {
       if (swaps != swaps_built_) {
         swaps_built_ = swaps;
         frame_log::Scope frame_log_scope(frame_log::kBuildScene);
-        if (geometry_.wide()) renderer_.build_scene(geometry_.wide_finished(), video_, true);
-        else renderer_.build_scene(geometry_.finished(), video_);
+        if (geometry_.wide() && hud_.on()) {
+          hud_.apply_3d(geometry_.wide_finished(), hud_frame_);
+          renderer_.build_scene(hud_frame_, video_, true);
+        } else if (geometry_.wide()) {
+          renderer_.build_scene(geometry_.wide_finished(), video_, true);
+        } else {
+          renderer_.build_scene(geometry_.finished(), video_);
+        }
         have_scene_ = true;
         ++statistics_.pictures_3d;
       }
@@ -168,9 +174,37 @@ void Display::line_begins(unsigned line) {
   {
     frame_log::Scope frame_log_scope(frame_log::kDisplayMain);
     main_.start_line(static_cast<int>(line));
+    if (line == 0) plan_hud();
   }
   frame_log::Scope frame_log_scope(frame_log::kDisplaySub);
   second_.start_line(static_cast<int>(line));
+}
+
+void Display::plan_hud() {
+  // The widescreen HUD's moves for this frame's 2D picture, from its
+  // registers and sprites as it begins, and the elements of the scene it
+  // shows. Only with the graphics hardware's wide scene.
+  const HudPlan* plan = nullptr;
+  if (hud_.on() && scene_this_frame_ && have_scene_ && geometry_.wide()) {
+    WideHud::Screen2D screen;
+    const u32 control = main_.control();
+    screen.sprites = sprites_;
+    screen.sprites_on = (control & DisplayEngine::kShowSprites) != 0;
+    // The text: background 1, over the 3D layer (background 0).
+    const bool text_on = (control & (DisplayEngine::kShowBackground0 << 1)) != 0 &&
+                         (control & DisplayEngine::kBackground0Is3D) != 0 && (control & 7) <= 5;
+    screen.text_layer = text_on ? 1 : -1;
+    screen.has_pixels = [this](unsigned layer, int x0, int y0, int x1, int y1) {
+      return main_.has_pixels(layer, x0, y0, x1, y1);
+    };
+    plan = &hud_.plan_2d(screen);
+    if (!plan->on) plan = nullptr;
+  } else {
+    hud_.clear_plan();
+  }
+  main_.set_hud(plan);
+  if (plan != nullptr) plan->to_words(recording_[0].hud.data());
+  else recording_[0].hud.fill(0);
 }
 
 void Display::line_done(unsigned line) {
