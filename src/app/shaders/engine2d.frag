@@ -4,6 +4,22 @@
 // memory. 256 by 192; colours of six bits a part as eight (the top two bits
 // again at the bottom), and the mark for the 3D scene (bits 24 to 31 of
 // DisplayEngine's colours) as the alpha.
+//
+// Widescreen (u_engine.w is 1): the main engine's sides instead, kSide
+// columns left of each line then kSide right of it, as compose.frag's
+// u_sides holds them. Of the layers, only the 3D layer's marks and one
+// background go on there: of those under the 3D layer, or under the text
+// and icons (nds::DisplayEngine::side_backgrounds()), the one nearest the
+// top with a pixel at the screen's edge on that line (a menu's
+// background). A tiled background goes on as its map does at the same
+// scroll (one 512 across only if scrolled across), one through a matrix as
+// it goes on if it repeats; else mirrored at the edge. Text, icons and
+// sprites stay on the DS's 256 columns; the windows are as at the edge.
+// Where that background is a bitmap in the place of a kept display capture
+// (bit 0 or 1 of the line's word 23, for background 2 or 3: nds::Display::
+// capture_at_sides()), the pixel is marked to show the capture (the lowest
+// bit of red: nds::DisplayEngine::kCapturedBelow), and where nothing is
+// drawn over it.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -23,11 +39,11 @@ layout(std430, set = 2, binding = 4) readonly buffer Sprites { uint sprites[]; }
 layout(std430, set = 2, binding = 5) readonly buffer Changes { uint changes[]; };
 layout(set = 3, binding = 0) uniform Engine {
   // x: 0 the main engine, 1 the second. y: 1 to leave the marks out. z: how
-  // many changes there are.
+  // many changes there are. w: 1 for the sides.
   uvec4 u_engine;
 };
 
-const int kWidth = 256, kHeight = 192;
+const int kWidth = 256, kHeight = 192, kSide = 44;
 const uint kWhite = 0x3FFFFu;
 const uint kMark3D = 1u << 31;
 
@@ -146,6 +162,7 @@ struct Dot {
 Dot top, below;
 bool sprite_window;
 int x;
+int window_x;  // x, or at a side the screen's edge.
 
 uint shown_inside() {
   if ((control() & (7u << 13)) == 0u) return 0x3Fu;
@@ -154,7 +171,7 @@ uint shown_inside() {
     int x1 = int((w[15] >> (16u * n)) & 0xFFu), x2 = int((w[15] >> (16u * n + 8u)) & 0xFFu);
     int left = min(x1, x2), right = max(x1, x2);
     bool flipped = (w[16] & (4u << n)) != 0u;
-    if ((x >= left && x < right) != flipped) return (window_inside() >> (8u * n)) & 0x3Fu;
+    if ((window_x >= left && window_x < right) != flipped) return (window_inside() >> (8u * n)) & 0x3Fu;
   }
   if ((control() & (1u << 15)) != 0u && sprite_window) return (window_outside() >> 8) & 0x3Fu;
   return window_outside() & 0x3Fu;
@@ -437,11 +454,84 @@ void blend() {
   }
 }
 
+// nds::DisplayEngine::side_backgrounds(): a bit each.
+uint side_backgrounds() {
+  const uint c = control(), mode = c & 7u;
+  if (mode == 7u) return 0u;
+  uint shown = 0u;
+  for (uint n = 0u; n < 4u; ++n)
+    if ((c & (1u << (8u + n))) != 0u && !(mode == 6u && (n == 1u || n == 3u))) shown |= 1u << n;
+  uint found = 0u;
+  if ((shown & 1u) != 0u && (c & (1u << 3)) != 0u) {
+    for (uint n = 1u; n < 4u; ++n)
+      if ((shown & (1u << n)) != 0u && (background_control(n) & 3u) >= (background_control(0u) & 3u)) found |= 1u << n;
+    return found;
+  }
+  uint nearest = 4u;
+  for (uint n = 0u; n < 4u; ++n)
+    if ((shown & (1u << n)) != 0u) nearest = min(nearest, background_control(n) & 3u);
+  for (uint n = 0u; n < 4u; ++n)
+    if ((shown & (1u << n)) != 0u && (background_control(n) & 3u) > nearest) found |= 1u << n;
+  return found != 0u ? found : shown;
+}
+
+// Background `n` (not the 3D layer) at this pixel, as the mode draws it.
+void draw_layer(uint n) {
+  const uint mode = control() & 7u;
+  if (mode == 6u) {
+    if (n == 2u) draw_large(2u);
+  } else if (n == 3u) {
+    if (mode == 0u) draw_tiles(3u);
+    else if (mode <= 2u) draw_matrix_tiles(3u);
+    else draw_extended(3u);
+  } else if (n == 2u) {
+    if (mode == 0u || mode == 1u || mode == 3u) draw_tiles(2u);
+    else if (mode == 2u || mode == 4u) draw_matrix_tiles(2u);
+    else draw_extended(2u);
+  } else {
+    draw_tiles(n);
+  }
+}
+
+// At a side: of side_backgrounds(), the one nearest the top with a pixel at
+// the screen's edge on this line, on this side; -1 for none.
+int side_base() {
+  const uint candidates = side_backgrounds();
+  const int keep = x;
+  const Dot kept_top = top, kept_below = below;
+  int found = -1;
+  uint found_priority = 4u;
+  for (uint n = 0u; n < 4u; ++n) {
+    // Of equal priority, the smaller number is nearer the top.
+    const uint priority = background_control(n) & 3u;
+    if ((candidates & (1u << n)) == 0u || priority >= found_priority) continue;
+    top = Dot(0u, 4, 5u, false);
+    below = top;
+    x = keep < 0 ? 0 : kWidth - 1;
+    draw_layer(n);
+    if (top.layer == n) {
+      found = int(n);
+      found_priority = priority;
+    }
+  }
+  x = keep;
+  top = kept_top;
+  below = kept_below;
+  return found;
+}
+
 uint eight_bits(uint six) { return (six & 0x3Fu) << 2 | (six & 0x3Fu) >> 4; }
 
 void main() {
-  x = min(int(v_place.x * float(kWidth)), kWidth - 1);
+  const bool side = u_engine.w != 0u;
   line = min(int(v_place.y * float(kHeight)), kHeight - 1);
+  if (side) {
+    const int column = min(int(v_place.x * float(2 * kSide)), 2 * kSide - 1);
+    x = column < kSide ? column - kSide : kWidth + column - kSide;
+  } else {
+    x = min(int(v_place.x * float(kWidth)), kWidth - 1);
+  }
+  window_x = clamp(x, 0, kWidth - 1);
   for (int i = 0; i < 24; ++i) w[i] = lines[uint(line) * 24u + uint(i)];
   palette_at = w[21] * 256u;
   sprites_at = w[22] * 256u;
@@ -451,14 +541,30 @@ void main() {
   below = top;
   sprite_window = false;
   const uint c = control();
-  if ((c & (1u << 12)) != 0u) {
+  if ((c & (1u << 12)) != 0u && !side) {
     if ((c & (1u << 15)) != 0u) draw_sprites(true);
     draw_sprites(false);
   }
   uint mark = 0u;
   const uint mode = c & 7u;
-  const bool shown0 = (c & (1u << 8)) != 0u, shown1 = (c & (1u << 9)) != 0u;
-  const bool shown2 = (c & (1u << 10)) != 0u, shown3 = (c & (1u << 11)) != 0u;
+  bool shown0 = (c & (1u << 8)) != 0u, shown1 = (c & (1u << 9)) != 0u;
+  bool shown2 = (c & (1u << 10)) != 0u, shown3 = (c & (1u << 11)) != 0u;
+  const int base = side ? side_base() : -1;
+  if (side) {
+    // Only that background, and the 3D layer.
+    shown0 = shown0 && (base == 0 || (!second_engine && (c & (1u << 3)) != 0u));
+    shown1 = shown1 && base == 1;
+    shown2 = shown2 && base == 2;
+    shown3 = shown3 && base == 3;
+    // Mirrored at the edge: one through a matrix that does not repeat, and
+    // a tiled one 512 across that is not scrolled across (what is past the
+    // screen in its map is not shown, so need not be a picture).
+    const bool tiled = base < 2 || mode == 0u || (base == 2 && (mode == 1u || mode == 3u));
+    const uint bg_control = base >= 0 ? background_control(uint(base)) : 0u;
+    if ((base >= 2 && !tiled && (bg_control & (1u << 13)) == 0u) ||
+        (base >= 0 && tiled && (bg_control & (1u << 14)) != 0u && (scroll_x(uint(base)) & 0x1FFu) == 0u))
+      x = x < 0 ? -1 - x : 2 * kWidth - 1 - x;
+  }
   if (mode == 6u) {
     if (shown2) draw_large(2u);
   } else if (mode != 7u) {
@@ -488,7 +594,7 @@ void main() {
     shown = kWhite;
   } else if (display_mode == 1u) {
     shown = top.colour;
-  } else if (display_mode == 2u) {
+  } else if (display_mode == 2u && !side) {
     shown = six_bits_each(read16(0x06800000u + ((c >> 1) & 0x60000u) + uint(line * kWidth + x) * 2u));
   } else {
     shown = 0u;
@@ -509,6 +615,12 @@ void main() {
     // nds::DisplayEngine::for_hardware(): the 3D's weight in the low bits.
     const uint weight = (mark >> 18) & 31u;
     bytes.rgb = (bytes.rgb & uvec3(0xFDu, 0xFCu, 0xFCu)) | uvec3((weight >> 4) << 1, (weight >> 2) & 3u, weight & 3u);
+  }
+  if (side) {
+    // Marked to show the kept capture, or not.
+    const bool captured = display_mode == 1u && base >= 2 && ((w[23] >> uint(base - 2)) & 1u) != 0u &&
+                          (top.layer == uint(base) || top.layer == 5u);
+    bytes.r = (bytes.r & 0xFEu) | (captured ? 1u : 0u);
   }
   o_colour = vec4(bytes) / 255.0;
 }

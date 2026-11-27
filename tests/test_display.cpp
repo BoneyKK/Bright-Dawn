@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <random>
+#include <vector>
 
 #include "nds/arm9_io.h"
 #include "nds/display.h"
@@ -596,4 +598,98 @@ TEST(display_counts_the_frames_the_processor_draws_for_the_graphics_hardware) {
   f.display.set_hardware_3d(false);
   f.frame();
   CHECK(s.frames_3d_processor == 1 && f.display.fallbacks().size() == 1);
+}
+
+// Widescreen, a menu over a capture of the field that the game blurred and
+// made lighter in its bank: the box blur and the difference of each part
+// that make the kept capture like the bank; none for another picture.
+TEST(display_finds_how_the_game_blurred_a_kept_capture) {
+  std::mt19937 random(64);
+  // A capture of the screen's 192 lines from row 64 of the bank, six bits
+  // a part (even: video memory keeps five).
+  std::vector<u32> kept(0x10000, 0xFFFFFFFF);
+  for (u32 at = 64 * 256; at < 0x10000; ++at) kept[at] = rgb(random() % 32 * 2, random() % 32 * 2, random() % 32 * 2);
+  const auto bank_of = [&](int radius, int lighter) {
+    std::vector<std::uint8_t> bank(0x20000);
+    for (int y = 0; y < 256; ++y)
+      for (int x = 0; x < 256; ++x) {
+        u32 five = 0;
+        for (int k = 0; k < 3; ++k) {
+          int sum = 0, n = 0;
+          for (int dy = -radius; dy <= radius; ++dy)
+            for (int dx = -radius; dx <= radius; ++dx) {
+              const u32 p = kept[static_cast<std::size_t>(std::clamp(y + dy, 0, 255) * 256 + std::clamp(x + dx, 0, 255))];
+              if (p == 0xFFFFFFFF) continue;
+              sum += static_cast<int>((p >> (6 * k)) & 63);
+              ++n;
+            }
+          const int six = n == 0 ? static_cast<int>(random() % 64) : std::clamp((sum + n / 2) / n + lighter, 0, 63);
+          five |= static_cast<u32>(six >> 1) << (5 * k);
+        }
+        const std::size_t at = static_cast<std::size_t>(y * 256 + x) * 2;
+        bank[at] = static_cast<std::uint8_t>(five);
+        bank[at + 1] = static_cast<std::uint8_t>(0x80 | five >> 8);
+      }
+    return bank;
+  };
+  const Display::Blur blurred = Display::blur_between(kept, bank_of(1, 4));
+  CHECK(blurred.radius == 1);
+  for (const std::int8_t o : blurred.offset) CHECK(o >= 3 && o <= 4);
+  const Display::Blur as_made = Display::blur_between(kept, bank_of(0, 0));
+  CHECK(as_made.radius == 0 && as_made.offset == (std::array<std::int8_t, 3>{0, 0, 0}));
+  CHECK(Display::blur_between(kept, bank_of(2, -6)).radius == 2);
+  // Another picture in the bank: none.
+  std::vector<std::uint8_t> other(0x20000);
+  for (auto& b : other) b = static_cast<std::uint8_t>(random());
+  CHECK(Display::blur_between(kept, other).radius == -1);
+  // Too few pixels captured to tell: none.
+  std::vector<u32> nothing(0x10000, 0xFFFFFFFF);
+  CHECK(Display::blur_between(nothing, other).radius == -1);
+}
+
+// Widescreen, the backgrounds that go on at the sides of a line drawn by
+// the graphics hardware: those under the 3D layer; with no 3D layer, those
+// under the ones nearest the top (the text), or all if all are as near.
+TEST(display_engine_backgrounds_at_the_sides) {
+  const auto words = [](u32 control, u32 b0, u32 b1, u32 b2, u32 b3) {
+    std::array<u32, bd::nds::Frame2D::kWords> w{};
+    w[0] = control;
+    w[1] = b0 | b1 << 16;
+    w[2] = b2 | b3 << 16;
+    return w;
+  };
+  constexpr u32 k3D = 1u << 3;
+  const auto shown = [](u32 mask) { return mask << 8; };
+  // The menu: 3D (priority 1), text (0), the captured field (3).
+  CHECK(DisplayEngine::side_backgrounds(words(5 | k3D | shown(7), 1, 0, 3, 0).data()) == 0b0100);
+  // The status screen: and a tiled background (2) above a hidden one (3).
+  CHECK(DisplayEngine::side_backgrounds(words(k3D | shown(15), 1, 0, 3, 2).data()) == 0b1100);
+  // Of equal priority, a background is under the 3D layer.
+  CHECK(DisplayEngine::side_backgrounds(words(k3D | shown(3), 1, 1, 0, 0).data()) == 0b0010);
+  // The field: 3D and text above it, nothing under: none.
+  CHECK(DisplayEngine::side_backgrounds(words(k3D | shown(3), 1, 0, 0, 0).data()) == 0);
+  // No 3D: under the text.
+  CHECK(DisplayEngine::side_backgrounds(words(shown(10), 0, 0, 0, 3).data()) == 0b1000);
+  CHECK(DisplayEngine::side_backgrounds(words(shown(15), 0, 0, 1, 1).data()) == 0b1100);
+  // All as near: all.
+  CHECK(DisplayEngine::side_backgrounds(words(shown(6), 2, 2, 2, 2).data()) == 0b0110);
+  // Mode 6 has backgrounds 0 and 2 only; mode 7 none.
+  CHECK(DisplayEngine::side_backgrounds(words(6 | shown(15), 0, 1, 2, 3).data()) == 0b0100);
+  CHECK(DisplayEngine::side_backgrounds(words(7 | shown(15), 0, 1, 2, 3).data()) == 0);
+
+  // A bitmap of direct colours from a line's registers, as the processor
+  // keeps it while it draws.
+  std::array<u32, bd::nds::Frame2D::kWords> w = words(5 | shown(4), 0, 0, 0x4287, 0);
+  w[7] = 256 | 0xFFF0u << 16;  // pa 256, pb -16
+  w[8] = 3 | 256u << 16;       // pc 3, pd 256
+  w[11] = static_cast<u32>(-512);
+  w[12] = 49152;
+  const DisplayEngine::BitmapLine b = DisplayEngine::bitmap_line_of(w.data(), 0);
+  CHECK(b.on && !b.repeated && b.data == 0x06008000 && b.width == 256 && b.height == 256);
+  CHECK(b.pa == 256 && b.pb == -16 && b.pc == 3 && b.pd == 256 && b.x0 == -512 && b.y0 == 49152);
+  // Not a bitmap of direct colours, not shown, or not in this mode: none.
+  CHECK(!DisplayEngine::bitmap_line_of(words(5 | shown(4), 0, 0, 0x4283, 0).data(), 0).on);
+  CHECK(!DisplayEngine::bitmap_line_of(words(5, 0, 0, 0x4287, 0).data(), 0).on);
+  CHECK(!DisplayEngine::bitmap_line_of(words(2 | shown(4), 0, 0, 0x4287, 0).data(), 0).on);
+  CHECK(DisplayEngine::bitmap_line_of(words(3 | shown(8), 0, 0, 0, 0x4287).data(), 1).on);
 }

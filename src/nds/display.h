@@ -181,6 +181,20 @@ class Display {
   // brightness; empty for none.
   const std::vector<std::uint32_t>& capture_sides() const { return capture_sides_; }
 
+  // Widescreen: of a capture kept (six bits a part, 256 * 256, kNotCaptured
+  // where it wrote nothing) and its bank as it is now (two bytes a pixel),
+  // the box blur (DS pixels each way from each pixel, 0 to kMostBlur) and
+  // the difference added to each part (in sixty-fourths) that make the
+  // capture most like the bank; radius -1 if none is near, as where the
+  // bank holds another picture. A menu blurs the field it captured, and
+  // makes it lighter.
+  static constexpr int kMostBlur = 3;
+  struct Blur {
+    int radius = -1;
+    std::array<std::int8_t, 3> offset{};  // Red, green, blue.
+  };
+  static Blur blur_between(const std::vector<std::uint32_t>& kept, const std::vector<std::uint8_t>& bank);
+
   DisplayEngine& main_engine() { return main_; }
   DisplayEngine& second_engine() { return second_; }
   std::uint32_t capture_control() const { return capture_control_; }
@@ -199,6 +213,15 @@ class Display {
   // The main engine's sides (DisplayEngine::side_mixed() or side_shown()),
   // marked where they show `shown`, into `sides`.
   void make_sides(const std::vector<std::uint32_t>& from, const Shown& shown, std::vector<std::uint32_t>& sides) const;
+
+  // Widescreen: where the background under all the others on the main
+  // engine (DisplayEngine::side_background) is a bitmap in the place of a
+  // kept capture, though the game has changed it since (blurred it:
+  // blur_between()), the sides of the screen show that capture's sides,
+  // blurred as much, in `fill`. The side pixels are marked: in `sides`
+  // where the processor drew them; else (null) the lines the graphics
+  // hardware draws (Frame2D word 23).
+  void capture_at_sides(ScreenFill& fill, std::vector<std::uint32_t>* sides);
 
   // Starts this frame's capture by the graphics hardware.
   void start_hardware_capture();
@@ -233,6 +256,7 @@ class Display {
   // The first row of bank `bank` that background `background` of `engine`
   // shows on `line` as a bitmap 256 pixels across, or -1.
   int bitmap_row(const DisplayEngine& engine, int background, int line, unsigned bank) const;
+  int bitmap_row(const DisplayEngine::BitmapLine& b, unsigned bank) const;
 
   // Whether what `kept` put in its bank is still there.
   bool in_video_memory(const Kept& kept) const;

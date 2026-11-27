@@ -2,8 +2,8 @@
   "title": "Bright Dawn project map",
   "artifact": "https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8",
   "last_change": {
-    "what": "Widescreen (3D): models at the sides of the field are drawn (the box test uses the wide view). Textures in 3D scenes smoothed (bilinear) by the graphics hardware too, when chosen.",
-    "date": "2026-11-25"
+    "what": "Widescreen (3D): menus and the field fill the sides (the background goes on, the field under a menu blurred as the game blurs it); the box test looks a little past the wide view.",
+    "date": "2026-11-27"
   },
   "statuses": {
     "done": "Works",
@@ -395,7 +395,7 @@
     {
       "part": "gfx",
       "status": "done",
-      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. The 2D engines' pictures by the graphics hardware too, pixel for pixel as the processor draws them, except where a display capture needs the processor's. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel, with the smoothing of polygon edges; above 1x outlines that meet the models' edges, as wide on every side and smooth, without the costly drawing by the DS's rules. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Display captures at the same resolution, also where a background shows one turned or made larger (the start of a battle). Widescreen (3D), a first version: the 3D scene on its screen goes on a third further at each side (16:9), battles too; in battles the 2D goes on to the edges too (the backdrop's whole picture, text boxes as at their edge, the battle log made longer), on the field the 2D stays 4:3 in the middle; the box test the field culls models with uses the wide view, so models at the sides are drawn. A picture made larger than the window is made smaller by averaging, without stairs on its edges. Textures in 3D scenes sharp as on the DS, or smoothed (bilinear) if chosen, by the processor and the graphics hardware."
+      "now": "Both screens in one window, any size, stacked, side by side or the touch screen alone, sharp pixels with smooth edges. Drawn through Vulkan, or the system's renderer where there is none. 3D scenes by the graphics hardware at up to 8 times the DS's resolution, battles too, with vertices between the DS's pixels so that models move smoothly, on one screen or both, or by the processor. The 2D engines' pictures by the graphics hardware too, pixel for pixel as the processor draws them, except where a display capture needs the processor's. Outlines (original thickness, 1 pixel or off), shadows and fog as on the DS; at 1x the processor's picture, pixel for pixel, with the smoothing of polygon edges; above 1x outlines that meet the models' edges, as wide on every side and smooth, without the costly drawing by the DS's rules. The 2D stays at the DS's resolution: the game does not turn or scale it, so it would look the same drawn larger. Display captures at the same resolution, also where a background shows one turned or made larger (the start of a battle). Widescreen (3D), a first version: the 3D scene on its screen goes on a third further at each side (16:9), battles too; in battles the 2D goes on to the edges too (the backdrop's whole picture, text boxes as at their edge, the battle log made longer), on the field and in menus the background goes on at the sides (tiled ones at the same scroll, the field under a menu blurred as the game blurs it), text and sprites stay in the middle; the box test the field culls models with looks a little past the wide view, so models at the sides are drawn. A picture made larger than the window is made smaller by averaging, without stairs on its edges. Textures in 3D scenes sharp as on the DS, or smoothed (bilinear) if chosen, by the processor and the graphics hardware."
     },
     {
       "part": "audio",
@@ -424,8 +424,8 @@
     }
   ],
   "next": [
-    "Higher resolutions, 1: a display capture that the game uses as a texture, or changes itself (the blurred field behind the menu), is read at the DS's resolution.",
+    "Higher resolutions, 1: a display capture that the game uses as a texture, or changes itself (the middle of the blurred field behind the menu), is read at the DS's resolution.",
     "Higher resolutions, 2: the scroll of the 3D layer (BG0) is not used, by either 3D path.",
-    "Widescreen, 2: the 2D at the sides on the field (drawn by the graphics hardware). Then mods."
+    "Widescreen, 2: the sides show one background only, not text or sprites that cross the edge; 3D on both screens at once (the title) stays 4:3. Then mods."
   ]
 }

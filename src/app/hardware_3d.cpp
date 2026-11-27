@@ -374,7 +374,8 @@ bool Hardware3D::open(SDL_Renderer* renderer, std::string& error) {
     screen_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
                            SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET, kScreenWidth, kScreenHeight);
     bank_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, 256);
-    sides_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+    sides_ = make_texture(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                          SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
                           2 * nds::DisplayEngine::kSideColumns, kScreenHeight);
     if (nearest_ == nullptr || atlas_ == nullptr || screen_ == nullptr || bank_ == nullptr) made = fail("3D textures");
   }
@@ -605,7 +606,9 @@ SDL_Texture* Hardware3D::draw(int which, const Picture& picture, const nds::Hard
   failed = true;
   if (!ready(scale)) return nullptr;
   const Kept* put = kept(capture);
-  if (scene == nullptr && capture != 0 && put == nullptr) {
+  // A capture at the sides only can be left out: the screen is drawn.
+  const bool sides_only = lines != nullptr && lines->sides_only;
+  if (scene == nullptr && capture != 0 && put == nullptr && !sides_only) {
     failed = false;
     return nullptr;
   }
@@ -613,6 +616,12 @@ SDL_Texture* Hardware3D::draw(int which, const Picture& picture, const nds::Hard
   if (put != nullptr && lines != nullptr) {
     uniforms.put_info[0] = 1;
     put_lines(*lines);
+    uniforms.put_sides[0] = sides_only ? 1u : 0u;
+    uniforms.put_sides[1] = sides_only ? lines->blur : 0u;
+    // The difference for each part, plus 128, a byte each.
+    if (sides_only)
+      for (unsigned k = 0; k < 3; ++k)
+        uniforms.put_sides[2] |= static_cast<std::uint32_t>(lines->offset[k] + 128) << (8 * k);
   }
   uniforms.put_info[2] = scene == nullptr ? 1u : 0u;
   const unsigned direction = brightness >> 14;
@@ -826,6 +835,8 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   const bool with_sides = wide_ && lines == nullptr && picture.sides != nullptr &&
                           picture.sides->size() == std::size_t{kSides} * kScreenHeight;
   const std::uint32_t side_bytes = with_sides ? static_cast<std::uint32_t>(kSides * kScreenHeight * 4) : 0;
+  // Or drawn by the graphics hardware, with the main engine's picture.
+  const bool engine_sides = wide_ && lines != nullptr && !lines->second_engine;
   std::vector<unsigned> video_pages;
   std::uint32_t layout_bytes = 0, lines_bytes = 0, palette_bytes = 0, sprite_bytes = 0, changes_bytes = 0;
   if (lines != nullptr) {
@@ -1094,6 +1105,17 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
     SDL_PushGPUFragmentUniformData(commands, 0, engine, sizeof engine);
     SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
     SDL_EndGPURenderPass(pass);
+    if (engine_sides) {
+      // Widescreen: the main engine's sides, into sides_ (engine2d.frag).
+      colour.texture = sides_;
+      pass = SDL_BeginGPURenderPass(commands, &colour, 1, nullptr);
+      SDL_BindGPUGraphicsPipeline(pass, engine2d_pipeline_);
+      SDL_BindGPUFragmentStorageBuffers(pass, 0, buffers.data(), static_cast<Uint32>(buffers.size()));
+      const std::uint32_t side_engine[4] = {0, engine[1], changes, 1};
+      SDL_PushGPUFragmentUniformData(commands, 0, side_engine, sizeof side_engine);
+      SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+      SDL_EndGPURenderPass(pass);
+    }
   }
   if (!frame_log_pass(new_scene ? frame_log::kScenePass : log_compose_column_)) return false;
 
@@ -1224,7 +1246,7 @@ bool Hardware3D::run(const nds::HardwareScene* given, const Picture& picture, SD
   SDL_BindGPUFragmentStorageBuffers(pass, 0, compose_buffers.data(), static_cast<Uint32>(compose_buffers.size()));
   // Outlines and anti-aliased edges where the scene is put in.
   ComposeUniforms uniforms = given_uniforms;
-  uniforms.put_info[3] = side_bytes != 0 ? 1u : 0u;
+  uniforms.put_info[3] = side_bytes != 0 || engine_sides ? 1u : 0u;
   if (given != nullptr && rasterized_) {
     uniforms.edge[0] = static_cast<std::uint32_t>(kScreenWidth * scale_);
     uniforms.edge[1] = static_cast<std::uint32_t>(kScreenHeight * scale_);

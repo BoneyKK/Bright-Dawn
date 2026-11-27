@@ -1247,3 +1247,231 @@ TEST(hardware_rasterizer_smooths_textures_as_the_processor_at_1x) {
   std::printf("    %d of %d scenes drawn the same\n", kScenes - failed, kScenes);
   CHECK(failed == 0);
 }
+
+namespace {
+
+// A main engine's picture made by hand for the graphics hardware: bank A as
+// its backgrounds' memory (0x06000000), a palette, and the registers of
+// each line.
+struct Handmade2D {
+  VideoMemory video;
+  std::array<std::uint8_t, 0x400> palette{};
+  bd::nds::Frame2D frame;
+  bd::nds::Video2D video_2d;
+
+  Handmade2D() {
+    video.set_control(VideoMemory::kA, static_cast<std::uint8_t>(VideoMemory::kEnable | 1));
+    frame.by_hardware = true;
+    frame.palettes.assign(palette.begin(), palette.end());
+    frame.sprites.assign(0x400, 0);
+  }
+  // Background palette entry `n` as five bits a part.
+  void colour(unsigned n, u32 five) {
+    palette[2 * n] = static_cast<std::uint8_t>(five);
+    palette[2 * n + 1] = static_cast<std::uint8_t>(five >> 8);
+  }
+  // Every line's register `word`.
+  void all(int word, u32 value) {
+    for (int y = 0; y < kHeight; ++y) frame.lines[static_cast<std::size_t>(y) * bd::nds::Frame2D::kWords + word] = value;
+  }
+  u32& at(int line, int word) { return frame.lines[static_cast<std::size_t>(line) * bd::nds::Frame2D::kWords + word]; }
+  // Drawn (wide if the hardware is), with no scene; a kept capture put in
+  // as `lines` say.
+  std::vector<u32> draw(std::uint64_t capture = 0, const bd::nds::CaptureLines* lines = nullptr) {
+    frame.palettes.assign(palette.begin(), palette.end());
+    bd::nds::Video2DRecorder recorder;
+    REQUIRE(recorder.place(video));
+    recorder.begin(video, true, false);
+    for (unsigned y = 0; y < kHeight; ++y) recorder.line(video, y);
+    REQUIRE(recorder.finish() == 0);
+    video_2d = recorder.video_2d();
+    static std::uint32_t version = 1000;
+    video_2d.versions.assign(VideoMemory::kAllPages, ++version);
+    Hardware3D& h = hardware();
+    Hardware3D::Picture picture;
+    picture.lines = &frame;
+    picture.video = &video_2d;
+    bool failed = false;
+    REQUIRE(h.draw(0, picture, nullptr, capture, lines, 0, 1, failed) != nullptr && !failed);
+    std::vector<u32> pixels;
+    REQUIRE(h.read_screen(0, pixels));
+    REQUIRE(pixels.size() == static_cast<std::size_t>(Hardware3D::picture_width(1, h.wide())) * kHeight);
+    return pixels;
+  }
+};
+
+// Five bits a part as the screen shows them: eight bits a part, from six
+// (the top two bits again at the bottom).
+u32 shown_colour(u32 five) {
+  const auto eight = [](u32 f) { return (f << 3) | (f >> 3); };
+  return eight(five & 31) | eight((five >> 5) & 31) << 8 | eight((five >> 10) & 31) << 16;
+}
+
+}  // namespace
+
+// Widescreen, the graphics hardware's 2D: a tiled background under the text
+// goes on past the DS's 256 columns at the same scroll, as its map repeats;
+// the text layer on top (a bar across the whole screen) and sprites do not.
+namespace {
+
+// Background 3 tiled, scrolled 4 across, priority 3, under a text bar on
+// tile row 10 (background 1, priority 0).
+void tiles_under_a_bar(Handmade2D& m) {
+  // Tiles 1 to 32 each of one colour (256 colours a tile), entry k + 1 a
+  // colour a little different from the next; 40 the text bar's.
+  for (u32 tile = 1; tile <= 40; ++tile)
+    for (u32 i = 0; i < 64; i += 4) m.video.write(0x06000000 + tile * 64 + i, 4, tile * 0x01010101u);
+  for (unsigned n = 1; n <= 40; ++n) m.colour(n, (n & 31) | ((31 - (n & 31)) << 10) | (n == 40 ? 0x3E0u : 0u));
+  // Background 3: map at 0x8000, 256 across, tile (column % 32) + 1 at
+  // every row; priority 3. Background 1: map at 0xA000, the bar on tile
+  // row 10; priority 0.
+  for (u32 row = 0; row < 32; ++row)
+    for (u32 column = 0; column < 32; ++column) {
+      m.video.write(0x06008000 + (row * 32 + column) * 2, 2, column % 32 + 1);
+      m.video.write(0x0600A000 + (row * 32 + column) * 2, 2, row == 10 ? 40u : 0u);
+    }
+  m.all(0, 1u << 16 | 1u << 9 | 1u << 11);                       // Mode 0, backgrounds 1 and 3, the picture.
+  m.all(1, 0x1480u << 16);                                       // 1: 256 colours, map 0xA000, priority 0.
+  m.all(2, (0x1083u) << 16);                                     // 3: 256 colours, map 0x8000, priority 3.
+  m.all(6, 4);                                                   // 3 scrolled 4 across.
+}
+
+}  // namespace
+
+TEST(hardware_2d_sides_go_on_with_the_background_s_tiles) {
+  Hardware3D& h = hardware();
+  h.set_wide(true);
+  Handmade2D m;
+  tiles_under_a_bar(m);
+  const std::vector<u32> pixels = m.draw();
+  const int width = Hardware3D::picture_width(1, true), left = (width - kWidth) / 2;
+  const auto at = [&](int x, int y) { return pixels[static_cast<std::size_t>(y) * width + left + x] & 0xFFFFFF; };
+  const auto wanted = [&](int x) {
+    const unsigned n = static_cast<unsigned>(((x + 4) & 255) >> 3) % 32 + 1;
+    return shown_colour((n & 31) | ((31 - (n & 31)) << 10));
+  };
+  int differ = 0;
+  for (const int y : {0, 50, 82, 191})
+    for (int x = -left; x < kWidth + left; ++x) {
+      // On line 82 the bar covers the DS's columns, not the sides.
+      const u32 want = y == 82 && x >= 0 && x < kWidth ? shown_colour(8 | 0x3E0u | 23u << 10) : wanted(x);
+      if (at(x, y) != want && differ++ < 5) std::printf("    (%d, %d): %06x, not %06x\n", x, y, at(x, y), want);
+    }
+  CHECK(differ == 0);
+  h.set_wide(false);
+}
+
+// Widescreen, a menu over a display capture of the field that the game has
+// blurred in its bank since: the DS's 256 columns show the bank as it is;
+// the sides show the kept capture's own sides, lighter or darker as the
+// game made it (CaptureLines::offset), under the text, which stays in the
+// middle.
+namespace {
+
+// The menu's test frame: capture 91 kept, its DS screen one colour
+// (kCaptureScreen), its sides another (kCaptureSides); a menu over it whose
+// background 2 is a bitmap at the capture's place that the game has filled
+// with another colour (kBankFive), and a text bar on lines 40 to 47.
+constexpr u32 kCaptureScreen = 20 | 30 << 6 | 40 << 12, kCaptureSides = 10 | 40 << 6 | 50 << 12;
+constexpr u32 kBankFive = 3 | 7 << 5 | 11 << 10;
+
+void keep_a_capture_with_sides(Hardware3D& h) {
+  // Each side's pixels as the processor drew them.
+  const std::vector<u32> screen(static_cast<std::size_t>(kWidth) * kHeight, kCaptureScreen);
+  const std::vector<u32> sides(static_cast<std::size_t>(2 * bd::nds::DisplayEngine::kSideColumns) * kHeight, kCaptureSides);
+  Frame empty;
+  const bd::nds::HardwareScene& scene = empty.r.build_scene(empty.frame, empty.video, true);
+  bd::nds::CaptureRecipe recipe;
+  REQUIRE(h.capture(scene, recipe, screen, 91, 1, {91, 0, 0}, &sides));
+}
+
+void menu_over_a_capture(Handmade2D& m, bd::nds::CaptureLines& lines) {
+  m.video.set_control(VideoMemory::kB, static_cast<std::uint8_t>(VideoMemory::kEnable | 1 | 1 << 3));
+  // Background 2: a bitmap of direct colours at 0x06000000 (where the
+  // capture was), 256 by 256, priority 3. Background 1: the text bar on
+  // tile row 5, priority 0, its tiles and map in bank B (0x06020000 on).
+  for (u32 i = 0; i < 0x20000; i += 2) m.video.write(0x06000000 + i, 2, 0x8000 | kBankFive);
+  for (u32 i = 0; i < 64; i += 4) m.video.write(0x06020000 + 64 + i, 4, 0x09090909u);
+  m.colour(9, 31);
+  for (u32 column = 0; column < 32; ++column) m.video.write(0x06022000 + (5 * 32 + column) * 2, 2, 1);
+  // Mode 5, backgrounds 1 and 2, the picture; tiles and maps from 0x20000.
+  m.all(0, 5 | 1u << 9 | 1u << 10 | 1u << 16 | 2u << 24 | 2u << 27);
+  m.all(1, 0x0480u << 16);  // 1: 256 colours, map 0x2000, priority 0.
+  m.all(2, 0x4087u);        // 2: bitmap, direct colours, 256 by 256, at 0, priority 3.
+  m.all(7, 256);            // pa = 256, pb = 0
+  m.all(8, 256u << 16);     // pc = 0, pd = 256
+  for (int y = 0; y < kHeight; ++y) {
+    m.at(y, 12) = static_cast<u32>(y << 8);
+    m.at(y, 23) = 1;  // Background 2 shows the kept capture at the sides.
+    bd::nds::CaptureLines::Line& l = lines.lines[static_cast<std::size_t>(y)];
+    l.on = true;
+    l.y0 = y * 256;
+  }
+  lines.sides_only = true;
+  lines.offset = {4, 0, -4};
+}
+
+}  // namespace
+
+TEST(hardware_2d_sides_show_a_changed_capture_under_a_menu) {
+  Hardware3D& h = hardware();
+  h.set_wide(true);
+  keep_a_capture_with_sides(h);
+  Handmade2D m;
+  bd::nds::CaptureLines lines;
+  menu_over_a_capture(m, lines);
+  const std::vector<u32> pixels = m.draw(91, &lines);
+  const int width = Hardware3D::picture_width(1, true), left = (width - kWidth) / 2;
+  const auto at = [&](int x, int y) { return pixels[static_cast<std::size_t>(y) * width + left + x] & 0xFFFFFF; };
+  const auto near = [](u32 a, u32 b) {
+    for (int k = 0; k < 24; k += 8)
+      if (std::abs(static_cast<int>((a >> k) & 255) - static_cast<int>((b >> k) & 255)) > 2) return false;
+    return true;
+  };
+  // The capture keeps five bits a part; then the offset, in sixty-fourths.
+  const auto part = [](u32 six, int k, int offset) {
+    const int five = static_cast<int>((six >> (6 * k)) & 63) >> 1;
+    return static_cast<u32>(std::clamp(static_cast<int>((five << 3) | (five >> 3)) + offset * 255 / 63, 0, 255));
+  };
+  const u32 side_wanted = part(kCaptureSides, 0, 4) | part(kCaptureSides, 1, 0) << 8 | part(kCaptureSides, 2, -4) << 16;
+  int differ = 0;
+  for (const int y : {0, 44, 100, 191})
+    for (int x = -left; x < kWidth + left; ++x) {
+      const bool middle = x >= 0 && x < kWidth;
+      const u32 want = middle && y == 44 ? shown_colour(31) : middle ? shown_colour(kBankFive) : side_wanted;
+      if (!near(at(x, y), want) && differ++ < 5) std::printf("    (%d, %d): %06x, not %06x\n", x, y, at(x, y), want);
+    }
+  CHECK(differ == 0);
+  h.set_wide(false);
+}
+
+// The side pass at native settings: the DS's 256 columns of a wide picture
+// are the 4:3 picture's, pixel for pixel, for a tiled background and for a
+// menu over a kept capture; and with widescreen off the sides are not drawn.
+TEST(hardware_2d_sides_leave_the_ds_s_columns_as_at_4_3) {
+  Hardware3D& h = hardware();
+  h.set_wide(true);
+  keep_a_capture_with_sides(h);
+  h.set_wide(false);
+  Handmade2D narrow_tiles, wide_tiles, narrow_menu, wide_menu;
+  tiles_under_a_bar(narrow_tiles);
+  tiles_under_a_bar(wide_tiles);
+  bd::nds::CaptureLines narrow_lines, wide_lines;
+  menu_over_a_capture(narrow_menu, narrow_lines);
+  menu_over_a_capture(wide_menu, wide_lines);
+  const std::vector<u32> narrow[2] = {narrow_tiles.draw(), narrow_menu.draw(91, &narrow_lines)};
+  h.set_wide(true);
+  const std::vector<u32> wide[2] = {wide_tiles.draw(), wide_menu.draw(91, &wide_lines)};
+  h.set_wide(false);
+  const int width = Hardware3D::picture_width(1, true), left = (width - kWidth) / 2;
+  for (int k = 0; k < 2; ++k) {
+    int differ = 0;
+    for (int y = 0; y < kHeight; ++y)
+      for (int x = 0; x < kWidth; ++x) {
+        const u32 a = narrow[k][static_cast<std::size_t>(y) * kWidth + x] & 0xFFFFFF;
+        const u32 b = wide[k][static_cast<std::size_t>(y) * width + left + x] & 0xFFFFFF;
+        if (a != b && differ++ < 5) std::printf("    %d (%d, %d): %06x wide, %06x at 4:3\n", k, x, y, b, a);
+      }
+    CHECK(differ == 0);
+  }
+}

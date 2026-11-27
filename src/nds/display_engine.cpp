@@ -312,6 +312,50 @@ unsigned DisplayEngine::matrix_backgrounds(std::uint32_t control) {
   return matrix;
 }
 
+DisplayEngine::BitmapLine DisplayEngine::bitmap_line_of(const u32* words, unsigned n) {
+  n &= 1;
+  BitmapLine b;
+  const u32 control = words[0], mode = control & 7, bg_control = (words[2] >> (16 * n)) & 0xFFFF;
+  const bool extended = n == 0 ? mode == 5 : mode >= 3 && mode <= 5;
+  if (!extended || (control & (kShowBackground0 << (2 + n))) == 0 || (bg_control & (1u << 7)) == 0 ||
+      (bg_control & (1u << 2)) == 0)
+    return b;
+  b.on = true;
+  b.repeated = (bg_control & (1u << 13)) != 0;
+  b.data = 0x06000000 + ((bg_control << 6) & 0x7C000);
+  b.x0 = static_cast<i32>(words[11 + 2 * n]);
+  b.y0 = static_cast<i32>(words[12 + 2 * n]);
+  b.pa = static_cast<std::int16_t>(words[7 + 2 * n] & 0xFFFF);
+  b.pb = static_cast<std::int16_t>(words[7 + 2 * n] >> 16);
+  b.pc = static_cast<std::int16_t>(words[8 + 2 * n] & 0xFFFF);
+  b.pd = static_cast<std::int16_t>(words[8 + 2 * n] >> 16);
+  b.width = static_cast<std::uint16_t>(kBitmapSizes[(bg_control >> 14) & 3][0]);
+  b.height = static_cast<std::uint16_t>(kBitmapSizes[(bg_control >> 14) & 3][1]);
+  return b;
+}
+
+unsigned DisplayEngine::side_backgrounds(const u32* words) {
+  const u32 control = words[0], mode = control & 7;
+  if (mode == 7) return 0;
+  const auto priority = [&](unsigned n) { return (words[1 + n / 2] >> (16 * (n & 1))) & 3; };
+  unsigned shown = 0;
+  for (unsigned n = 0; n < 4; ++n)
+    if ((control & (kShowBackground0 << n)) != 0 && !(mode == 6 && (n == 1 || n == 3))) shown |= 1u << n;
+  unsigned found = 0;
+  if ((shown & 1) != 0 && (control & (1u << 3)) != 0) {
+    // Under the 3D layer (of equal priority, the larger number is lower).
+    for (unsigned n = 1; n < 4; ++n)
+      if ((shown & (1u << n)) != 0 && priority(n) >= priority(0)) found |= 1u << n;
+    return found;
+  }
+  u32 top = 4;
+  for (unsigned n = 0; n < 4; ++n)
+    if ((shown & (1u << n)) != 0) top = std::min(top, priority(n));
+  for (unsigned n = 0; n < 4; ++n)
+    if ((shown & (1u << n)) != 0 && priority(n) > top) found |= 1u << n;
+  return found != 0 ? found : shown;
+}
+
 void DisplayEngine::record_line(int line, Frame2D& frame, std::uint32_t palette_copy, std::uint32_t sprite_copy,
                                 bool move_on) {
   u32* w = &frame.lines[static_cast<std::size_t>(line) * Frame2D::kWords];

@@ -212,6 +212,15 @@ struct CaptureLines {
     std::uint16_t row = 0, rows = 256;
   };
   std::array<Line, 192> lines{};
+  // Widescreen: put in only at the sides of the screen, where the side
+  // pixels are marked; the screen's 256 columns show video memory as it is
+  // (a capture the game changed since, as a menu blurs the field under it).
+  bool sides_only = false;
+  // And blurred there as the game blurred it: a box this many DS pixels
+  // each way from each pixel (0 for none).
+  std::uint8_t blur = 0;
+  // And this added to each part, in sixty-fourths: red, green, blue.
+  std::array<std::int8_t, 3> offset{};
 };
 
 // How the graphics hardware makes a display capture (nds::Display), as the

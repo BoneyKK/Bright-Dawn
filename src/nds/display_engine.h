@@ -155,6 +155,19 @@ class DisplayEngine {
   const BitmapLine& bitmap_line(unsigned background, int line) const {
     return bitmap_lines_[background & 1][static_cast<std::size_t>(line)];
   }
+  // The same for a line of the main engine the graphics hardware draws, from
+  // its registers as record_line() keeps them (Frame2D words); `n` 0 for
+  // background 2, 1 for background 3.
+  static BitmapLine bitmap_line_of(const std::uint32_t* words, unsigned n);
+  // Widescreen, where the graphics hardware draws a line (shaders/
+  // engine2d.frag): the main engine's backgrounds that can go on at the
+  // sides (a bit each), from the line's Frame2D words. Those under the 3D
+  // layer, where it is on; else those under the ones nearest the top (the
+  // text and icons), or all if all are as near. Of them, at each side, the
+  // one nearest the top with a pixel at the screen's edge goes on there,
+  // alone (a menu's background); the others do not, nor do sprites.
+  static unsigned side_backgrounds(const std::uint32_t* words);
+  std::uint16_t background_control(unsigned n) const { return background_control_[n & 3]; }
 
   // Widescreen: each line is drawn kSideColumns further on each side too,
   // as the layers go on there: a background through its matrix, or its map,

@@ -1,6 +1,7 @@
 #include "nds/display.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -11,6 +12,7 @@ namespace bd::nds {
 namespace {
 
 using u32 = std::uint32_t;
+using u64 = std::uint64_t;
 
 // Six bits a part made five, with the bit that says "a pixel is here".
 u32 five_bits_each(u32 colour) {
@@ -394,6 +396,9 @@ void Display::vertical_blank() {
   Shown main_shown;
   if (!by_hardware_[0]) main_shown = find_capture(main_, main_on_top ? top_ : bottom_, main_fill);
   if (!by_hardware_[1]) find_capture(second_, main_on_top ? bottom_ : top_, second_fill);
+  // A capture the game shows (not one put in at the sides only, below).
+  capture_shown_ = main_fill.fill == Fill::kCapture || second_fill.fill == Fill::kCapture || main_fill.capture != 0 ||
+                   second_fill.capture != 0;
   // The main engine's sides, by its display mode: the picture's; the bank
   // shown, which only a kept capture has; white; or black.
   for (auto& sides : screen_sides_) sides.clear();
@@ -409,9 +414,10 @@ void Display::vertical_blank() {
       case 0: sides.assign(main_.side_shown().size(), 0x3FFFFu); break;
       default: sides.assign(main_.side_shown().size(), 0u); break;
     }
+    if (main_shown.kept == nullptr && ((main_.control() >> DisplayEngine::kDisplayModeShift) & 3) == 1)
+      capture_at_sides(main_fill, &sides);
   }
-  capture_shown_ = main_fill.fill == Fill::kCapture || second_fill.fill == Fill::kCapture || main_fill.capture != 0 ||
-                   second_fill.capture != 0;
+  if (by_hardware_[0] && main_.sides()) capture_at_sides(main_fill, nullptr);
   ++statistics_.frames;
 }
 
@@ -427,7 +433,10 @@ bool Display::in_video_memory(const Kept& kept) const {
 }
 
 int Display::bitmap_row(const DisplayEngine& engine, int background, int line, unsigned bank) const {
-  const DisplayEngine::BitmapLine& b = engine.bitmap_line(static_cast<unsigned>(background), line);
+  return bitmap_row(engine.bitmap_line(static_cast<unsigned>(background), line), bank);
+}
+
+int Display::bitmap_row(const DisplayEngine::BitmapLine& b, unsigned bank) const {
   if (!b.on || b.width != 256) return -1;
   VideoMemory::Bank where;
   u32 offset = 0;
@@ -532,10 +541,148 @@ void Display::make_sides(const std::vector<std::uint32_t>& from, const Shown& sh
                          std::vector<std::uint32_t>& sides) const {
   sides = from;
   if (shown.kept == nullptr || shown.background < 0) return;
-  // Where the background that shows it is on top.
+  // Where the background that shows it is on top; and where nothing is,
+  // if it is a background that goes on at the sides (a bitmap that does
+  // not repeat ends at the screen's edge, but the capture is wider).
+  u32 words[Frame2D::kWords] = {};
+  words[0] = main_.control();
+  words[1] = u32{main_.background_control(0)} | u32{main_.background_control(1)} << 16;
+  words[2] = u32{main_.background_control(2)} | u32{main_.background_control(3)} << 16;
+  const bool under = shown.background >= 0 && (DisplayEngine::side_backgrounds(words) & (1u << shown.background)) != 0;
   const std::vector<std::uint8_t>& layers = main_.side_layers();
   for (std::size_t i = 0; i < sides.size() && i < layers.size(); ++i)
-    if (layers[i] == shown.background) sides[i] |= DisplayEngine::kCapturedBelow;
+    if (layers[i] == shown.background || (under && layers[i] == 5)) sides[i] |= DisplayEngine::kCapturedBelow;
+}
+
+Display::Blur Display::blur_between(const std::vector<std::uint32_t>& kept, const std::vector<std::uint8_t>& bank) {
+  Blur found;
+  if (kept.size() != 0x10000 || bank.size() < 0x20000) return found;
+  // At one pixel in 61 of those the capture wrote: the pixel now, and the
+  // capture's blurred by each box, a part each.
+  std::vector<std::array<int, 3 * (kMostBlur + 2)>> samples;
+  for (u32 at = 0; at < 0x10000; at += 61) {
+    if (kept[at] == kNotCaptured) continue;
+    std::array<int, 3 * (kMostBlur + 2)> sample{};
+    const u32 now = six_bits_each(bank[at * 2] | u32{bank[at * 2 + 1]} << 8);
+    for (int k = 0; k < 3; ++k) sample[static_cast<std::size_t>(k)] = static_cast<int>((now >> (6 * k)) & 63);
+    const int x = static_cast<int>(at & 255), y = static_cast<int>(at >> 8);
+    for (int r = 0; r <= kMostBlur; ++r) {
+      u32 sum[3] = {}, n = 0;
+      for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+          const u32 p = kept[static_cast<std::size_t>(std::clamp(y + dy, 0, 255) * 256 + std::clamp(x + dx, 0, 255))];
+          if (p == kNotCaptured) continue;
+          for (int k = 0; k < 3; ++k) sum[k] += (p >> (6 * k)) & 63;
+          ++n;
+        }
+      }
+      for (int k = 0; k < 3; ++k)
+        sample[static_cast<std::size_t>(3 * (r + 1) + k)] = static_cast<int>((sum[k] + n / 2) / n);
+    }
+    samples.push_back(sample);
+  }
+  if (samples.size() < 64) return found;
+  const auto count = static_cast<std::int64_t>(samples.size());
+  std::int64_t best_error = -1;
+  for (int r = 0; r <= kMostBlur; ++r) {
+    // The mean difference of each part, then the mean distance beyond it.
+    std::array<std::int64_t, 3> difference{};
+    for (const auto& sample : samples)
+      for (std::size_t k = 0; k < 3; ++k) difference[k] += sample[k] - sample[3 * static_cast<std::size_t>(r + 1) + k];
+    std::array<std::int8_t, 3> offset{};
+    for (std::size_t k = 0; k < 3; ++k)
+      offset[k] = static_cast<std::int8_t>(std::clamp<std::int64_t>((difference[k] + count / 2) / count, -16, 16));
+    std::int64_t error = 0;
+    for (const auto& sample : samples)
+      for (std::size_t k = 0; k < 3; ++k)
+        error += std::abs(sample[k] - std::clamp(sample[3 * static_cast<std::size_t>(r + 1) + k] + offset[k], 0, 63));
+    if (best_error < 0 || error < best_error) {
+      best_error = error;
+      found = {r, offset};
+    }
+  }
+  // Near: within two and a half sixty-fourths a part, on average (video
+  // memory keeps five bits a part, and the game's sums round).
+  if (best_error * 2 > 5 * 3 * count) found = Blur{};
+  return found;
+}
+
+void Display::capture_at_sides(ScreenFill& fill, std::vector<std::uint32_t>* sides) {
+  // Each line's registers: as recorded for the graphics hardware, or, where
+  // the processor drew the line, the background controls at the end.
+  const bool hardware = sides == nullptr;
+  Frame2D& frame = frames_2d_[0];
+  u32 now[Frame2D::kWords] = {};
+  now[0] = main_.control();
+  now[1] = u32{main_.background_control(0)} | u32{main_.background_control(1)} << 16;
+  now[2] = u32{main_.background_control(2)} | u32{main_.background_control(3)} << 16;
+  const auto words = [&](int line) {
+    return hardware ? &frame.lines[static_cast<std::size_t>(line) * Frame2D::kWords] : now;
+  };
+  // Of the backgrounds that can go on at the sides on `line` (background 2
+  // before 3: nearer the top, if as near), the first that is a bitmap in
+  // `bank`, and its row there; -1 for none.
+  const auto row_of = [&](int line, unsigned bank, int& background, DisplayEngine::BitmapLine& b) {
+    const unsigned candidates = DisplayEngine::side_backgrounds(words(line));
+    const unsigned order[2] = {
+        (words(line)[2] & 3) <= ((words(line)[2] >> 16) & 3) ? 2u : 3u,
+        (words(line)[2] & 3) <= ((words(line)[2] >> 16) & 3) ? 3u : 2u};
+    for (const unsigned n : order) {
+      if ((candidates & (1u << n)) == 0) continue;
+      b = hardware ? DisplayEngine::bitmap_line_of(words(line), n - 2) : main_.bitmap_line(n, line);
+      const int row = b.on ? bitmap_row(b, bank) : -1;
+      if (row < 0) continue;
+      background = static_cast<int>(n);
+      return row;
+    }
+    return -1;
+  };
+  // The kept capture in the bank most lines show there.
+  const Kept* chosen = nullptr;
+  unsigned chosen_lines = 0;
+  for (const Kept& kept : kept_) {
+    if (kept.number == 0 || kept.number > statistics_.frames) continue;
+    unsigned count = 0;
+    for (int line = 0; line < kHeight; ++line) {
+      int background;
+      DisplayEngine::BitmapLine b;
+      if (row_of(line, kept.bank, background, b) >= 0) ++count;
+    }
+    if (count > chosen_lines || (count != 0 && count == chosen_lines && kept.number > chosen->number)) {
+      chosen = &kept;
+      chosen_lines = count;
+    }
+  }
+  if (chosen == nullptr) return;
+  const Blur blur = blur_between(chosen->pixels, video_.contents(static_cast<VideoMemory::Bank>(chosen->bank)));
+  if (blur.radius < 0) return;
+  const std::vector<std::uint8_t>& layers = main_.side_layers();
+  constexpr std::size_t kAcross = 2 * DisplayEngine::kSideColumns;
+  for (int line = 0; line < kHeight; ++line) {
+    int background;
+    DisplayEngine::BitmapLine b;
+    const int row = row_of(line, chosen->bank, background, b);
+    if (row < 0) continue;
+    if (hardware) {
+      words(line)[23] |= 1u << (background - 2);
+    } else {
+      // Where that background is on top, or nothing is.
+      for (std::size_t i = static_cast<std::size_t>(line) * kAcross; i < (static_cast<std::size_t>(line) + 1) * kAcross &&
+                                                                     i < sides->size() && i < layers.size();
+           ++i)
+        if (layers[i] == background || layers[i] == 5) (*sides)[i] |= DisplayEngine::kCapturedBelow;
+    }
+    fill.lines.lines[static_cast<std::size_t>(line)] = {true, b.repeated, b.x0, b.y0, b.pa, b.pb, b.pc, b.pd,
+                                                        static_cast<std::uint16_t>(row), b.height};
+  }
+  fill.lines.sides_only = true;
+  fill.lines.blur = static_cast<std::uint8_t>(blur.radius);
+  fill.lines.offset = blur.offset;
+  fill.capture = chosen->number;
+  if (fill.fill == Fill::kNone) {
+    fill.fill = Fill::kCapture;
+    fill.brightness = main_.master_brightness();
+  }
 }
 
 Display::Shown Display::find_capture(const DisplayEngine& engine, std::vector<std::uint32_t>& screen,

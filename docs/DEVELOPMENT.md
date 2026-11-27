@@ -163,15 +163,50 @@ video memory as it scrolls; `DisplayEngine::streamed_source` finds it there),
 another background that scrolls is mirrored there, a fixed one (a text box)
 takes its edge pixel, and a flat 3D band across the whole screen (the battle
 log) is made longer, its texture not stretched.
-Its limits: where the graphics hardware draws the 2D (the field), the 2D
-(HUD, text, 2D backgrounds) does not reach the sides, which show the 3D
-alone (black on lines without it);
-the DS's box test (which the field uses to leave out models out of view) finds
-boxes by the wide view, so those models are drawn at the sides too; models
-a game leaves out by a test of its own can still appear at the sides late;
-3D on both screens at once (the title) stays 4:3; at 1x the polygon edges are not smoothed. The shaders are
-kept compiled in `src/app/hardware_shaders.h`; after a change to
-`src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
+Where the graphics hardware draws the 2D (the field, the menus), a second
+pass of `engine2d.frag` draws the main engine's sides: on each line and
+side, the lowest background under the 3D (without 3D, under the top
+priority in use) that has a pixel at the screen's edge goes on past the 256
+columns. A tiled one goes on at the same scroll, a repeating affine one
+through its matrix; a 512-wide map at scroll 0, or an affine one that does
+not repeat, is mirrored. Text, icons, the cursor and sprites stay at their
+DS places in the middle; the stylus still touches the middle only. Under a
+menu the game shows a display capture of the field as a bitmap (background
+2), changed in its bank (blurred and lightened); the sides show the kept
+capture's own sides, changed to match (see the list below). The DS's box
+test (which the field uses to leave out models out of view) finds boxes by
+a view a little wider than the wide picture, so those models are drawn at
+the sides, and are ready before they come in. Its limits: models a game
+leaves out by a test of its own can still appear at the sides late; 3D on
+both screens at once (the title) stays 4:3; at 1x the polygon edges are not
+smoothed.
+
+Rendering functions of our own: where the DS's way cannot give a higher
+resolution, the wide view or smoothing, the program has its own version.
+Each is used only while the setting that needs it is on; the DS's way stays
+as the reference, and at 1x with widescreen off and sharp textures the
+picture is the DS's, pixel for pixel (`bd_gpu_tests` compares them).
+
+- *Wide 2D sides* (`engine2d.frag`, side mode; `DisplayEngine::side_backgrounds`):
+  for the DS a 2D layer ends at 256 columns. For widescreen. It differs from
+  the DS in that only one background (and the 3D) is shown at the sides.
+- *Capture sides under a menu* (`Display::capture_at_sides`,
+  `Display::blur_between`, `compose.frag`): a DS capture holds 256 by 192
+  pixels only. For widescreen: the kept capture is wide, and the game's
+  change to it is measured from the bank (a box blur of radius 0 to 3 and
+  a change of each colour part), not taken from its code. On the cave save
+  the fit is within 1/64 of each part.
+- *Box test by a wider view* (`GeometryEngine::kWideBoxTimes`): the DS
+  tests boxes against its 4:3 view. For widescreen: x within 3/2 of w (the
+  wide picture shows 4/3). The game draws more models than it would.
+- *Smooth 3D textures* (`scene.frag`, `raster.comp`): the DS takes one texel.
+  For *Textures in 3D scenes: Smooth*: four texels mixed in each texture's
+  own place in the atlas, with its wrap, mirror and clamp. Polygons that use
+  different parts of a texture can show a seam between them, as with the
+  processor's smoothing.
+
+The shaders are kept compiled in `src/app/hardware_shaders.h`; after a
+change to `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
 `bd_gpu_tests` (ctest's `gpu`) draws test scenes with the graphics hardware
 and the processor and compares them; it needs a Vulkan device, and is
 skipped without one. Mesa's software device will do: on Ubuntu,

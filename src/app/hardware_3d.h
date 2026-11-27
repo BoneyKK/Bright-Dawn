@@ -192,6 +192,10 @@ class Hardware3D {
     // 1 where a kept capture is put in; 1 where the second source is a kept
     // capture; 1 where there is no scene; 1 where the sides are given.
     std::uint32_t put_info[4];
+    // 1 where the kept capture is put in at the sides only; the blur there
+    // (CaptureLines::blur); the difference added to each part there
+    // (CaptureLines::offset, plus 128, a byte each from red).
+    std::uint32_t put_sides[4];
   };
 
  private:

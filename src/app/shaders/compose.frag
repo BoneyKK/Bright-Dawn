@@ -37,7 +37,11 @@
 // capture is as wide as the scene, its bank's 256 columns in the middle: a
 // capture of all of each line of a bank has sides made as a screen's are
 // (the second source's sides too, if it is a kept capture); others' sides
-// are black.
+// are black. Where the put map is for the sides only (u_put_sides.x: a
+// capture the game has changed since, as a menu blurs the field under it),
+// the screen's 256 columns are as they are, and the sides show the capture
+// blurred as the game blurred it (u_put_sides.y: a box that many DS pixels
+// each way), lighter or darker as the game made it (u_put_sides.z).
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -110,6 +114,10 @@ layout(set = 3, binding = 0) uniform Compose {
   // where there is no scene (what is marked as 3D shows the 2D picture); w:
   // 1 where u_sides holds the sides.
   uvec4 u_put_info;
+  // x: 1 where u_put is put in at the sides only; y: blurred by a box that
+  // many DS pixels each way; z: then with this added to each part, in
+  // sixty-fourths plus 128, a byte each from red.
+  uvec4 u_put_sides;
 };
 
 uint fog_density(uint i) { return u_fog_table[i / 4u][i % 4u]; }
@@ -244,6 +252,21 @@ vec3 kept_colour(sampler2D kept, vec2 bank) {
   return texture(kept, uv).rgb;
 }
 
+// The same, blurred by a box `r` DS pixels each way: a pixel every DS pixel
+// across it (3 by 3 for the game's r = 1), at most 5 by 5.
+vec3 blurred_kept(sampler2D kept, vec2 bank, float r) {
+  const int n = min(int(r + 0.5), 2);
+  const float step = r / float(n);
+  vec3 sum = vec3(0.0);
+  for (int j = -n; j <= n; ++j)
+    for (int i = -n; i <= n; ++i) {
+      vec2 p = bank + vec2(float(i), float(j)) * step;
+      p.y = clamp(p.y, 0.0, 255.5);
+      sum += kept_colour(kept, p);
+    }
+  return sum / float((2 * n + 1) * (2 * n + 1));
+}
+
 // Where in its bank u_put shows at `at` of the screen; false where it shows
 // nothing. Past the line's ends (`sides`), as far as the capture is wide.
 bool put_at(vec2 at, bool sides, out vec2 bank) {
@@ -292,8 +315,12 @@ vec3 composed_from(vec4 screen, vec2 at, vec2 inside, bool lit, bool side) {
   // Under the 3D layer, a kept capture's pixel (nds::DisplayEngine::
   // kCapturedBelow).
   vec2 bank;
-  if ((bytes.r & 1u) != 0u && u_put_info.x != 0u && put_at(at, side, bank)) {
-    below = kept_colour(u_put, bank);
+  if ((bytes.r & 1u) != 0u && u_put_info.x != 0u && (side || u_put_sides.x == 0u) && put_at(at, side, bank)) {
+    below = side && u_put_sides.y != 0u ? blurred_kept(u_put, bank, float(u_put_sides.y)) : kept_colour(u_put, bank);
+    if (side && u_put_sides.x != 0u) {
+      const uvec3 o = (uvec3(u_put_sides.z) >> uvec3(0u, 8u, 16u)) & 0xFFu;
+      below = clamp(below + (vec3(o) - 128.0) / 63.0, 0.0, 1.0);
+    }
     if (lit) below = brightened(below, uint(u_brightness.x + 0.5) + 1u, u_brightness.y);
   }
   uint mark = bytes.a;
