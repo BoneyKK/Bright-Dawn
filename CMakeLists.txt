@@ -75,7 +75,7 @@ target_link_libraries(bd_core PUBLIC bd_build_flags Threads::Threads)
 
 # The frame log (src/debug/frame_log.h): what each frame costs. Its timing is
 # all in the header, which bd_nds and bd_runtime use too; this is its file.
-add_library(bd_debug STATIC src/debug/frame_log_file.cpp)
+add_library(bd_debug STATIC src/debug/frame_log_file.cpp src/debug/gpu_info.cpp src/debug/perf_report.cpp)
 target_link_libraries(bd_debug PUBLIC bd_core)
 
 add_library(bd_platform STATIC

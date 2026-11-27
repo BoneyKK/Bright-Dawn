@@ -44,6 +44,7 @@ add_executable(bd_tests
   test_video_memory.cpp
   test_font.cpp
   test_formats.cpp
+  test_debug_tools.cpp
   test_frame_log.cpp
   test_frontend.cpp
   test_wide_hud.cpp
