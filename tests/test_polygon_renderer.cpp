@@ -1064,7 +1064,17 @@ TEST(renderer_edge_colour_is_the_table_s_by_polygon_number) {
   const bd::nds::HardwareScene& scene = f.r.build_scene(f.frame, f.video);
   CHECK(scene.edge_marking && !scene.edge_one_pixel && !scene.anti_aliasing && scene.clear_number == 40);
   CHECK(scene.edge_colours[2][2] == 1.0f && scene.edge_colours[2][0] == 0.0f && scene.edge_colours[7][1] == 1.0f);
-  CHECK(scene.vertices[0].info[3] == 7 && scene.vertices[6].info[3] == 17 && scene.vertices[12].info[3] == 63);
+  using Scene = bd::nds::HardwareScene;
+  const auto number_of = [&](std::size_t i) { return scene.vertices[i].info[3] & Scene::kNumberMask; };
+  CHECK(number_of(0) == 7 && number_of(6) == 17 && number_of(12) == 63);
+  // Each corner says which of its triangle it is, and which of the
+  // triangle's sides are the rectangle's: of the first triangle, the two
+  // across from corners 0 and 2; of the second, across from 0 and 1. The
+  // cut between them is not a side.
+  const auto corner = [&](std::size_t i) { return (scene.vertices[i].info[3] >> Scene::kCornerShift) & 3; };
+  const auto sides = [&](std::size_t i) { return (scene.vertices[i].info[3] >> Scene::kSidesShift) & 7; };
+  CHECK(corner(0) == 0 && corner(1) == 1 && corner(2) == 2 && corner(3) == 0 && corner(5) == 2);
+  CHECK(sides(0) == 5 && sides(2) == 5 && sides(3) == 3 && sides(5) == 3);
 }
 
 // Two polygons side by side: only the nearer one's pixels next to the

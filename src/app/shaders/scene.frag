@@ -3,18 +3,27 @@
 // table), written with its colour times its alpha; and, for fog, its depth
 // (24 bits) and whether it takes fog (the pipelines keep the depth where the polygon keeps its depth, and
 // the mark where every polygon drawn on the pixel takes fog); and the number
-// of the opaque polygon drawn there, for outlines above the DS's resolution
-// (only the pipelines of opaque pixels write it).
+// of the opaque polygon drawn there, and whether the pixel is on its
+// polygon's edge, for outlines above the DS's resolution (only the
+// pipelines of opaque pixels write them).
+//
+// On the edge: as the DS marks a pixel of a polygon's edge (a pixel its
+// sides cross on that line, nds::PolygonRenderer::Pixel::edge), where a
+// side of the polygon is less than half a DS pixel away, across or down,
+// whichever is the nearer way (as a side crosses the DS pixel whose middle
+// is that near): not at the cuts between the triangles of one polygon, nor
+// where two polygons go through each other.
 #version 450
 
 layout(location = 0) in vec2 v_texel;
 layout(location = 1) in vec4 v_colour;
 layout(location = 2) flat in uvec4 v_info;
 layout(location = 3) in float v_w_depth;
+layout(location = 4) noperspective in vec3 v_corner;
 
 layout(location = 0) out vec4 o_colour;
 layout(location = 1) out vec4 o_fog;
-layout(location = 2) out vec4 o_number;  // r: the polygon number / 63; a: 1.
+layout(location = 2) out vec4 o_number;  // r: the polygon number / 63; g: 1 on its edge; a: 1.
 
 layout(set = 2, binding = 0) uniform sampler2D u_atlas;
 layout(set = 3, binding = 0) uniform Scene {
@@ -25,6 +34,7 @@ layout(set = 3, binding = 0) uniform Scene {
   // draws those of a translucent polygon so); w: 1 where depths are w
   // (nds::HardwareScene::depth_is_w).
   vec4 u_options;
+  vec4 u_edge;  // x: how many pixels a DS pixel is wide.
 };
 
 // A texel coordinate inside a texture `size` texels wide: repeated (every
@@ -68,7 +78,23 @@ vec4 smoothed_texel(vec2 at, ivec2 place, ivec2 size, uint flags) {
   return sum >= 0.5 ? vec4(parts / sum, 1.0) : vec4(0.0);
 }
 
+// 1 where a side of the polygon (v_info.w from bit 10, a bit for each side
+// of the triangle) is less than half a DS pixel away, across or down: the
+// distance to a side is the part of the corner across from it, over how
+// fast that part changes the way it changes most.
+float on_edge() {
+  const vec3 step = max(abs(dFdx(v_corner)), abs(dFdy(v_corner)));
+  const vec3 away = v_corner / max(step, vec3(1e-7));
+  const uint sides = (v_info.w >> 10) & 7u;
+  float nearest = 1e9;
+  for (int k = 0; k < 3; ++k)
+    if ((sides & (1u << uint(k))) != 0u) nearest = min(nearest, away[k]);
+  return nearest < 0.5 * u_edge.x ? 1.0 : 0.0;
+}
+
 void main() {
+  // Before anything is discarded, while the pixels around are there.
+  const float edge = on_edge();
   vec4 colour = v_colour;
   uint flags = v_info.z;
   uint mode = flags & 3u;
@@ -102,6 +128,6 @@ void main() {
   float d = clamp(u_options.w > 0.5 ? v_w_depth : gl_FragCoord.z, 0.0, 1.0);
   gl_FragDepth = d;
   uint depth = uint(d * 16777215.0 + 0.5);
-  o_number = vec4(float(v_info.w & 63u) / 63.0, 0.0, 0.0, 1.0);
+  o_number = vec4(float(v_info.w & 63u) / 63.0, edge, 0.0, 1.0);
   o_fog = vec4(vec3(uvec3(depth >> 16, (depth >> 8) & 255u, depth & 255u)) / 255.0, (flags & 128u) != 0u ? 1.0 : 0.0);
 }

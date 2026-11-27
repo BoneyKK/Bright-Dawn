@@ -298,6 +298,24 @@ picture is the DS's, pixel for pixel (`bd_gpu_tests` compares them).
   own place in the atlas, with its wrap, mirror and clamp. Polygons that use
   different parts of a texture can show a seam between them, as with the
   processor's smoothing.
+- *Outlines above 1x* (`scene.frag`, `edges.frag`, `nearby.frag`,
+  `outline.frag`; `Hardware3D::find_edges`): the DS marks outlines by its
+  spans at 256 by 192 (at 1x the compute rasterizer does the same). For a
+  higher resolution and widescreen: the rule is the DS's (a pixel on its
+  polygon's edge, next to one of another polygon number that is further
+  away), on the triangles' pixels. A pixel is on its polygon's edge where a
+  side of the polygon (not a cut between the triangles of one polygon) is
+  less than half a DS pixel away, across or down: the corners carry which
+  sides are the polygon's (`HardwareScene::kSidesShift`). So, as on the DS,
+  where two models go through each other (a foot in the floor, a house in
+  the ground) there is no outline along the cut, only near their sides.
+  The outline is one DS pixel wide on every side, soft on its inner side,
+  worked out once for each new scene (`outline.frag`, into a target of its
+  own) and only read when the scene is put into a screen or a capture. It
+  differs from the DS in that depths nearly equal at a cut can compare the
+  other way at a higher resolution (a few pixels at the feet of a model
+  standing in a translucent floor patch), and that the game's
+  anti-aliasing is left out.
 
 The shaders are kept compiled in `src/app/hardware_shaders.h`; after a
 change to `src/app/shaders`, run `tools/shaders/compile.py` (needs `glslangValidator`).
@@ -321,7 +339,10 @@ processor's, and the first polygon after which they do, with its corners;
 and for each screen, how far the pixels put in from the triangles and from
 the rasterizer are from the processor's. With `--time N` it draws the scene
 N times at `--scale` and gives the frame log's mean time (sync mode) of the
-scene pass and of putting it in (outlines included). Its text holds only numbers, and
+scene pass and of putting it in (outlines included). `--outlines off`,
+`one` or `original` draws the outlines so, not as the dump says (with the
+pictures of each, the outlined pixels at 1x and at a scale can be
+compared). Its text holds only numbers, and
 can be shared; the dump and the pictures `--out` writes hold the game's
 textures and are never to be committed (`*.scene` is ignored by git).
 `bd_gpu_tests` with `BD_FAILED_SCENES=DIR` writes a dump of each test

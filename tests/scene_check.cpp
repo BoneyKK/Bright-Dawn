@@ -1,7 +1,7 @@
 // bd_scene_check: a 3D scene dumped from the game (bright-dawn --dump-3d)
 // drawn by the processor and by the graphics hardware, compared, at 1x.
 //
-//   bd_scene_check DUMP [--out DIR] [--scale N] [--time N]
+//   bd_scene_check DUMP [--out DIR] [--scale N] [--time N] [--outlines off|one|original]
 //
 // Says how many pixels of the rasterizer's picture (shaders/raster.comp,
 // finish.comp) differ from the processor's and, if any do, the first
@@ -14,7 +14,9 @@
 // screen showing it N times, a new scene each time, waiting for the
 // graphics hardware after each pass (the frame log's sync mode), and says
 // the mean time of the scene pass and of putting the scene in (the frame
-// log's compose columns, outlines included). Needs a Vulkan device.
+// log's compose columns, outlines included), and of putting the same scene
+// in again (as in a frame without a new scene). With --outlines, draws the
+// outlines so (the setting) and not as the dump says. Needs a Vulkan device.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -103,15 +105,17 @@ void describe(const bd::nds::SceneDump& dump, std::size_t index) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fprintf(stderr, "usage: bd_scene_check DUMP [--out DIR] [--scale N] [--time N]\n");
+    std::fprintf(stderr, "usage: bd_scene_check DUMP [--out DIR] [--scale N] [--time N] [--outlines off|one|original]\n");
     return 2;
   }
   std::filesystem::path out;
   int scale = 1, times = 0;
+  std::string outlines;
   for (int i = 2; i + 1 < argc; i += 2) {
     const std::string arg = argv[i];
     if (arg == "--out") out = argv[i + 1];
     else if (arg == "--time") times = std::max(std::atoi(argv[i + 1]), 0);
+    else if (arg == "--outlines") outlines = argv[i + 1];
     else if (arg == "--scale") scale = std::clamp(std::atoi(argv[i + 1]), 1, bd::app::Hardware3D::kLargestScale);
   }
   bd::log::set_standard_error(true);  // What the graphics hardware notes, such as a full texture atlas.
@@ -121,6 +125,9 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
     return 1;
   }
+  if (outlines == "off") replay.dump.edge_marking = PolygonRenderer::EdgeMarking::Off;
+  else if (outlines == "one") replay.dump.edge_marking = PolygonRenderer::EdgeMarking::OnePixel;
+  else if (outlines == "original") replay.dump.edge_marking = PolygonRenderer::EdgeMarking::OriginalThickness;
   replay.prepare();
   SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
   SDL_Renderer* renderer = SDL_Init(SDL_INIT_VIDEO) ? SDL_CreateGPURenderer(nullptr, nullptr) : nullptr;
@@ -251,7 +258,7 @@ int main(int argc, char** argv) {
       const std::vector<u32>& screen = dump.screens[static_cast<std::size_t>(which)];
       if (dump.fills[static_cast<std::size_t>(which)] != 1 || screen.size() != static_cast<std::size_t>(kWidth) * kHeight) continue;
       const int compose = which == 0 ? bd::frame_log::kComposeTop : bd::frame_log::kComposeBottom;
-      double scene_us = 0, compose_us = 0;
+      double scene_us = 0, compose_us = 0, again_us = 0;
       for (int n = 0; n <= times; ++n) {
         const bd::nds::HardwareScene& scene = r.build_scene(dump.inputs.frame, replay.video);
         bd::frame_log::restart(bd::frame_log::kHost);
@@ -262,9 +269,14 @@ int main(int argc, char** argv) {
         if (n == 0) continue;  // The first is the textures' upload and the targets' making.
         scene_us += static_cast<double>(bd::frame_log::state().spent[bd::frame_log::kScenePass]) / ticks_per_us;
         compose_us += static_cast<double>(bd::frame_log::state().spent[compose]) / ticks_per_us;
+        // The same scene put in again, as in a frame without a new one.
+        bd::frame_log::restart(bd::frame_log::kHost);
+        replay.hardware.draw(which, screen, &scene, 0, nullptr, dump.brightness[static_cast<std::size_t>(which)], scale, failed);
+        bd::frame_log::switch_to(bd::frame_log::kHost);
+        again_us += static_cast<double>(bd::frame_log::state().spent[compose]) / ticks_per_us;
       }
-      std::printf("%s screen at %dx, %d times: scene pass %.0f us, compose %.0f us\n", which == 0 ? "top" : "bottom", scale,
-                  times, scene_us / times, compose_us / times);
+      std::printf("%s screen at %dx, %d times: scene pass %.0f us, compose %.0f us, compose again %.0f us\n",
+                  which == 0 ? "top" : "bottom", scale, times, scene_us / times, compose_us / times, again_us / times);
     }
   }
   return 0;

@@ -450,17 +450,25 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
         }
       }
       after_mask = mask;
+      // A fan of triangles from the first corner. Of triangle i, the side
+      // across from the first corner is a side of the polygon; the other two
+      // are where they are the first or the last triangle.
+      const auto fan = [&] {
+        for (unsigned i = 1; i + 1 < polygon.size; ++i) {
+          const u32 sides = 1u | (i + 2 == polygon.size ? 2u : 0u) | (i == 1 ? 4u : 0u);
+          const unsigned which[3] = {0, i, i + 1};
+          for (unsigned k = 0; k < 3; ++k) {
+            HardwareScene::Vertex& v = scene.vertices.emplace_back(corners[which[k]]);
+            v.info[3] |= k << HardwareScene::kCornerShift | sides << HardwareScene::kSidesShift;
+          }
+        }
+      };
       const auto put = [&](Kind k) {
         if (scene.runs.empty() || scene.runs.back().kind != k || scene.runs.back().depth_equal != shape.depth_equal ||
             scene.runs.back().number != number)
           scene.runs.push_back({static_cast<u32>(scene.vertices.size()), 0, k, shape.depth_equal, number});
-        // A fan of triangles from the first corner.
-        for (unsigned i = 1; i + 1 < polygon.size; ++i) {
-          scene.vertices.push_back(corners[0]);
-          scene.vertices.push_back(corners[i]);
-          scene.vertices.push_back(corners[i + 1]);
-          scene.runs.back().count += 3;
-        }
+        fan();
+        scene.runs.back().count += 3 * (polygon.size - 2);
       };
       if (kind == Kind::Shadow) put(Kind::ShadowGuard);
       // A translucent polygon of full alpha has pixels of full alpha where
@@ -489,11 +497,7 @@ const HardwareScene& PolygonRenderer::build_scene(const GeometryEngine::Frame& f
                               [&](const PolygonOutline& o) { return drawn_apart(o, outline); });
         }
         if (joins) {
-          for (unsigned i = 1; i + 1 < polygon.size; ++i) {
-            scene.vertices.push_back(corners[0]);
-            scene.vertices.push_back(corners[i]);
-            scene.vertices.push_back(corners[i + 1]);
-          }
+          fan();
           const u32 added = 3 * (polygon.size - 2);
           scene.runs[runs - 2].count += added;
           scene.runs[runs - 1].count += added;

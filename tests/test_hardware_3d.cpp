@@ -556,6 +556,61 @@ TEST(hardware_outlines_are_even_soft_and_on_the_nearer_group_at_4x) {
   }
 }
 
+// Above 1x, as on the DS, only a pixel on its polygon's edge (a side of the
+// polygon less than a DS pixel away) is outlined: where two polygons go
+// through each other, there is no line along the cut, away from their
+// sides. A floor that slants away (green, 8 to 15) and a wall (blue, 16 to
+// 23) through it: the floor is in front above line 60, the wall below.
+// Each DS pixel outlined at 4x is within a DS pixel of one the processor
+// outlines at 1x, and the other way round.
+TEST(hardware_outlines_leave_out_where_polygons_go_through_each_other) {
+  constexpr int kScale = 4, kRow = kWidth * kScale;
+  Frame f;
+  f.io.write(PolygonRenderer::kEdgeColours + 2, 2, 0x03E0);  // Green, 8 to 15.
+  f.io.write(PolygonRenderer::kEdgeColours + 4, 2, 0x7C00);  // Blue, 16 to 23.
+  f.polygon({Frame::vertex(20, 20, 63, 0x1000), Frame::vertex(20, 100, 63, 0x3000), Frame::vertex(120, 100, 63, 0x3000),
+             Frame::vertex(120, 20, 63, 0x1000)},
+            kOpaque | number(8));
+  f.polygon({Frame::vertex(40, 30, 63 << 6, 0x2000), Frame::vertex(40, 90, 63 << 6, 0x2000),
+             Frame::vertex(100, 90, 63 << 6, 0x2000), Frame::vertex(100, 30, 63 << 6, 0x2000)},
+            kOpaque | number(16));
+  // The outlined pixels: where outlines change the picture.
+  f.control(0);
+  const std::vector<u32> plain_1x = f.processor(), plain_4x = f.graphics_hardware(kScale);
+  f.control(PolygonRenderer::kEdgeMarking);
+  const std::vector<u32> outlined_1x = f.processor(), outlined_4x = f.graphics_hardware(kScale);
+  std::vector<bool> ds(static_cast<std::size_t>(kWidth) * kHeight), large(ds.size());
+  for (std::size_t i = 0; i < ds.size(); ++i) ds[i] = plain_1x[i] != outlined_1x[i];
+  for (std::size_t i = 0; i < plain_4x.size(); ++i)
+    if (plain_4x[i] != outlined_4x[i])
+      large[(i / kRow / kScale) * kWidth + (i % kRow) / kScale] = true;
+  const auto near = [](const std::vector<bool>& set, int x, int y) {
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int u = x + dx, v = y + dy;
+        if (u >= 0 && u < kWidth && v >= 0 && v < kHeight && set[static_cast<std::size_t>(v * kWidth + u)]) return true;
+      }
+    return false;
+  };
+  int count_ds = 0, count_large = 0, apart = 0, cut = 0;
+  for (int y = 0; y < kHeight; ++y)
+    for (int x = 0; x < kWidth; ++x) {
+      const auto i = static_cast<std::size_t>(y * kWidth + x);
+      count_ds += ds[i] ? 1 : 0;
+      count_large += large[i] ? 1 : 0;
+      apart += (large[i] && !near(ds, x, y)) || (ds[i] && !near(large, x, y)) ? 1 : 0;
+      // Along the cut, away from the sides.
+      if (y >= 57 && y <= 63 && x >= 45 && x < 95) cut += large[i] || ds[i] ? 1 : 0;
+    }
+  std::printf("    %d pixels outlined at 1x, %d at 4x, %d apart, %d along the cut\n", count_ds, count_large, apart, cut);
+  CHECK(count_ds > 100 && count_large > 100);
+  CHECK(apart == 0);
+  CHECK(cut == 0);
+  // The wall's bottom side, in front of the floor: outlined in blue.
+  const u32 below = outlined_4x[static_cast<std::size_t>((90 * kScale - 1) * kRow + 70 * kScale)];
+  CHECK(((below >> 16) & 255) > 200 && ((below >> 8) & 255) < 50);
+}
+
 TEST(outlines_are_looked_for_only_near_the_opaque_polygons_shown) {
   // An opaque square from (10, 10) to (40, 40) and a translucent one from
   // (100, 100) to (200, 180), in the DS's pixels; w is 2.

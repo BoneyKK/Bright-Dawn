@@ -1,7 +1,7 @@
 // Outlines above the DS's resolution (app/hardware_3d.h), after edges.frag:
 // for each block of 16 by 16 pixels of the scene, 1 (red) where an edge is
-// less than the outline's width away from the block, else 0. The compose
-// pass (compose.frag) looks for the nearest edge only in such blocks, so a
+// less than the outline's width away from the block, else 0. The outline
+// pass (outline.frag) looks for the nearest edge only in such blocks, so a
 // pixel far from every edge costs one read.
 #version 450
 

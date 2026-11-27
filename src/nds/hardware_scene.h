@@ -33,9 +33,19 @@ struct HardwareScene {
     // 0: the texture's index in `textures` (the drawing side puts the
     // texture's place in its atlas here: x, and y times 65536); 1: its
     // width, and height times 65536; 2: the flags below; 3: the polygon
-    // number (0 to 63).
+    // number (0 to 63), with which corner of its triangle this is and which
+    // of the triangle's sides are sides of the polygon (kCornerShift,
+    // kSidesShift).
     std::uint32_t info[4] = {};
   };
+  // info[3]: the corner (0 to 2) from this bit; and from kSidesShift, a bit
+  // for each side of the triangle that is a side of its polygon (the first
+  // for the side across from corner 0, and so on), not a cut between two
+  // triangles of it. A pixel near such a side is on the polygon's edge, as
+  // the DS marks the pixels of a polygon's edges for outlines.
+  static constexpr std::uint32_t kNumberMask = 63;
+  static constexpr std::uint32_t kCornerShift = 8;
+  static constexpr std::uint32_t kSidesShift = 10;
   // Flags (info[2]).
   static constexpr std::uint32_t kModeMask = 3;       // 0 modulated, 1 decal, 2 toon or highlight.
   static constexpr std::uint32_t kTextured = 1u << 2;

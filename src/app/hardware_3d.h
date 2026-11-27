@@ -187,10 +187,8 @@ class Hardware3D {
     float clear_colour[4];     // The clear colour, as a pixel with no alpha holds it.
     std::uint32_t fog_table[8][4];
     // Outlines from the scene's polygon numbers and depths (above the DS's
-    // resolution): width (0 for none), the clear plane's number and depth,
-    // the scale.
+    // resolution, shaders/outline.frag): 1 where they are drawn.
     std::uint32_t outline[4];
-    float outline_colours[8][4];
     std::uint32_t outline_bounds[4];  // Where outlines can be: opaque_bounds().
     // Widescreen: 1; where the DS's screen starts and how much of the width
     // it is (0 to 1 each); 1 where the sides show the scene.
@@ -235,7 +233,8 @@ class Hardware3D {
   // finishes them (shaders/finish.comp), into finished_.
   void rasterize_scene(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene);
   // Above 1x: the edges of the scene's opaque polygons within `area`
-  // (outline_area()), for the outlines the compose pass draws.
+  // (outline_area()), and the outlines drawn from them into outlines_, for
+  // the compose pass to put in.
   void find_edges(SDL_GPUCommandBuffer* commands, const nds::HardwareScene& scene,
                   const std::array<std::uint32_t, 4>& area);
   bool make_targets(int scale);
@@ -264,6 +263,7 @@ class Hardware3D {
   SDL_GPUGraphicsPipeline* engine2d_pipeline_ = nullptr;  // shaders/engine2d.frag
   SDL_GPUGraphicsPipeline* edges_pipeline_ = nullptr;     // shaders/edges.frag
   SDL_GPUGraphicsPipeline* nearby_pipeline_ = nullptr;    // shaders/nearby.frag
+  SDL_GPUGraphicsPipeline* outline_pipeline_ = nullptr;   // shaders/outline.frag
   SDL_GPUGraphicsPipeline* resolve_pipeline_ = nullptr;   // shaders/resolve.frag
   SDL_GPUSampler* nearest_ = nullptr;
   SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
@@ -310,7 +310,10 @@ class Hardware3D {
   // each pixel, 16 across to each of its own (shaders/edges.frag).
   SDL_GPUTexture* edges_ = nullptr;
   SDL_GPUTexture* nearby_ = nullptr;  // Where edges are near: a pixel for each 16 by 16 (shaders/nearby.frag).
-  bool outlined_ = false;  // edges_ is for the scene in scene_target_,
+  // The outlines, as wide as asked, in the edge colours: once for each scene
+  // (shaders/outline.frag), and put into each picture of it by compose.frag.
+  SDL_GPUTexture* outlines_ = nullptr;
+  bool outlined_ = false;  // edges_ and outlines_ are for the scene in scene_target_,
   std::array<std::uint32_t, 4> outline_bounds_{};  // where it is (all 0 for nowhere).
   SDL_GPUBuffer* layers_ = nullptr;      // The rasterizer's two layers, 16 bytes a pixel.
   SDL_GPUBuffer* finished_ = nullptr;    // And its pixels when finished, 4 bytes each.
