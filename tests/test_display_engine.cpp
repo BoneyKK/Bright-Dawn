@@ -1003,7 +1003,9 @@ TEST(engine_draws_a_moved_hud_text_area) {
   f.background(1, 1u << 8 | 1u << 2);  // Map in block 1, tiles in block 1.
   f.map(1, 0, 0, 0x2001);
   f.map(1, 0, 21, 0x2001);
+  f.map(1, 5, 21, 0x2002);
   f.tile_row(1, 1, 0, 0x21);
+  f.tile_row(1, 2, 0, 0x11111111);
   f.colour(33, kRed15);
   f.colour(34, kGreen15);
   f.control(0 | show(1) | kPicture);
@@ -1018,13 +1020,18 @@ TEST(engine_draws_a_moved_hud_text_area) {
   f.engine.set_hud(&plan);
   f.draw(168);
   CHECK(left(-kShift, 168) == kRed && left(-kShift + 1, 168) == kGreen);
-  CHECK(f.at(0, 168) == kGrey);
+  // x 0 shows x 43 (red); x 45 was in the area and nothing moved there.
+  CHECK(f.at(0, 168) == kRed && f.at(1, 168) == kRed && f.at(45, 168) == kGrey);
   CHECK(f.at(0, 0) == kRed && f.at(1, 0) == kGreen);
+  // Past the moved area the side goes on as the screen's edge pixel (this
+  // background is not scrolled), but the edge is in the area: none, not the
+  // pixel that moved there (here red, from x 43).
+  CHECK(left(-kShift - 1, 168) == kGrey);
   const std::vector<u32> first(f.engine.screen().begin(), f.engine.screen().begin() + 256);
   f.engine.set_hud(nullptr);
   f.draw(168);
   CHECK(std::equal(first.begin(), first.end(), f.engine.screen().begin()));
-  CHECK(f.at(0, 168) == kRed);
+  CHECK(f.at(0, 168) == kRed && f.at(1, 168) == kGreen && f.at(45, 168) == kRed);
 }
 
 // An empty plan draws as no plan, pixel for pixel (the setting "Centred").

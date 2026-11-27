@@ -220,7 +220,7 @@ picture is the DS's, pixel for pixel (`bd_gpu_tests` compares them).
   An element not found whole in a frame (in a fade, while a box opens) is
   drawn centred that frame. It differs from the DS in that the HUD is
   further apart; elements not in the list stay centred (a dialogue's
-  speech bubble, the status screen).
+  speech bubble, the characters and names on the status screen).
 - *Smooth 3D textures* (`scene.frag`, `raster.comp`): the DS takes one texel.
   For *Textures in 3D scenes: Smooth*: four texels mixed in each texture's
   own place in the atlas, with its wrap, mirror and clamp. Polygons that use

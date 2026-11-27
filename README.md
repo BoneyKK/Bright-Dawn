@@ -72,7 +72,7 @@ the state of each, and what comes next.
 
 1. Higher resolutions, 1: a display capture that the game uses as a texture, or changes itself (the middle of the blurred field behind the menu), is read at the DS's resolution.
 2. Higher resolutions, 2: the scroll of the 3D layer (BG0) is not used, by either 3D path.
-3. Widescreen, 2: the sides show one background only; HUD elements not yet known (a dialogue's bubble, the status screen) stay centred; 3D on both screens at once (the title) stays 4:3. Then mods.
+3. Widescreen, 2: the sides show one background only; HUD elements not yet known (a dialogue's bubble, the status screen's characters) stay centred; 3D on both screens at once (the title) stays 4:3. Then mods.
 
 The same, as a page of its own: [the project map](https://claude.ai/artifact/Gt9rSTaUus5uaPnmhWNwN8).
 <!-- project-map:end -->

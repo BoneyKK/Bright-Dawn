@@ -61,6 +61,10 @@ struct HudPlan {
   // or from x - dx (moved there), or kEmpty (moved away).
   static constexpr int kEmpty = INT_MIN;
   int source_x(unsigned layer, int line, int x) const;
+  // Whether x on `line` is in an area of background `layer`, where it was
+  // or where it went. A side that goes on as the screen's edge column does
+  // not take a pixel from such a place: the element moved, not the edge.
+  bool covers(unsigned layer, int line, int x) const;
   // Whether any area of background `layer` is on `line`.
   bool moves(unsigned layer, int line) const;
   bool moves_sprites() const;

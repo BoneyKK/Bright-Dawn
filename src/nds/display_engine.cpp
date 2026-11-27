@@ -726,8 +726,8 @@ void DisplayEngine::draw_tiles_moved(unsigned background, int line) {
       const int at = (bg_control & (1u << 14)) != 0         ? x
                      : (scroll_x_[background] & 0x1FF) == 0 ? (origin_ < 0 ? 0 : kWidth - 1)
                                                             : mirrored(x);
-      from = hud_->source_x(background, line, at);
-      if (from == HudPlan::kEmpty) continue;
+      if (hud_->covers(background, line, at)) continue;
+      from = at;
     }
     if (tile_pixel(background, line, from, colour)) place(background, i, colour);
   }

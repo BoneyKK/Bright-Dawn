@@ -198,6 +198,20 @@ int hud_source(uint layer, int at) {
   return at;
 }
 
+// nds::HudPlan::covers().
+bool hud_covers(uint layer, int at) {
+  for (uint i = 0u; i < hud_areas; ++i) {
+    const uint w0 = lines[kHudAt + 33 + 3 * int(i)], w1 = lines[kHudAt + 34 + 3 * int(i)];
+    const uint w2 = lines[kHudAt + 35 + 3 * int(i)];
+    const int dx = int(w2 << 16) >> 16;
+    if ((((w2 >> 16) & 0xFFu) & (1u << layer)) == 0u || line < (int(w1 << 16) >> 16) || line >= (int(w1) >> 16))
+      continue;
+    const int x0 = int(w0 << 16) >> 16, x1 = int(w0) >> 16;
+    if ((at >= x0 && at < x1) || (at >= x0 + dx && at < x1 + dx)) return true;
+  }
+  return false;
+}
+
 // Whether the HUD moved a pixel of background `layer` here.
 bool hud_moved_here(uint layer) {
   const int q = hud_source(layer, hud_x);
@@ -388,8 +402,10 @@ void draw_tiles(uint background) {
   if (hud_on) {
     const int q = hud_source(background, hud_x);
     if (q == kEmpty) return;
-    hx = q != hud_x ? q : hud_source(background, x);
-    if (hx == kEmpty) return;
+    // At a side, a pixel taken from the screen's edge (x, the side's rule
+    // applied) is none where the edge is part of a moved area.
+    if (q == hud_x && x != hud_x && hud_covers(background, x)) return;
+    hx = q != hud_x ? q : x;
   }
   const uint x_in = (uint(hx) + scroll_x(background)) & 0x1FFu;
   uint entry_at = map + ((x_in & 0xF8u) >> 2);

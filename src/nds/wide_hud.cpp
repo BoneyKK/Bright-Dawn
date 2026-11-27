@@ -212,6 +212,15 @@ int HudPlan::source_x(unsigned layer, int line, int x) const {
   return x;
 }
 
+bool HudPlan::covers(unsigned layer, int line, int x) const {
+  for (unsigned i = 0; i < area_count; ++i) {
+    const Area& a = areas[i];
+    if ((a.layers & (1u << layer)) == 0 || line < a.y0 || line >= a.y1) continue;
+    if ((x >= a.x0 && x < a.x1) || (x >= a.x0 + a.dx && x < a.x1 + a.dx)) return true;
+  }
+  return false;
+}
+
 bool HudPlan::moves(unsigned layer, int line) const {
   for (unsigned i = 0; i < area_count; ++i) {
     const Area& a = areas[i];
