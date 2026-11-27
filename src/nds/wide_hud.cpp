@@ -196,6 +196,7 @@ bool same_texture(const Polygon& a, const Polygon& b) { return a.texture == b.te
 // --- HudPlan
 
 static_assert(HudPlan::kWords == Frame2D::kHudWords);
+static_assert(33 + 3 * HudPlan::kMostAreas <= HudPlan::kMovedSpritesAt && HudPlan::kMovedSpritesAt + 4 <= HudPlan::kWords);
 
 int HudPlan::source_x(unsigned layer, int line, int x) const {
   for (unsigned i = 0; i < area_count; ++i) {
@@ -235,8 +236,10 @@ void HudPlan::to_words(std::uint32_t* words) const {
   std::fill(words, words + kWords, 0u);
   if (!on) return;
   words[0] = (1u << 31) | area_count;
-  for (unsigned i = 0; i < 128; ++i)
+  for (unsigned i = 0; i < 128; ++i) {
     words[1 + i / 4] |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(sprite_dx[i])) << (8 * (i % 4));
+    if (sprite_dx[i] != 0) words[kMovedSpritesAt + i / 32] |= 1u << (i % 32);
+  }
   const auto pair = [](int low, int high) {
     return static_cast<std::uint32_t>(static_cast<std::uint16_t>(low)) | static_cast<std::uint32_t>(static_cast<std::uint16_t>(high)) << 16;
   };

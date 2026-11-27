@@ -71,8 +71,11 @@ struct HudPlan {
   // For the graphics hardware (engine2d.frag reads them after the lines):
   // word 0, 1 << 31 if on and the number of areas; words 1 to 32, the
   // sprites' dx, a byte each; then three words an area: x0 and x1, y0 and
-  // y1, dx and layers (16 bits each, x0 or y0 or dx the lower).
+  // y1, dx and layers (16 bits each, x0 or y0 or dx the lower); from word
+  // kMovedSpritesAt, four words: a bit for each sprite moved (so that the
+  // sides' pass goes through those only).
   static constexpr std::size_t kWords = 64;
+  static constexpr std::size_t kMovedSpritesAt = 57;
   void to_words(std::uint32_t* words) const;
 
   void clear() { *this = HudPlan{}; }

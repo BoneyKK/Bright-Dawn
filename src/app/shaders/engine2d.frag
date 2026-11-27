@@ -174,6 +174,8 @@ int window_x;  // x, or at a side the screen's edge.
 
 const int kHudAt = kHeight * 24;
 const int kEmpty = -100000;  // nds::HudPlan::kEmpty
+const int kHudMovedAt = 57;  // nds::HudPlan::kMovedSpritesAt
+bool hud_sprites;  // Any sprite moved.
 bool hud_on;
 uint hud_areas;
 int hud_x;  // x before a side's background is mirrored.
@@ -203,7 +205,7 @@ bool hud_moved_here(uint layer) {
 }
 
 int hud_sprite_dx(uint i) {
-  if (!hud_on) return 0;
+  if (!hud_sprites) return 0;
   return int(lines[kHudAt + 1 + int(i / 4u)] << (24u - 8u * (i % 4u))) >> 24;
 }
 
@@ -239,7 +241,18 @@ void draw_sprites(bool window_pass) {
                                      ivec2(16, 8), ivec2(32, 8), ivec2(32, 16), ivec2(64, 32),
                                      ivec2(8, 16), ivec2(8, 32), ivec2(16, 32), ivec2(32, 64));
   const uint c = control();
+  const bool side = u_engine.w != 0u;
   for (uint i = 0u; i < 128u; ++i) {
+    // At a side, only the sprites the widescreen HUD moves: the next one
+    // from the bits of those (nds::HudPlan::kMovedSpritesAt).
+    if (side) {
+      const uint bits = lines[kHudAt + kHudMovedAt + int(i / 32u)] >> (i % 32u);
+      if (bits == 0u) {
+        i |= 31u;
+        continue;
+      }
+      i += uint(findLSB(bits));
+    }
     const uint a0 = sprite_word(i * 8u);
     const uint kind = (a0 >> 10) & 3u;
     if (((a0 >> 8) & 3u) == 2u || (kind == 2u) != window_pass) continue;
@@ -247,7 +260,6 @@ void draw_sprites(bool window_pass) {
     if (shape == 3u) continue;
     // The widescreen HUD can draw it further across; at a side, only those.
     const int hud_dx = hud_sprite_dx(i);
-    if (u_engine.w != 0u && hud_dx == 0) continue;
     const uint a1 = sprite_word(i * 8u + 2u);
     const ivec2 size = kSizes[shape * 4u + (a1 >> 14)];
     const int width = size.x, height = size.y;
@@ -595,6 +607,8 @@ void main() {
   hud_x = x;
   hud_on = (lines[kHudAt] >> 31) != 0u;
   hud_areas = min(lines[kHudAt] & 0xFu, 8u);
+  hud_sprites = hud_on && (lines[kHudAt + kHudMovedAt] | lines[kHudAt + kHudMovedAt + 1] | lines[kHudAt + kHudMovedAt + 2] |
+                           lines[kHudAt + kHudMovedAt + 3]) != 0u;
   for (int i = 0; i < 24; ++i) w[i] = lines[uint(line) * 24u + uint(i)];
   palette_at = w[21] * 256u;
   sprites_at = w[22] * 256u;
@@ -604,7 +618,7 @@ void main() {
   below = top;
   sprite_window = false;
   const uint c = control();
-  if ((c & (1u << 12)) != 0u && (!side || hud_on)) {
+  if ((c & (1u << 12)) != 0u && (!side || hud_sprites)) {
     if ((c & (1u << 15)) != 0u) draw_sprites(true);
     draw_sprites(false);
   }
