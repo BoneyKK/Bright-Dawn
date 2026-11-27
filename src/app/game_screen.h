@@ -209,7 +209,7 @@ class GameScreen {
   // the file is written (the overlay, the capture and the report use it).
   std::vector<std::string> row_names_;
   std::vector<double> row_values_;
-  bool shown_this_frame_ = false, captured_this_frame_ = false;
+  bool captured_this_frame_ = false;
   // Debug (launcher, Debug page; debug/frame_stepper.h).
   frame_log::FrameStepper stepper_;
   bool pause_step_ = false, overlay_allowed_ = false, overlay_shown_ = false, capture_hotkey_ = false;
@@ -224,7 +224,6 @@ class GameScreen {
   // The performance report, when asked for, and where it goes.
   std::unique_ptr<debug::PerfReport> perf_;
   std::filesystem::path perf_path_;
-  std::string start_settings_;  // The settings as the report gives them, taken at the start.
   // The graphics card, the known issues it matches, and the workarounds
   // applied (debug/gpu_info.h).
   debug::GpuDescription gpu_;
