@@ -146,6 +146,10 @@ constexpr const char* kUsage =
     "  --capture-from F      with --capture-every, from frame F on\n"
     "  --dump-3d FILE        with --frames, write the 3D scene of the last frame to FILE,\n"
     "                        to find faults in its drawing (it holds the game's textures)\n"
+    "  --pause-at N          hold the game after frame N (as the Pause and step hotkeys)\n"
+    "  --step-count M        with --pause-at, then run M frames one at a time, each\n"
+    "                        shown (and captured with --capture-every 1), and run on\n"
+    "  --perf-report FILE    at the end, write the performance report (JSON) to FILE\n"
     "  --check-2d            draw the 2D pictures with the processor too, and log where\n"
     "                        the graphics hardware's differ\n"
     "  --record-sound FILE   keep the game's sound in FILE (WAV, 16-bit stereo)\n"
@@ -273,16 +277,19 @@ bool open_window(App& a, gfx::Point size, bool vulkan) {
       a.gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, "vulkan");
       if (a.gpu != nullptr) a.renderer = SDL_CreateGPURenderer(a.gpu, a.window);
       if (a.renderer == nullptr) {
-        log::warning("window", std::string("SDL's GPU renderer cannot be used, so its Vulkan renderer draws instead: ") +
-                                   SDL_GetError());
+        const std::string why = SDL_GetError();
+        log::warning("window", "SDL's GPU renderer cannot be used, so its Vulkan renderer draws instead: " + why);
+        a.start_notes.push_back(std::string(a.gpu == nullptr ? "the Vulkan GPU device" : "SDL's GPU renderer") +
+                                " could not be made (" + why + "); SDL's Vulkan renderer draws instead");
         if (a.gpu != nullptr) SDL_DestroyGPUDevice(a.gpu);
         a.gpu = nullptr;
         a.renderer = SDL_CreateRenderer(a.window, "vulkan");
       }
     }
     if (a.renderer == nullptr) {
-      log::warning("window", std::string("Vulkan cannot be used, so the system's own renderer draws instead: ") +
-                                 SDL_GetError());
+      const std::string why = SDL_GetError();
+      log::warning("window", "Vulkan cannot be used, so the system's own renderer draws instead: " + why);
+      a.start_notes.push_back("Vulkan could not be used (" + why + "); the system's own renderer draws instead");
       if (a.window != nullptr) SDL_DestroyWindow(a.window);
       a.window = nullptr;
     }
@@ -484,8 +491,11 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
           frames_to_report = kNotNativeEvery;
           write_not_native(console, not_native);
         }
-        const bool go_on = screen->frame();
+        bool go_on = screen->frame();
         screen->log_frame();
+        // Pause and step (launcher, Debug page; --pause-at): held here, between
+        // frames, while the window is redrawn.
+        if (go_on) go_on = screen->hold_if_paused();
         hang_watch.resume();
         return go_on;
       };
@@ -785,6 +795,14 @@ int main(int argc, char** argv) {
       options.record_sound = argv[++i];
     } else if (arg == "--capture" && has_value) {
       options.capture = argv[++i];
+    } else if (arg == "--pause-at" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {
+      options.pause_at = static_cast<std::uint64_t>(number);
+      ++i;
+    } else if (arg == "--step-count" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {
+      options.step_count = static_cast<std::uint64_t>(number);
+      ++i;
+    } else if (arg == "--perf-report" && has_value) {
+      options.perf_report = app::from_utf8(argv[++i]);
     } else if (arg == "--check-2d") {
       options.check_2d = true;
     } else if (arg == "--dump-3d" && has_value) {

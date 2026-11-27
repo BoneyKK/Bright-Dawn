@@ -410,7 +410,7 @@
     {
       "part": "ui, app",
       "status": "done",
-      "now": "The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Settings, Quality of life: Start skips the opening of a new game. Report a problem opens a filled-in bug form on GitHub. A Debug page switches on the frame log: what each frame costs, part by part."
+      "now": "The launcher's first page is Play and your save, on the game's page of saves, and a gear to the settings; its other pages look like the game's settings menu; all from your ROM. The setup before the first build is in the program's own look. Settings book, pause menu. Settings, Quality of life: Start skips the opening of a new game. Report a problem opens a filled-in bug form on GitHub. A Debug page switches on the frame log (what each frame costs, part by part), pause and step by frame, a frame overlay, a capture hotkey, a performance report to paste to Claude, and the known GPU issues' workarounds."
     },
     {
       "part": "platform, core",

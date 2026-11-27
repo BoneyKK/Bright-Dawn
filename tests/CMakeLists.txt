@@ -166,7 +166,7 @@ endif()
 # The graphics hardware's 3D drawing against the processor's, on a Vulkan
 # device if there is one (else skipped).
 if(BD_BUILD_APP)
-  add_executable(bd_gpu_tests test_main.cpp test_hardware_3d.cpp)
+  add_executable(bd_gpu_tests test_main.cpp test_hardware_3d.cpp test_frame_overlay.cpp)
   target_link_libraries(bd_gpu_tests PRIVATE bd_app)
   # It loads the system's Vulkan driver, so it must use the system's C
   # library, as the window does (BD_STATIC_RUNTIME).

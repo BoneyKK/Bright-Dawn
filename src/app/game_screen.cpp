@@ -1,10 +1,14 @@
 #include "app/game_screen.h"
+#include "app/frame_overlay.h"
+#include "app/system_info.h"
 
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <string>
+#include <system_error>
 
 #include "core/log.h"
 #include "core/version.h"
@@ -48,6 +52,7 @@ GameScreen::~GameScreen() {
   if (app_.options.check_2d)
     log::writef(log::Level::Info, "2d", "check: %" PRIu64 " of %" PRIu64 " 2D pictures drawn by the graphics hardware differ",
                 differed_2d_, checked_2d_);
+  write_perf_report();
   frame_log::set_enabled(false);
   frame_log::state().sync = false;
   detach();
@@ -125,8 +130,20 @@ bool GameScreen::open(std::string& error) {
       frame_log_.reset();
     }
   }
+  // The performance report (--perf-report FILE; launcher, Debug page).
+  if (!app_.options.perf_report.empty()) perf_path_ = app_.options.perf_report;
+  else if (app_.settings.toggle(ui::key::kPerfReport)) perf_path_ = perf_report_path();
+  if (!perf_path_.empty()) {
+    perf_ = std::make_unique<debug::PerfReport>();
+    for (const std::string& note : app_.start_notes) perf_->note(0, "fallback", note);
+    if (!frame_log_) frame_log::state().sync = app_.settings.toggle(ui::key::kFrameLogSync);
+    log::info("frames", "the performance report is written at the end, to " + utf8(perf_path_));
+  }
+  // Frame by frame: --pause-at and --step-count.
+  stepper_.script(app_.options.pause_at, app_.options.step_count);
+  describe_gpu();
   apply_settings(true);
-  if (frame_log_) {
+  if (frame_log::enabled()) {
     // From here the console runs the game's code until the first frame ends.
     frame_log::restart(frame_log::kArm9);
     log_executed_ = console_->machine().executed();
@@ -160,6 +177,32 @@ void GameScreen::apply_settings(bool first) {
   bottom_only_key_ = bottom_key.empty() ? SDL_SCANCODE_UNKNOWN : SDL_GetScancodeFromName(bottom_key.c_str());
   bottom_only_button_ =
       bottom_button.empty() ? SDL_GAMEPAD_BUTTON_INVALID : SDL_GetGamepadButtonFromString(bottom_button.c_str());
+  // The debug hotkeys (launcher, Debug page), each while its setting is on.
+  pause_step_ = s.toggle(key::kPauseStep) || app_.options.pause_at != 0;
+  overlay_allowed_ = s.toggle(key::kFrameOverlay);
+  if (first || !overlay_allowed_) overlay_shown_ = overlay_allowed_;
+  capture_hotkey_ = s.toggle(key::kCaptureHotkey);
+  debug_keys_.clear();
+  for (const ui::Hotkey h : {ui::Hotkey::PauseFrame, ui::Hotkey::StepFrame, ui::Hotkey::ResumeFrame, ui::Hotkey::FrameOverlay,
+                             ui::Hotkey::CaptureFrame}) {
+    const bool on = h == ui::Hotkey::FrameOverlay ? overlay_allowed_ : h == ui::Hotkey::CaptureFrame ? capture_hotkey_ : pause_step_;
+    if (!on) continue;
+    const std::string k = ui::hotkey_binding(s, h, true), b = ui::hotkey_binding(s, h, false);
+    debug_keys_.push_back({h, k.empty() ? SDL_SCANCODE_UNKNOWN : SDL_GetScancodeFromName(k.c_str()),
+                           b.empty() ? SDL_GAMEPAD_BUTTON_INVALID : SDL_GetGamepadButtonFromString(b.c_str())});
+  }
+  // The overlay and the capture hotkey use the frame log's rows: it runs
+  // without its file.
+  if ((overlay_allowed_ || capture_hotkey_ || perf_) && !frame_log::enabled()) {
+    ticks_per_us_ = frame_log::measure_ticks_per_us();
+    frame_log::set_enabled(true);
+    frame_log::restart(frame_log::kArm9);
+  }
+  // The known GPU issues' workarounds (debug/gpu_info.h), unless switched
+  // off on the Debug page.
+  workarounds_ = 0;
+  if (s.toggle(key::kGpuWorkarounds))
+    for (const debug::GpuIssue* issue : gpu_issues_) workarounds_ |= issue->workarounds;
   layout_ = ui::layout_options(s);
   // Screen filtering (gfx::ScreenFilter). The screens' own textures are
   // scaled nearest, except for Smooth; for SharpSmoothEdges they are first
@@ -170,13 +213,14 @@ void GameScreen::apply_settings(bool first) {
     SDL_SetTextureScaleMode(texture, filter_ == gfx::ScreenFilter::Smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
   enlarged_stale_ = {true, true};
   // The 3D scenes: by the graphics hardware where it can, else here.
-  bool hardware = ui::hardware_3d(s);
+  bool hardware = ui::hardware_3d(s) && (workarounds_ & debug::kWorkaroundProcessor3D) == 0;
   if (hardware && !hardware_tried_) {
     hardware_tried_ = true;
     std::string why;
     if (!hardware_.open(app_.renderer, why)) {
       log::warning("3d", "the graphics hardware cannot draw 3D scenes, so the processor draws them: " + why);
       hardware_problem_ = "the graphics hardware cannot draw 3D scenes: " + why;
+      if (perf_) perf_->note(frames_run_, "gpu_error", hardware_problem_);
     }
   }
   const bool wanted = hardware;
@@ -184,7 +228,8 @@ void GameScreen::apply_settings(bool first) {
   if (wanted && !hardware) console_->display().hardware_3d_failed(hardware_problem_);
   else console_->display().set_hardware_3d(hardware);
   // The 2D pictures: by the graphics hardware too, unless asked otherwise.
-  console_->display().set_hardware_2d(hardware && !s.toggle(key::kProcessor2D));
+  console_->display().set_hardware_2d(hardware && !s.toggle(key::kProcessor2D) &&
+                                      (workarounds_ & debug::kWorkaroundProcessor2D) == 0);
   console_->display().set_check_2d(app_.options.check_2d);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
   if (!hardware) shown_3d_ = {};
@@ -208,10 +253,17 @@ void GameScreen::apply_settings(bool first) {
   // Vsync: adaptive where the system has it (a late picture is shown at
   // once rather than a whole refresh later), else plain. Without it the
   // window waits for the next step itself.
-  const bool want_vsync = s.toggle(key::kVsync);
+  const bool want_vsync = s.toggle(key::kVsync) || (workarounds_ & debug::kWorkaroundVsync) != 0;
   if (first || want_vsync != vsync_) {
-    vsync_ = want_vsync && (SDL_SetRenderVSync(app_.renderer, SDL_RENDERER_VSYNC_ADAPTIVE) ||
-                            SDL_SetRenderVSync(app_.renderer, 1));
+    vsync_ = false;
+    vsync_mode_ = "off";
+    if (want_vsync && SDL_SetRenderVSync(app_.renderer, SDL_RENDERER_VSYNC_ADAPTIVE)) {
+      vsync_ = true;
+      vsync_mode_ = "adaptive";
+    } else if (want_vsync && SDL_SetRenderVSync(app_.renderer, 1)) {
+      vsync_ = true;
+      vsync_mode_ = "every refresh";
+    }
     if (!want_vsync) SDL_SetRenderVSync(app_.renderer, 0);
     log::info("window", std::string("vsync ") + (vsync_ ? "on" : want_vsync ? "asked for, but not available" : "off"));
   }
@@ -288,6 +340,11 @@ bool GameScreen::frame() {
       if (frame_log::enabled()) SDL_FlushRenderer(app_.renderer);
     }
     if (first && capture_now) capture(capture_last);
+    if (first && capture_asked_) capture_this_frame();
+    if (overlay_shown_) {
+      frame_log::Scope frame_log_scope(frame_log::kFilter);
+      draw_overlay();
+    }
     if (frame_log::enabled() && app_.gpu != nullptr) {
       frame_log::Scope frame_log_scope(frame_log::kVsyncWait);
       SDL_WaitForGPUSwapchain(app_.gpu, app_.window);
@@ -320,14 +377,15 @@ bool GameScreen::frame() {
 // The frame log's row: the times since the last row (they add
 // up to total_us), then counts, then flags.
 void GameScreen::log_frame() {
-  if (!frame_log_) return;
+  if (!frame_log::enabled()) return;
   frame_log::State& s = frame_log::state();
   frame_log::switch_to(s.current);  // The times up to now.
-  const double per_us = frame_log_->ticks_per_us();
+  const double per_us = frame_log_ ? frame_log_->ticks_per_us() : ticks_per_us_;
   const nds::Display& display = console_->display();
   const bool hardware = hardware_.is_open() && !hardware_failed_ && ui::hardware_3d(app_.settings);
-  if (!frame_log_->started()) {
-    std::vector<std::string> names{"frame", "total_us"};
+  if (row_names_.empty()) {
+    std::vector<std::string>& names = row_names_;
+    names = {"frame", "total_us"};
     for (const char* n : frame_log::kColumnNames) names.emplace_back(n);
     for (const char* n : {"arm9_instructions", "interpreted_instructions", "polygons", "vertices", "gpu_vertices", "scene_draws",
                           "scene_textures", "textures_decoded", "decoded_bytes", "textures_uploaded", "texture_bytes",
@@ -335,6 +393,8 @@ void GameScreen::log_frame() {
                           "timer_switches", "shown", "gpu_3d", "3d_top", "3d_bottom", "capture_made", "capture_shown",
                           "raster_ran", "edge_marking", "anti_aliasing", "fog", "scale", "main_on_top"})
       names.emplace_back(n);
+  }
+  if (frame_log_ && !frame_log_->started()) {
     std::string driver = "none", device = "none", version;
     if (app_.gpu != nullptr) {
       if (const char* d = SDL_GetGPUDeviceDriver(app_.gpu)) driver = d;
@@ -367,7 +427,7 @@ void GameScreen::log_frame() {
                   "times in microseconds, each frame split so that the times add up to total_us; the timer costs "
                   "about %.0f ns a switch (timer_switches); vsync %s; game code: %s",
                   frame_log_->ns_per_switch(), vsync_ ? "on" : "off", title_.c_str());
-    frame_log_->start({line, second}, names);
+    frame_log_->start({line, second}, row_names_);
   }
   std::vector<double> v;
   v.reserve(80);
@@ -399,7 +459,32 @@ void GameScreen::log_frame() {
     v.push_back(f ? 1 : 0);
   v.push_back(hardware ? scale_3d() : 1);
   v.push_back(main_on_top ? 1 : 0);
-  frame_log_->row(v);
+  if (frame_log_) frame_log_->row(v);
+  row_values_ = v;
+  if (perf_) {
+    debug::PerfFrame f;
+    f.frame = frames_run_;
+    f.total_us = total / per_us;
+    for (std::size_t i = 0; i < f.us.size(); ++i) f.us[i] = static_cast<float>(static_cast<double>(s.spent[i]) / per_us);
+    f.polygons = static_cast<std::uint32_t>(c.polygons);
+    f.vertices = static_cast<std::uint32_t>(c.vertices);
+    f.shown = c.pictures != 0;
+    f.top_3d = top_3d;
+    f.bottom_3d = bottom_3d;
+    f.capture_shown = captured(0) || captured(1);
+    f.top_2d_gpu = display.screen_2d(0).by_hardware;
+    f.bottom_2d_gpu = display.screen_2d(1).by_hardware;
+    f.gpu_3d = hardware;
+    if (c.textures_uploaded != 0) f.events |= debug::kEventAtlasRefill;
+    if (c.targets_made != 0) f.events |= debug::kEventPipeline;
+    if (c.gpu_captures != 0 || c.capture_made || captured_this_frame_) f.events |= debug::kEventCapture;
+    perf_->add(f);
+  }
+  captured_this_frame_ = false;
+  if (!capture_row_pending_.empty()) {
+    write_capture_row(capture_row_pending_);
+    capture_row_pending_.clear();
+  }
   // The next row: times from now; the scene's flags stay until the next scene.
   for (std::uint64_t& t : s.spent) t = 0;
   s.switches = 0;
@@ -447,12 +532,13 @@ bool GameScreen::handle_events() {
         if (event.key.repeat) break;
         if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
           menu_open_ = true;
-        } else {
+        } else if (!debug_hotkey(event.key.scancode, SDL_GAMEPAD_BUTTON_INVALID)) {
           handle_window_key(event.key);
         }
         break;
       case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         if (event.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) menu_open_ = true;
+        else if (debug_hotkey(SDL_SCANCODE_UNKNOWN, static_cast<SDL_GamepadButton>(event.gbutton.button))) break;
         else if (bottom_only_button_ != SDL_GAMEPAD_BUTTON_INVALID && event.gbutton.button == bottom_only_button_)
           switch_bottom_screen_only();
         break;
@@ -474,6 +560,7 @@ bool GameScreen::handle_events() {
         break;
       case SDL_EVENT_RENDER_DEVICE_RESET:
         log::warning("window", "the graphics device was reset");
+        if (perf_) perf_->note(frames_run_, "device_lost", "the graphics device was reset (SDL_EVENT_RENDER_DEVICE_RESET)");
         enlarged_stale_ = {true, true};
         break;
       case SDL_EVENT_WINDOW_RESIZED:
@@ -703,6 +790,7 @@ void GameScreen::give_up_hardware(const char* why) {
   layout_.wide_screen = -1;
   hardware_problem_ = std::string("the graphics hardware failed to ") + why;
   console_->display().hardware_3d_failed(hardware_problem_);
+  if (perf_) perf_->note(frames_run_, "gpu_error", hardware_problem_);
 }
 
 int GameScreen::main_screen() const {
@@ -847,6 +935,7 @@ void GameScreen::dump_3d() {
 }
 
 void GameScreen::capture(bool last) {
+  captured_this_frame_ = true;
   SDL_Surface* surface = SDL_RenderReadPixels(app_.renderer, nullptr);
   if (surface == nullptr) {
     log::error("window", std::string("cannot read the window back: ") + SDL_GetError());
@@ -986,6 +1075,251 @@ void GameScreen::draw_menu() {
   ImGui::PopStyleColor();
   app_.settings_changed(book_.draw(app_.settings));
   ImGui::End();
+}
+
+bool GameScreen::debug_hotkey(SDL_Scancode code, SDL_GamepadButton button) {
+  for (const DebugKey& d : debug_keys_) {
+    if (!((code != SDL_SCANCODE_UNKNOWN && d.code == code) || (button != SDL_GAMEPAD_BUTTON_INVALID && d.button == button)))
+      continue;
+    switch (d.hotkey) {
+      case ui::Hotkey::PauseFrame:
+        stepper_.pause();
+        break;
+      case ui::Hotkey::StepFrame:
+        stepper_.step();
+        break;
+      case ui::Hotkey::ResumeFrame:
+        if (stepper_.paused()) log::info("game", "frame by frame: runs on");
+        stepper_.resume();
+        break;
+      case ui::Hotkey::FrameOverlay:
+        overlay_shown_ = !overlay_shown_;
+        break;
+      case ui::Hotkey::CaptureFrame:
+        capture_asked_ = true;
+        break;
+      default:
+        break;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool GameScreen::hold_if_paused() {
+  if (!stepper_.after_frame(frames_run_)) return true;
+  log::writef(log::Level::Debug, "game", "frame by frame: held after frame %" PRIu64, frames_run_);
+  // Nothing of the game runs: no code, timing, sound or input. The window
+  // is redrawn, from the screens as they are, and the hotkeys read.
+  for (;;) {
+    if (!handle_events()) return false;
+    if (menu_open_ && !run_menu()) return false;
+    if (app_.settings.revision() != settings_seen_) apply_settings(false);
+    draw();
+    if (capture_asked_) capture_this_frame();
+    if (overlay_shown_) draw_overlay();
+    SDL_RenderPresent(app_.renderer);
+    if (stepper_.held_redrawn()) break;
+    if (!vsync_) SDL_Delay(15);
+  }
+  // The time held is no frame's.
+  clock_.restart(SDL_GetTicksNS());
+  second_started_ = SDL_GetTicksNS();
+  frames_this_second_ = pictures_this_second_ = 0;
+  if (frame_log::enabled()) {
+    frame_log::State& s = frame_log::state();
+    s.since = frame_log::ticks();
+    for (std::uint64_t& t : s.spent) t = 0;
+    s.switches = 0;
+  }
+  return true;
+}
+
+void GameScreen::draw_overlay() {
+  draw_frame_overlay(app_.renderer, frame_overlay_lines(frames_run_, row_names_, row_values_, gpu_.name, stepper_.paused()));
+}
+
+bool GameScreen::write_window(const std::filesystem::path& file) {
+  SDL_Surface* surface = SDL_RenderReadPixels(app_.renderer, nullptr);
+  if (surface == nullptr) {
+    log::error("window", std::string("cannot read the window back: ") + SDL_GetError());
+    return false;
+  }
+  const bool written = SDL_SaveBMP(surface, utf8(file).c_str());
+  if (!written) log::error("window", "cannot write " + utf8(file) + ": " + SDL_GetError());
+  SDL_DestroySurface(surface);
+  return written;
+}
+
+void GameScreen::capture_this_frame() {
+  capture_asked_ = false;
+  captured_this_frame_ = true;
+  if (app_.user_data.empty()) {
+    log::warning("window", "capture this frame: there is no user data folder to write it to");
+    return;
+  }
+  const std::filesystem::path folder = app_.user_data / "captures";
+  std::error_code error;
+  std::filesystem::create_directories(folder, error);
+  const std::string name = "frame-" + std::to_string(frames_run_);
+  if (write_window(folder / (name + ".bmp"))) log::info("window", "this frame was written to " + utf8(folder / (name + ".bmp")));
+  // Its frame-log row: there if the game is held after it, else made at
+  // the frame's end.
+  const std::filesystem::path row = folder / (name + ".csv");
+  if (!row_values_.empty() && static_cast<std::uint64_t>(row_values_[0]) == frames_run_) write_capture_row(row);
+  else capture_row_pending_ = row;
+}
+
+void GameScreen::write_capture_row(const std::filesystem::path& file) {
+  std::ofstream out(file, std::ios::binary);
+  for (std::size_t i = 0; i < row_names_.size(); ++i) out << (i == 0 ? "" : ",") << row_names_[i];
+  out << "\n";
+  char text[32];
+  for (std::size_t i = 0; i < row_values_.size(); ++i) {
+    std::snprintf(text, sizeof text, "%.6g", row_values_[i]);
+    out << (i == 0 ? "" : ",") << text;
+  }
+  out << "\n";
+  if (!out) log::warning("window", "cannot write " + utf8(file));
+}
+
+void GameScreen::describe_gpu() {
+  // The driver's own description (a Vulkan instance of its own) only where
+  // it is used: the report, the overlay, or a table to match.
+  const bool ask_driver = perf_ || app_.settings.toggle(key::kFrameOverlay) || !debug::known_gpu_issues().empty();
+  gpu_ = app::describe_gpu(app_.gpu, ask_driver);
+  if (app_.gpu == nullptr) return;
+  const debug::DriverVersion version = debug::decode_driver_version(gpu_.vendor_id, gpu_.driver_id, gpu_.driver_version, gpu_.os);
+  char ids[64] = "";
+  if (gpu_.vendor_id != 0) std::snprintf(ids, sizeof ids, " (vendor 0x%04x, device 0x%04x)", gpu_.vendor_id, gpu_.device_id);
+  log::info("window", "graphics card: " + (gpu_.name.empty() ? std::string("name unknown") : gpu_.name) + ids + ", " +
+                          gpu_.backend + ", driver " +
+                          (gpu_.driver_name.empty() ? gpu_.sdl_driver_name : gpu_.driver_name) + " " +
+                          (gpu_.driver_version != 0 ? version.text() : gpu_.sdl_driver_version) +
+                          (gpu_.driver_info.empty() ? gpu_.sdl_driver_info.empty() ? "" : " (" + gpu_.sdl_driver_info + ")"
+                                                    : " (" + gpu_.driver_info + ")"));
+  gpu_issues_ = debug::match_gpu_issues(gpu_, debug::known_gpu_issues());
+  const bool apply = app_.settings.toggle(key::kGpuWorkarounds);
+  for (const debug::GpuIssue* issue : gpu_issues_) {
+    const std::string text = std::string("known GPU issue: ") + std::string(issue->problem) + "; workaround: " +
+                             debug::workaround_names(issue->workarounds) + (apply ? "" : " (switched off on the Debug page)");
+    log::warning("window", text);
+    if (perf_) perf_->note(0, "known_gpu_issue", text);
+  }
+}
+
+void GameScreen::write_perf_report() {
+  if (!perf_) return;
+  using Section = debug::PerfReport::Section;
+  std::vector<Section> sections;
+  sections.push_back(system_section());
+  {
+    Section g;
+    g.name = "gpu";
+    const debug::DriverVersion version = debug::decode_driver_version(gpu_.vendor_id, gpu_.driver_id, gpu_.driver_version, gpu_.os);
+    const char* renderer = SDL_GetRendererName(app_.renderer);
+    char hex[16];
+    std::string summary = gpu_.backend.empty() ? std::string("no SDL GPU device; renderer ") + (renderer ? renderer : "none")
+                                               : gpu_.backend + ": " + (gpu_.name.empty() ? "name unknown" : gpu_.name);
+    if (!gpu_.device_type.empty()) summary += " (" + gpu_.device_type + ")";
+    if (gpu_.driver_version != 0) summary += ", driver " + gpu_.driver_name + " " + version.text();
+    else if (!gpu_.sdl_driver_version.empty()) summary += ", driver " + gpu_.sdl_driver_name + " " + gpu_.sdl_driver_version;
+    if (gpu_.vram_bytes != 0) summary += ", " + std::to_string(gpu_.vram_bytes >> 20) + " MB";
+    g.text("summary", summary);
+    g.text("backend", gpu_.backend.empty() ? "none" : gpu_.backend);
+    g.text("renderer", renderer != nullptr ? renderer : "none");
+    g.text("name", gpu_.name);
+    g.text("vendor", debug::vendor_name(gpu_.vendor_id));
+    std::snprintf(hex, sizeof hex, "0x%04x", gpu_.vendor_id);
+    g.text("vendor_id", hex);
+    std::snprintf(hex, sizeof hex, "0x%04x", gpu_.device_id);
+    g.text("device_id", hex);
+    g.text("device_type", gpu_.device_type.empty() ? "unknown" : gpu_.device_type);
+    g.number("driver_id", gpu_.driver_id);
+    g.text("driver_name", gpu_.driver_name);
+    g.text("driver_info", gpu_.driver_info);
+    g.number("driver_version_raw", gpu_.driver_version);
+    g.text("driver_version", gpu_.driver_version != 0 ? version.text() : "");
+    g.text("driver_version_scheme", gpu_.driver_version != 0 ? version.scheme : "");
+    g.text("api_version", gpu_.api_version != 0 ? debug::api_version_text(gpu_.api_version) : "");
+    g.number("vram_mb", static_cast<double>(gpu_.vram_bytes >> 20));
+    g.text("sdl_driver_name", gpu_.sdl_driver_name);
+    g.text("sdl_driver_version", gpu_.sdl_driver_version);
+    g.text("sdl_driver_info", gpu_.sdl_driver_info);
+    std::string fallbacks;
+    for (const std::string& n : app_.start_notes) fallbacks += (fallbacks.empty() ? "" : "; ") + n;
+    g.text("start_fallbacks", fallbacks);
+    g.text("hardware_3d_problem", hardware_problem_);
+    sections.push_back(std::move(g));
+  }
+  {
+    Section k;
+    k.name = "known_gpu_issues";
+    const bool apply = app_.settings.toggle(key::kGpuWorkarounds);
+    k.text("summary", gpu_issues_.empty() ? "no known GPU issue matches"
+                                          : std::to_string(gpu_issues_.size()) + " known GPU issue(s) match; workarounds " +
+                                                (apply ? debug::workaround_names(workarounds_) : "switched off"));
+    k.number("matched", static_cast<double>(gpu_issues_.size()));
+    k.flag("workarounds_on", apply);
+    k.text("workarounds_applied", debug::workaround_names(workarounds_));
+    for (std::size_t i = 0; i < gpu_issues_.size(); ++i)
+      k.text("issue_" + std::to_string(i + 1), std::string(gpu_issues_[i]->problem) + " -> " +
+                                                   debug::workaround_names(gpu_issues_[i]->workarounds));
+    sections.push_back(std::move(k));
+  }
+  {
+    const platform::Settings& st = app_.settings;
+    Section t;
+    t.name = "settings";
+    // As the last frame had them: the console may be gone by now.
+    const bool hardware = hardware_.is_open() && !hardware_failed_ && ui::hardware_3d(st);
+    const debug::PerfFrame last = perf_->frames() != 0 ? perf_->all().back() : debug::PerfFrame{};
+    const auto path_2d = [&](int i) { return (i == 0 ? last.top_2d_gpu : last.bottom_2d_gpu) ? "gpu" : "processor"; };
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(app_.window, &w, &h);
+    const char* filter = filter_ == gfx::ScreenFilter::SharpSmoothEdges ? "sharp pixels, smooth edges"
+                         : filter_ == gfx::ScreenFilter::Smooth         ? "smooth"
+                                                                        : "sharp";
+    char summary[512];
+    std::snprintf(summary, sizeof summary,
+                  "scale %lld, 3D %dx (%s), widescreen %s (HUD %s), 3D by %s, 2D top %s / bottom %s, filter %s, "
+                  "textures %s, window %d x %d%s, vsync %s",
+                  st.number(key::kScale), hardware ? scale_3d() : 1, st.choice(key::k3DResolution).c_str(),
+                  wide_ ? "on" : "off", st.choice(key::kWidescreenHud).c_str(), hardware ? "gpu" : "processor", path_2d(0),
+                  path_2d(1), filter, ui::smooth_textures(st) ? "smooth" : "sharp", w, h,
+                  fullscreen_applied_ ? " full screen" : "", vsync_mode_.c_str());
+    t.text("summary", summary);
+    t.number("scale", static_cast<double>(st.number(key::kScale)));
+    t.text("resolution_3d_setting", st.choice(key::k3DResolution));
+    t.number("resolution_3d", hardware ? scale_3d() : 1);
+    t.flag("widescreen", wide_);
+    t.text("widescreen_hud", st.choice(key::kWidescreenHud));
+    t.text("renderer_3d", hardware ? "gpu" : "processor");
+    t.text("renderer_2d_top", path_2d(0));
+    t.text("renderer_2d_bottom", path_2d(1));
+    t.text("filter", filter);
+    t.text("textures", ui::smooth_textures(st) ? "smooth" : "sharp");
+    t.text("arrangement", st.choice(key::kArrangement));
+    t.number("window_width", w);
+    t.number("window_height", h);
+    t.flag("fullscreen", fullscreen_applied_);
+    t.flag("vsync", vsync_);
+    t.text("present_mode", vsync_mode_);
+    t.flag("unthrottled", app_.options.unthrottled);
+    t.flag("frame_log_sync", frame_log::state().sync);
+    t.text("code", !app_.native_code ? "interpreted" : app_.translated_build ? "translated" : "built game");
+    sections.push_back(std::move(t));
+  }
+  const std::string text = perf_->json(sections, frame_log::state().sync, vsync_);
+  std::ofstream out(perf_path_, std::ios::binary);
+  out << text;
+  if (out) {
+    log::info("frames", "the performance report was written to " + utf8(perf_path_));
+    std::printf("The performance report was written to %s\n", utf8(perf_path_).c_str());
+  } else {
+    log::warning("frames", "cannot write the performance report to " + utf8(perf_path_));
+  }
+  perf_.reset();
 }
 
 }  // namespace bd::app

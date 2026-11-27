@@ -17,20 +17,23 @@ int bin_of(double v) {
 
 }  // namespace
 
+double measure_ticks_per_us() {
+  const auto clock_began = std::chrono::steady_clock::now();
+  const std::uint64_t ticks_began = ticks();
+  while (std::chrono::steady_clock::now() - clock_began < std::chrono::milliseconds(50)) {
+  }
+  const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - clock_began).count();
+  const double per_us = static_cast<double>(ticks() - ticks_began) / us;
+  return per_us > 0 ? per_us : 1;
+}
+
 File::File(const std::filesystem::path& path) {
 #if defined(_WIN32)
   out_ = _wfopen(path.c_str(), L"wb");
 #else
   out_ = std::fopen(path.c_str(), "wb");
 #endif
-  // The clock's ticks a microsecond, against the system's clock.
-  const auto clock_began = std::chrono::steady_clock::now();
-  const std::uint64_t ticks_began = ticks();
-  while (std::chrono::steady_clock::now() - clock_began < std::chrono::milliseconds(50)) {
-  }
-  const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - clock_began).count();
-  ticks_per_us_ = static_cast<double>(ticks() - ticks_began) / us;
-  if (!(ticks_per_us_ > 0)) ticks_per_us_ = 1;
+  ticks_per_us_ = measure_ticks_per_us();
   // What a switch costs: a Scope is two. The times this adds go when the
   // log restarts them.
   constexpr int kTimes = 100000;

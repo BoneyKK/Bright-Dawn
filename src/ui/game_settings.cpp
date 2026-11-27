@@ -172,11 +172,41 @@ std::vector<SettingDef> game_setting_definitions() {
                         "Draws the 2D pictures (backgrounds, sprites, text) with the processor, in place of the "
                         "graphics hardware, to compare the two. The game runs slower.",
                         false));
+  defs.push_back(toggle(key::kPauseStep, "", "Pause and step",
+                        "Hotkeys hold the game after the current frame (F5), run exactly one frame (F6) and "
+                        "run on (F7). While held, nothing of the game runs; only the window is drawn.",
+                        false));
+  defs.push_back(toggle(key::kFrameOverlay, "", "Frame overlay",
+                        "Shows the frame number, the frame's time, its three costliest parts and the graphics "
+                        "card in a corner of the window, over the game's screens. F3 shows or hides it.",
+                        false));
+  defs.push_back(toggle(key::kCaptureHotkey, "", "Capture this frame",
+                        "F8 writes the picture shown and the frame's row of the frame log to the captures "
+                        "folder in the user data folder.",
+                        false));
+  defs.push_back(toggle(key::kPerfReport, "", "Performance report",
+                        "At the end of each game, writes bright-dawn-performance.json next to the program: the "
+                        "system, the graphics card and its driver, the settings and what each frame cost. "
+                        "No pictures, game text, names or paths.",
+                        false));
+  defs.push_back(toggle(key::kGpuWorkarounds, "", "Known GPU issue workarounds",
+                        "Applies the workarounds for the graphics card and driver in use where they are known "
+                        "to have a problem. Switch off to check whether they are still needed.",
+                        true));
   // The bindings: not in a chapter of their own, as the Controls page draws
   // them; their defaults are input's.
   const auto bound_by_default = [](const Control& c, bool keyboard) {
-    // Hotkeys: F9, and the right stick's button, which the DS has no use for.
-    if (c.hotkey == Hotkey::BottomScreenOnly) return std::string(keyboard ? "F9" : "rightstick");
+    // Hotkeys: F9, and the right stick's button, which the DS has no use for;
+    // the debug ones on keys only.
+    switch (c.hotkey) {
+      case Hotkey::BottomScreenOnly: return std::string(keyboard ? "F9" : "rightstick");
+      case Hotkey::PauseFrame: return std::string(keyboard ? "F5" : "");
+      case Hotkey::StepFrame: return std::string(keyboard ? "F6" : "");
+      case Hotkey::ResumeFrame: return std::string(keyboard ? "F7" : "");
+      case Hotkey::FrameOverlay: return std::string(keyboard ? "F3" : "");
+      case Hotkey::CaptureFrame: return std::string(keyboard ? "F8" : "");
+      case Hotkey::None: break;
+    }
     for (const input::Binding& b :
          keyboard ? input::default_keyboard_bindings() : input::default_controller_bindings())
       if (b.button == c.button) return b.control;
@@ -210,6 +240,17 @@ const std::vector<Control>& controls() {
     }
     list.push_back({"Bottom screen only", "controls.keyboard.bottom_screen_only",
                     "controls.controller.bottom_screen_only", input::DsButton::A, Hotkey::BottomScreenOnly});
+    // Debug (launcher, Debug page).
+    list.push_back({"Debug: pause", "controls.keyboard.debug_pause", "controls.controller.debug_pause",
+                    input::DsButton::A, Hotkey::PauseFrame});
+    list.push_back({"Debug: step one frame", "controls.keyboard.debug_step", "controls.controller.debug_step",
+                    input::DsButton::A, Hotkey::StepFrame});
+    list.push_back({"Debug: resume", "controls.keyboard.debug_resume", "controls.controller.debug_resume",
+                    input::DsButton::A, Hotkey::ResumeFrame});
+    list.push_back({"Debug: frame overlay", "controls.keyboard.debug_overlay", "controls.controller.debug_overlay",
+                    input::DsButton::A, Hotkey::FrameOverlay});
+    list.push_back({"Debug: capture this frame", "controls.keyboard.debug_capture", "controls.controller.debug_capture",
+                    input::DsButton::A, Hotkey::CaptureFrame});
     return list;
   }();
   return kControls;

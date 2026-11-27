@@ -422,6 +422,7 @@ void Hardware3D::release_targets() {
 }
 
 bool Hardware3D::make_targets(int scale) {
+  ++frame_log::state().counts.targets_made;
   release_targets();
   const int width = picture_width(scale, wide_), height = kScreenHeight * scale;
   const SDL_GPUTextureUsageFlags colour = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;

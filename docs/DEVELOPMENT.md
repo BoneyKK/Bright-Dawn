@@ -127,6 +127,78 @@ after each of its passes, so that each has its real time, and the game runs
 slower. The Debug page opens the folder the file is in
 (`src/debug/frame_log.h`).
 
+The Debug page has more tools, all off by default; each starts with the
+next game. Its hotkeys are bound on the Controls page (keyboard defaults in
+brackets) and work only while their setting is on.
+
+- *Pause and step*: Pause (F5) holds the game after the frame being run;
+  Step (F6) runs exactly one DS frame and holds again; Resume (F7) runs on.
+  While held, nothing of the emulated machine runs (game code, timing,
+  sound, input); only the window is redrawn, so the menu, the overlay and
+  the capture hotkey still work (`src/debug/frame_stepper.h`).
+  `--pause-at N` holds after frame N; with `--step-count M` it then takes M
+  single steps by itself, each shown (and written with `--capture-every 1`),
+  and runs on. Without `--step-count` the hotkeys go on from there.
+- *Frame overlay*: a few lines at the window's top-left corner, drawn after
+  the screens and the `--capture` pictures, never into the game's screens:
+  the frame number, the host's time for the last frame, its three costliest
+  frame-log parts in ms and the GPU's name (F3 shows or hides it;
+  `src/app/frame_overlay.h`).
+- *Capture this frame* (F8): writes the picture shown and that frame's
+  frame-log row to `captures/frame-N.bmp` and `frame-N.csv` in the user data
+  folder (never next to the program or in the repository).
+- *Performance report* (or `--perf-report FILE`): at the end, one JSON file,
+  `bright-dawn-performance.json` next to the program, that Claude can read
+  (`src/debug/perf_report.h`). It runs the frame log's timing without
+  writing the CSV; with `--frame-log-sync` (sync mode) the GPU's passes are
+  timed too.
+- *GPU workarounds* (on by default): see the known GPU issues below. Off,
+  none is applied, to check whether one is still needed.
+
+The overlay, the capture hotkey and the report time the frame as the frame
+log does: with one of them on, the frame waits for the swapchain before it
+is presented, as with the frame log. With all of them off, the game runs as
+before, the same pictures and the same pacing.
+
+The report starts with `"summary"`: a few lines of text, then the verdict.
+The sections that follow are `system` (the OS and its version, the processor,
+its cores and threads, the memory, the build type and commit), `gpu` (the SDL
+GPU backend, the GPU's name, vendor and device IDs, integrated or discrete,
+the driver's name and information, its version decoded by vendor (NVIDIA's
+10.8.8.6 bits, Intel's 18.14 on Windows, else major.minor.patch, as Mesa and
+AMD) and the Vulkan API version, the device-local memory, what SDL reports,
+and the fallbacks taken at start with why; on Direct3D 12 and Metal, what SDL
+reports only), `known_gpu_issues` (the entries matched and the workarounds
+applied), `settings` (scale, 3D resolution, widescreen and its HUD, which
+renderer draws the 3D and each screen's 2D, filter, textures, window size,
+full screen, vsync and the present mode), then `timing`: for `total` and each
+frame-log column the mean, median, 95th and 99th percentile and maximum in ms
+and its share of the host's time; the 20 slowest frames with their 3D
+screens, renderer path and polygon and vertex counts; the spikes (runs of
+frames above 1.5 times the median) with what changed as each began (a
+renderer path switch, a new scene, new textures in the atlas, new render
+targets, a capture) and the column that grew most; and `gpu_problems`:
+device lost, GPU failures, fallbacks and known issues matched, with their
+frame. The verdict names the
+column with the largest share and the one with the worst 99th percentile,
+and says whether the time is the processor's or a wait on the graphics
+hardware (or the display, with vsync). The report holds no ROM data, no
+pictures, no game text, no user or host name and no path.
+
+To send a report to Claude: switch on *Performance report* (and, for the
+GPU's own times, *Sync mode* with the frame log), play the part that is
+slow for a minute, close the game, and paste the file (or attach it to an
+issue). Say what was on screen.
+
+Known GPU issues (`src/debug/gpu_info.cpp`, `known_gpu_issues()`) is a table
+of data: a vendor ID, a device ID range, a part of the driver's name, the OS,
+a driver version range (compared as decoded), the problem, and the
+workarounds (the processor draws the 2D, or the 3D; vsync on). At start the
+running GPU and driver are matched against it; each match is written to the
+log and the report, and its workarounds are applied unless *GPU workarounds*
+is off. An entry is added only when a report proves the issue; the table is
+empty for now.
+
 Bright Dawn draws through Vulkan where the computer has it, and through the
 system's own renderer (Direct3D on Windows, OpenGL elsewhere) where it does
 not: *Drawing* (Settings, Display) or `--renderer system` chooses the latter.
@@ -421,7 +493,7 @@ src/nds        The console around the processor: memory, registers, interrupts, 
 src/gfx        Where the screens go in a window; their pixels for the window system
 src/input      Bindings of keys and controller buttons, scripted input
 src/ui         Bright Dawn's settings, described; following the game builder
-src/debug      The frame log: what each frame costs, part by part
+src/debug      The frame log, the frame stepper, the performance report and the known GPU issues
 src/app        bright-dawn: the window (SDL 3), launcher, settings book, game screen
 tools/gamebuilder  Builds bright-dawn-game from the user's ROM
 tools/translator   Machine code to C++

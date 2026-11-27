@@ -51,6 +51,11 @@ inline constexpr std::string_view kLogsKept = "log.kept";
 inline constexpr std::string_view kFrameLog = "debug.frame_log";
 inline constexpr std::string_view kFrameLogSync = "debug.frame_log_sync";
 inline constexpr std::string_view kProcessor2D = "debug.processor_2d";
+inline constexpr std::string_view kPauseStep = "debug.pause_step";
+inline constexpr std::string_view kFrameOverlay = "debug.frame_overlay";
+inline constexpr std::string_view kCaptureHotkey = "debug.capture_hotkey";
+inline constexpr std::string_view kPerfReport = "debug.perf_report";
+inline constexpr std::string_view kGpuWorkarounds = "debug.gpu_workarounds";
 }  // namespace key
 
 std::vector<platform::SettingDef> game_setting_definitions();
@@ -64,6 +69,12 @@ inline constexpr std::string_view kControlsChapter = "Controls";
 enum class Hotkey {
   None,              // A DS button.
   BottomScreenOnly,  // The touch screen alone, or back to the screens before.
+  // Debug (launcher, Debug page), each only while its setting is on.
+  PauseFrame,    // Pause and step: hold the game after the current frame.
+  StepFrame,     // While held: run exactly one frame.
+  ResumeFrame,   // Run on.
+  FrameOverlay,  // The frame overlay on or off.
+  CaptureFrame,  // Capture this frame: the picture and its frame-log row.
 };
 
 // What can be bound on the Controls page: a DS button or a hotkey, to a key

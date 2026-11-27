@@ -972,6 +972,16 @@ void Launcher::draw_debug() {
   ImGui::Spacing();
   draw_toggle(ui::key::kProcessor2D);
   ImGui::Spacing();
+  draw_toggle(ui::key::kPauseStep);
+  ImGui::Spacing();
+  draw_toggle(ui::key::kFrameOverlay);
+  ImGui::Spacing();
+  draw_toggle(ui::key::kCaptureHotkey);
+  ImGui::Spacing();
+  draw_toggle(ui::key::kPerfReport);
+  ImGui::Spacing();
+  draw_toggle(ui::key::kGpuWorkarounds);
+  ImGui::Spacing();
   const std::filesystem::path file = frame_log_path();
   ImGui::TextWrapped("The frame log: %s", utf8(file).c_str());
   std::error_code ec;
@@ -979,6 +989,9 @@ void Launcher::draw_debug() {
   if (button("Open the frame log's folder")) open_folder(file.parent_path());
   explain("Open the folder the frame log is in, next to the program. Send bright-dawn-frames.csv with a report "
           "on how the game runs.");
+  ImGui::TextWrapped("The performance report: %s", utf8(perf_report_path()).c_str());
+  explain("Written when the game ends, with the performance report on. Paste it to Claude or attach it to an issue: "
+          "it holds no ROM data, pictures, game text, names or paths.");
   if (const std::filesystem::path log_file = log::file_path(); !log_file.empty()) {
     if (button("Open the log folder")) open_folder(log_file.parent_path());
     explain("Open the folder the run logs are in. The newest log is this run's.");

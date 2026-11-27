@@ -33,6 +33,11 @@ struct Options {
   // Draw the 2D pictures with the processor too, and log where the graphics
   // hardware's differ.
   bool check_2d = false;
+  // Frame by frame (debug/frame_stepper.h): hold after this frame (0:
+  // never), then take this many single steps by themselves and run on.
+  std::uint64_t pause_at = 0, step_count = 0;
+  // Write the performance report here at the end (debug/perf_report.h).
+  std::filesystem::path perf_report;
   std::filesystem::path record_sound;  // Keep the game's sound in this WAV file.  // Also write a frame every so many, named FILE-frame.bmp.
   std::vector<input::ScriptedPress> script;
   std::vector<input::ScriptedTouch> touches;
@@ -57,6 +62,9 @@ struct App {
   // Whether the game being played runs translated code (linked in, or the
   // game built from the player's ROM), not only the interpreter.
   bool native_code = false;
+  // What happened as the window was opened: a backend that failed and the
+  // renderer used instead (for the performance report).
+  std::vector<std::string> start_notes;
   // What "Report a problem" fills in; kept up to date as the run goes on.
   ui::ProblemReport report;
 
@@ -77,6 +85,9 @@ void open_folder(const std::filesystem::path& folder);
 // Where the frame log is written (launcher, Debug page): next to the
 // program.
 std::filesystem::path frame_log_path();
+// Where the performance report is written when the launcher's Debug page
+// asks for it: next to the program too.
+std::filesystem::path perf_report_path();
 
 // "Report a problem": opens the project's bug form in the browser, with what
 // is known of this run filled in, and the folder of the logs, so that the

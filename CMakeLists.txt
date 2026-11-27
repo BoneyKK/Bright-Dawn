@@ -250,8 +250,12 @@ if(BD_BUILD_APP)
     src/app/menu_skin.cpp
     src/app/menu_widgets.cpp
     src/app/settings_book.cpp
+    src/app/system_info.cpp
+    src/app/frame_overlay.cpp
     src/app/controls_page.cpp)
   target_include_directories(bd_app PUBLIC src)
+  # The build type, for the performance report (empty when none was named).
+  target_compile_definitions(bd_app PRIVATE "BD_BUILD_TYPE=\"$<CONFIG>\"")
   target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_game bd_platform bd_ui bd_imgui bd_game_library_host bd_assets bd_debug
                         ${BD_SDL_TARGET})
 

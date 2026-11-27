@@ -29,10 +29,14 @@
 #include "app/audio_out.h"
 #include "app/build_tools.h"
 #include "debug/frame_log_file.h"
+#include "debug/frame_stepper.h"
+#include "debug/gpu_info.h"
+#include "debug/perf_report.h"
 #include "game/opening_skip.h"
 #include "game/stick_walk.h"
 #include "app/hardware_3d.h"
 #include "app/settings_book.h"
+#include "ui/game_settings.h"
 #include "gfx/screen_layout.h"
 #include "nds/console.h"
 #include "platform/audio_feed.h"
@@ -66,6 +70,10 @@ class GameScreen {
   // The frame log's row for the frame just run (Console::on_frame), when
   // the log is on (debug/frame_log.h).
   void log_frame();
+  // After the frame's row (Console::on_frame): while the frame stepper
+  // holds the game (debug/frame_stepper.h), the window is redrawn and the
+  // hotkeys read, and nothing of the game runs. False if the run is to end.
+  bool hold_if_paused();
   bool captured() const { return captured_; }
 
  private:
@@ -108,6 +116,23 @@ class GameScreen {
   int main_screen() const;
   void draw();
   void capture(bool last);
+  // Writes the window's picture as a BMP file; false (logged) if it cannot.
+  bool write_window(const std::filesystem::path& file);
+  // The debug hotkeys (launcher, Debug page), when bound and on: true if
+  // `code` or `button` was one.
+  bool debug_hotkey(SDL_Scancode code, SDL_GamepadButton button);
+  // The frame overlay (launcher, Debug page), over the window's corner:
+  // never into the game's screens.
+  void draw_overlay();
+  // Capture this frame: the picture shown now, and its frame-log row (now,
+  // or once log_frame() has it).
+  void capture_this_frame();
+  void write_capture_row(const std::filesystem::path& file);
+  // The performance report's file, at the end (debug/perf_report.h).
+  void write_perf_report();
+  // The graphics card and the known issues it matches: logged, kept for the
+  // report, and their workarounds applied unless switched off.
+  void describe_gpu();
   // Writes the last 3D scene, as made, to --dump-3d's file.
   void dump_3d();
   void count_rates(bool new_frame, bool shown);
@@ -180,6 +205,33 @@ class GameScreen {
   // The frame log, when it is on (debug/frame_log.h).
   std::unique_ptr<frame_log::File> frame_log_;
   std::uint64_t log_executed_ = 0, log_interpreted_ = 0;
+  // The frame log's row of the last frame: names and values, whether or not
+  // the file is written (the overlay, the capture and the report use it).
+  std::vector<std::string> row_names_;
+  std::vector<double> row_values_;
+  bool shown_this_frame_ = false, captured_this_frame_ = false;
+  // Debug (launcher, Debug page; debug/frame_stepper.h).
+  frame_log::FrameStepper stepper_;
+  bool pause_step_ = false, overlay_allowed_ = false, overlay_shown_ = false, capture_hotkey_ = false;
+  bool capture_asked_ = false;
+  std::filesystem::path capture_row_pending_;  // Written by log_frame() once the row is there.
+  struct DebugKey {
+    ui::Hotkey hotkey;
+    SDL_Scancode code;
+    SDL_GamepadButton button;
+  };
+  std::vector<DebugKey> debug_keys_;
+  // The performance report, when asked for, and where it goes.
+  std::unique_ptr<debug::PerfReport> perf_;
+  std::filesystem::path perf_path_;
+  std::string start_settings_;  // The settings as the report gives them, taken at the start.
+  // The graphics card, the known issues it matches, and the workarounds
+  // applied (debug/gpu_info.h).
+  debug::GpuDescription gpu_;
+  std::vector<const debug::GpuIssue*> gpu_issues_;
+  std::uint32_t workarounds_ = 0;
+  double ticks_per_us_ = 1;      // The frame log's clock, when it runs without its file.
+  std::string vsync_mode_ = "off";
 };
 
 }  // namespace bd::app

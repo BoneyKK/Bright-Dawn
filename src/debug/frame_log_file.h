@@ -11,6 +11,10 @@
 
 namespace bd::frame_log {
 
+// The clock's ticks a microsecond (frame_log::ticks()), measured against the
+// system's clock for about 50 ms.
+double measure_ticks_per_us();
+
 class File {
  public:
   // Opens (makes) the file. It measures the clock first, for about 50 ms.

@@ -208,7 +208,7 @@ TEST(control_bindings_default_to_input_defaults) {
   CHECK(same(bd::ui::keyboard_bindings(s), bd::input::default_keyboard_bindings()));
   CHECK(same(bd::ui::controller_bindings(s), bd::input::default_controller_bindings()));
   // Every DS button has a row, and no control is bound twice.
-  CHECK(bd::ui::controls().size() == bd::input::kDsButtonCount + 1);  // And the Bottom screen only hotkey.
+  CHECK(bd::ui::controls().size() == bd::input::kDsButtonCount + 6);  // And the hotkeys: Bottom screen only, five debug ones.
   CHECK(bd::ui::bound_twice(s, true).empty() && bd::ui::bound_twice(s, false).empty());
   // The bindings are not settings of a chapter: the Controls page draws them.
   CHECK(s.find("controls.keyboard.a") != nullptr && s.find("controls.keyboard.a")->chapter.empty());

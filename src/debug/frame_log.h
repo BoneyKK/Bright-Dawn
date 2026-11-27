@@ -70,6 +70,7 @@ struct Counts {
   std::uint64_t screen_bytes = 0, vertex_bytes = 0, bank_bytes = 0, raster_bytes = 0;
   std::uint64_t video_bytes = 0;  // Video memory sent for the 2D pictures the GPU draws.
   std::uint64_t gpu_captures = 0, pictures = 0;
+  std::uint64_t targets_made = 0;  // Times the GPU made its render targets anew (a new scale).
   // Of the scene last made: they stay from frame to frame.
   bool edge_marking = false, anti_aliasing = false, fog = false;
   bool capture_made = false, raster_ran = false;
