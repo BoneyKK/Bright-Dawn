@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>Bright Dawn</title>
+  <defs><clipPath id="t"><rect width="256" height="256" rx="48"/></clipPath></defs>
+  <rect width="256" height="256" rx="48" fill="#2B1F5C"/>
+  <g clip-path="url(#t)">
+    <circle cx="128" cy="68" r="38" fill="#FFC93C"/>
+    <path d="M-20 196H128V256H-20Z" fill="#4A2C7A"/><path d="M128 196H296L190 256H128Z" fill="#FF8A3D"/><path d="M190 256L296 196V256Z" fill="#4A2C7A"/>
+    <g transform="translate(0 14)"><path d="M92 84H108V100H120V84H136V100H148V84H164V100H172V114H162L180 256H76L94 114H84V100H92Z" fill="#4A2C7A"/><path d="M92 84H108V100H120V84H128V256H76L94 114H84V100H92Z" fill="#FF8A3D"/></g>
+  </g>
+</svg>
