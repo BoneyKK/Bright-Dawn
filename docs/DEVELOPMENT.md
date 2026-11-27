@@ -309,7 +309,10 @@ picture is the DS's, pixel for pixel (`bd_gpu_tests` compares them).
   sides are the polygon's (`HardwareScene::kSidesShift`). So, as on the DS,
   where two models go through each other (a foot in the floor, a house in
   the ground) there is no outline along the cut, only near their sides.
-  The outline is one DS pixel wide on every side, soft on its inner side,
+  What is further away counts only where it is at least a DS pixel wide
+  across: a sliver of it between two polygons, which the higher resolution
+  shows and the DS's pixels do not (the wall between the reaction icon and
+  the head under it), gives no outline. The outline is one DS pixel wide on every side, soft on its inner side,
   worked out once for each new scene (`outline.frag`, into a target of its
   own) and only read when the scene is put into a screen or a capture. It
   differs from the DS in that depths nearly equal at a cut can compare the

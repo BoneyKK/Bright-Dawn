@@ -611,6 +611,41 @@ TEST(hardware_outlines_leave_out_where_polygons_go_through_each_other) {
   CHECK(((below >> 16) & 255) > 200 && ((below >> 8) & 255) < 50);
 }
 
+TEST(hardware_outlines_leave_out_a_sliver_thinner_than_a_ds_pixel) {
+  // A square in front (40 to 70 down) and one behind from half a DS pixel
+  // below it, wider: at 4x the clear plane shows through between them, as
+  // the wall between a reaction icon and a head; at 1x it does not.
+  constexpr int kScale = 4, kRow = kWidth * kScale;
+  Frame f;
+  f.r.set_fine_positions(true);
+  f.io.write(PolygonRenderer::kEdgeColours + 4, 2, 0x7C00);  // Blue, 16 to 23.
+  f.polygon({Frame::vertex(60, 40, 63, 0x1000), Frame::vertex(60, 70, 63, 0x1000), Frame::vertex(120, 70, 63, 0x1000),
+             Frame::vertex(120, 40, 63, 0x1000)},
+            kOpaque | number(40));
+  auto below = [](int x, int y) {
+    Vertex v = Frame::vertex(x, y, 63 << 6, 0x2000);
+    if (y == 70) v.fine_y = 70 * 16 + 8;
+    return v;
+  };
+  f.polygon({below(50, 70), below(50, 120), below(130, 120), below(130, 70)}, kOpaque | number(16));
+  f.control(0);
+  const std::vector<u32> plain = f.graphics_hardware(kScale);
+  f.control(PolygonRenderer::kEdgeMarking);
+  const std::vector<u32> outlined = f.graphics_hardware(kScale);
+  // The square behind: its top side under the one in front, and beside it.
+  int under = 0, beside = 0;
+  for (int y = 70 * kScale; y < 73 * kScale; ++y)
+    for (int x = 50 * kScale; x < 130 * kScale; ++x) {
+      const auto i = static_cast<std::size_t>(y * kRow + x);
+      if (plain[i] == outlined[i]) continue;
+      if (x >= 62 * kScale && x < 118 * kScale) ++under;
+      if (x >= 52 * kScale && x < 58 * kScale) ++beside;
+    }
+  std::printf("    %d pixels outlined under the square in front, %d beside it\n", under, beside);
+  CHECK(under == 0);
+  CHECK(beside > 0);
+}
+
 TEST(outlines_are_looked_for_only_near_the_opaque_polygons_shown) {
   // An opaque square from (10, 10) to (40, 40) and a translucent one from
   // (100, 100) to (200, 180), in the DS's pixels; w is 2.

@@ -11,10 +11,13 @@
 // number and is further away, as edge marking goes on the DS: so the edge
 // is on the nearer side only, inside a group of one number there is none,
 // and where two polygons go through each other there is none but near
-// their sides. A gap narrower
-// than a DS pixel with the same number on its far side does not count: the
-// triangles leave such holes where the DS's spans do not. A pixel that is not
-// opaque costs one read.
+// their sides. A gap narrower than a DS pixel does not count: one with the
+// same number or a nearer pixel on its far side (the triangles leave such
+// holes where the DS's spans do not), and a sliver of what is further
+// narrower than a DS pixel across (where a polygon in front nearly meets
+// one behind, as a reaction icon over a head: at the DS's resolution the
+// DS's pixels there show the one or the other, and neither is marked). A
+// pixel that is not opaque costs one read.
 #version 450
 
 layout(location = 0) in vec2 v_place;
@@ -42,17 +45,34 @@ uint number_at(ivec2 p) { return inside(p) ? uint(texelFetch(u_numbers, p, 0).r 
 
 // Whether the opaque pixel `p` (of `number`) is an edge towards `way`,
 // where the pixel there has `other`.
+// The depth at `p`: the clear plane's past the picture's edge.
+uint depth_or_clear(ivec2 p) { return inside(p) ? depth_at(p) : u_outline.z; }
+
 bool edge_towards(ivec2 p, ivec2 way, uint number, uint other) {
   if (other == number) return false;
   const ivec2 q = p + way;
-  if (depth_at(p) >= (inside(q) ? depth_at(q) : u_outline.z)) return false;
-  // A gap inside the group: the same number again within a DS pixel.
-  for (int j = 1; j < int(u_outline.w); ++j) {
+  const uint mine = depth_at(p);
+  if (mine >= depth_or_clear(q)) return false;
+  const int ds_pixel = int(u_outline.w);
+  // A gap within a DS pixel: the same number again (a hole inside the
+  // group), or something nearer than this pixel, on its far side.
+  for (int j = 1; j < ds_pixel; ++j) {
     const ivec2 r = q + j * way;
     if (!inside(r)) break;
-    if (number_at(r) == number) return false;
+    if (number_at(r) == number || depth_at(r) <= mine) return false;
   }
-  return true;
+  // A sliver: what is further, across the way, less than a DS pixel wide.
+  const ivec2 across = way.yx;
+  int wide = 1;
+  for (int j = 1; j < ds_pixel && wide < ds_pixel; ++j) {
+    if (mine >= depth_or_clear(q + j * across)) break;
+    ++wide;
+  }
+  for (int j = 1; j < ds_pixel && wide < ds_pixel; ++j) {
+    if (mine >= depth_or_clear(q - j * across)) break;
+    ++wide;
+  }
+  return wide >= ds_pixel;
 }
 
 void main() {
