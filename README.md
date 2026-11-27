@@ -1,4 +1,4 @@
-# <img src="src/app/icon/bright-dawn.svg" alt="" width="40" height="40" align="top"> Bright Dawn
+<h1 align="center"><img src="docs/logo/bright-dawn-lockup-dark.svg" alt="Bright Dawn" height="72"></h1>
 
 Bright Dawn is a native PC version of *Golden Sun: Dark Dawn* (Nintendo DS,
 2010), made by static recompilation: the game's own code, read from a ROM you
