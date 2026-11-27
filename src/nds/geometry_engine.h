@@ -281,9 +281,15 @@ class GeometryEngine {
   // and colour going on as across it. Each polygon has corners of its own,
   // in the order they run around it. The frame the game sees, its counts
   // and its limits are finished()'s alone. The box test (kBoxTest) finds a
-  // box in view by the wide view's sides too: the game sees that, so it
-  // draws the models at the sides that it would leave out.
+  // box in view by a view a little wider than the wide picture's (see
+  // kWideBoxTimes): the game sees that, so it draws the models at the sides
+  // that it would leave out.
   void set_wide(bool on) { wide_ = on; }
+  // The box test's view in a wide frame: x within kWideBoxTimes /
+  // kWideBoxOver of w each way (3/2), past the wide picture's 4/3 (an
+  // eighth of a side more), so that models just outside the picture are
+  // ready when they come in.
+  static constexpr std::int64_t kWideBoxTimes = 3, kWideBoxOver = 2;
   bool wide() const { return wide_; }
   const Frame& wide_finished() const { return wide_finished_; }
   const Statistics& statistics() const { return statistics_; }

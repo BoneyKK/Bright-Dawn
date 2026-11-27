@@ -150,17 +150,18 @@ void widen_across(Vertex* v, std::size_t size) {
 // one side after the other. `v` holds `size` corners and has room for ten:
 // each side can add one. Returns whether anything was cut off; `size` is
 // zero when nothing is left. `wide`: x between -4/3 w and 4/3 w, for a
-// picture a third wider than the DS's (GeometryEngine::set_wide).
-bool cut_to_view(Vertex* v, std::size_t& size, bool wide = false) {
+// picture a third wider than the DS's (GeometryEngine::set_wide); or, with
+// `times` and `over`, between -times/over w and times/over w.
+bool cut_to_view(Vertex* v, std::size_t& size, bool wide = false, i64 times = 4, i64 over = 3) {
   bool cut = false;
   Vertex next[10];
   for (int side = 0; side < 6 && size != 0; ++side) {
     // How far inside the side a corner is: 0 or more inside.
-    const auto distance = [side, wide](const Vertex& p) -> i64 {
+    const auto distance = [side, wide, times, over](const Vertex& p) -> i64 {
       const i32 c = side < 2 ? p.x : side < 4 ? p.y : p.z;
       // Negated in 32 bits, as the hardware's arithmetic wraps.
       const i64 value = (side & 1) != 0 ? static_cast<i32>(0u - static_cast<u32>(c)) : c;
-      return wide && side < 2 ? 3 * value + 4 * static_cast<i64>(p.w) : value + p.w;
+      return wide && side < 2 ? over * value + times * static_cast<i64>(p.w) : value + p.w;
     };
     // A side that every corner is inside leaves the polygon as it is: most
     // polygons are in view, and so are spared the copying below.
@@ -545,10 +546,12 @@ void GeometryEngine::box_test(const std::uint32_t* p) {
     Vertex corner[10];
     for (int i = 0; i < 4; ++i) corner[i] = v[face[i]];
     std::size_t size = 4;
-    // In a wide frame (set_wide), the wide view's: a game that leaves out
-    // what the test finds out of view (a field's models) shows them at the
-    // sides too.
-    cut_to_view(corner, size, wide_);
+    // In a wide frame (set_wide), a view wider still than the wide
+    // picture's: a game that leaves out what the test finds out of view (a
+    // field's models) shows them at the sides too, and one only just past
+    // the sides (its box larger than what it draws, or moving in) does not
+    // appear late at the edge.
+    cut_to_view(corner, size, wide_, kWideBoxTimes, kWideBoxOver);
     if (size != 0) {
       flags_ |= kBoxInView;
       break;
