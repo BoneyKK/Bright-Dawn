@@ -67,4 +67,9 @@ struct ProgramOutput {
 };
 ProgramOutput run_program(const std::vector<std::string>& args, std::uint32_t timeout_ms);
 
+// A program of the system's own: from System32 on Windows (so that no other
+// program of the same name is used), else looked for on the PATH. Used for
+// curl and tar, part of Windows 10 (from 1803) and 11.
+std::string system_program(const char* name);
+
 }  // namespace bd::app

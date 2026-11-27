@@ -19,11 +19,15 @@
 //             following the builder as it goes; what it needs and the
 //             computer lacks is fetched for the build and removed after it;
 //   Settings  the settings book;
+//   Updates   whether a newer Bright Dawn is out on GitHub (asked when the
+//             launcher starts, unless switched off), and its page; when
+//             one is, the first page's message bar says so;
 //   Log       where this run's log is.
 #pragma once
 
 #include <deque>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -37,6 +41,7 @@
 #include "app/menu_skin.h"
 #include "app/menu_widgets.h"
 #include "app/settings_book.h"
+#include "app/update_check.h"
 #include "rom/rom.h"
 #include "ui/build_progress.h"
 #include "ui/save_summary.h"
@@ -56,7 +61,7 @@ class Launcher {
   LauncherChoice run();
 
  private:
-  enum class Page { Play, Build, Settings, Log, Debug };
+  enum class Page { Play, Build, Settings, Updates, Log, Debug };
   struct RomCheck {
     bool ok = false;
     std::string text;  // What it is, or what is wrong with it.
@@ -114,10 +119,17 @@ class Launcher {
   // Everything the build printed, in what is left of the page.
   void draw_build_output();
   void draw_log();
+  // The check for a newer version, and its result.
+  void draw_updates();
+  // Whether the check found a newer version.
+  bool update_found() const;
+  // Where a click on the first page's message bar goes.
+  Page bar_page() const { return update_found() ? Page::Updates : Page::Settings; }
   // Tools to find out what is slow or wrong: the frame log.
   void draw_debug();
-  // A setting that is on or off, in either look.
-  void draw_toggle(std::string_view key);
+  // A setting that is on or off, in either look; its buttons lined up with
+  // those of the page's other switches, `columns`.
+  void draw_toggle(std::string_view key, std::initializer_list<std::string_view> columns);
 
   // Pieces of the pages, in either look.
   void heading(const char* text) const;
@@ -173,6 +185,8 @@ class Launcher {
   std::uint64_t build_started_at_ = 0;
   std::string build_result_;
   bool build_failed_ = false;
+
+  UpdateCheck update_;
 };
 
 }  // namespace bd::app

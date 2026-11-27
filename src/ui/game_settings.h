@@ -47,6 +47,8 @@ inline constexpr std::string_view kBuildJobs = "builder.jobs";
 inline constexpr std::string_view kBuildCompiler = "builder.compiler";
 inline constexpr std::string_view kLogLevel = "log.level";
 inline constexpr std::string_view kLogsKept = "log.kept";
+// The launcher's Updates page: not in the settings book.
+inline constexpr std::string_view kCheckUpdates = "updates.check";
 // The launcher's Debug page: not in the settings book.
 inline constexpr std::string_view kFrameLog = "debug.frame_log";
 inline constexpr std::string_view kFrameLogSync = "debug.frame_log_sync";

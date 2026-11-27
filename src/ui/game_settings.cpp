@@ -159,6 +159,11 @@ std::vector<SettingDef> game_setting_definitions() {
                          {"debug", "In detail"}},
                         "info"));
   defs.push_back(number(key::kLogsKept, "Log", "Logs kept", "Sets how many runs' logs are kept.", 1, 100, 10));
+  // Shown on the launcher's Updates page, not in a chapter.
+  defs.push_back(toggle(key::kCheckUpdates, "", "Check for updates",
+                        "When the launcher starts, asks GitHub whether a newer version of Bright Dawn is out. "
+                        "Only the list of releases is fetched; nothing about you or your game is sent.",
+                        true));
   // Shown on the launcher's Debug page, not in a chapter.
   defs.push_back(toggle(key::kFrameLog, "", "Frame log",
                         "Writes what each frame costs to bright-dawn-frames.csv, next to the program, from the "

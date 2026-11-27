@@ -185,7 +185,7 @@ target_link_libraries(bd_game PUBLIC bd_core)
 # What the window program's own screens show and keep, without the screens:
 # the settings and their descriptions, and following the game builder.
 add_library(bd_ui STATIC src/ui/build_progress.cpp src/ui/game_settings.cpp src/ui/problem_report.cpp
-            src/ui/save_summary.cpp)
+            src/ui/save_summary.cpp src/ui/update_check.cpp)
 target_link_libraries(bd_ui PUBLIC bd_platform bd_gfx bd_input bd_assets)
 
 add_executable(bdtool tools/bdtool/main.cpp tools/bdtool/boot.cpp)
@@ -252,7 +252,8 @@ if(BD_BUILD_APP)
     src/app/settings_book.cpp
     src/app/system_info.cpp
     src/app/frame_overlay.cpp
-    src/app/controls_page.cpp)
+    src/app/controls_page.cpp
+    src/app/update_check.cpp)
   target_include_directories(bd_app PUBLIC src)
   # The build type, for the performance report (empty when none was named).
   target_compile_definitions(bd_app PRIVATE "BD_BUILD_TYPE=\"$<CONFIG>\"")

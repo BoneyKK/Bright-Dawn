@@ -109,6 +109,18 @@ version, system, renderer, game code and built game or interpreter filled in
 (`src/ui/problem_report.h`), and the logs folder. `--log-level debug` (or Settings,
 Log) records more.
 
+The launcher's *Updates* page says whether a newer release is out. When the
+launcher starts, a release build (version `x.y.z-pre.N` or `x.y.z`) asks
+GitHub's API for the releases with the system's curl (`src/app/update_check.h`;
+the list is read and compared in `src/ui/update_check.h`, which
+`bd_tests` checks); a release is newer than its pre-releases, and drafts and
+tags without a version are left out. When one is newer, the first page's
+message bar says so and leads to the page, which opens the release's page on
+GitHub. Nothing is downloaded or installed but the list, and nothing is sent
+but the request. A build from the source tree (`-dev`) does not ask by
+itself; *Check now* shows it the newest release. The switch *Check for
+updates* (`updates.check`) turns the check at start off.
+
 To find out what makes a frame slow, switch on the *Frame log* on the
 launcher's Debug page (or start with `--frame-log`). From the next start of
 the game, `bright-dawn-frames.csv` next to the program has a line for each

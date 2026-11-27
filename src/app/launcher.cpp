@@ -17,6 +17,7 @@
 #include "rom/game_id.h"
 #include "rom/rom.h"
 #include "ui/game_settings.h"
+#include "ui/update_check.h"
 
 namespace bd::app {
 namespace {
@@ -90,6 +91,9 @@ Launcher::Launcher(App& app) : app_(app) {
   setup_ = needs_setup();
   // Without a ROM there is nothing to play: the page where it is chosen.
   if (!setup_ && !rom_check_.ok) page_ = Page::Build;
+  // A newer version: asked of GitHub at once, for a release only (a build
+  // from the source tree is no release to compare).
+  if (app_.settings.toggle(ui::key::kCheckUpdates) && ui::parse_release_version(BD_VERSION)) update_.start();
   if (setup_) {
     log::info("launcher", built_state_ == BuiltState::None ? "the setup: the game is not built yet"
                                                            : "the setup: the game built before cannot be used");
@@ -348,6 +352,7 @@ LauncherChoice Launcher::run() {
       rom_asked_.reset();
     }
     poll_build();
+    update_.poll();
     if (done) break;
     // The game's menus, read from a ROM just chosen: their font from now on,
     // once the setup is done (the setup shows nothing of the game).
@@ -419,8 +424,8 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
   const struct {
     Page page;
     const char* name;
-  } pages[] = {{Page::Play, "Play"}, {Page::Build, "Build the game"}, {Page::Settings, "Settings"}, {Page::Log, "Log"},
-               {Page::Debug, "Debug"}};
+  } pages[] = {{Page::Play, "Play"},       {Page::Build, "Build the game"}, {Page::Settings, "Settings"},
+               {Page::Updates, "Updates"}, {Page::Log, "Log"},              {Page::Debug, "Debug"}};
   for (const auto& p : pages) {
     if (p.page == Page::Build && app_.translated_build) continue;
     if (ImGui::Selectable(p.name, page_ == p.page)) {
@@ -435,6 +440,7 @@ void Launcher::draw(LauncherChoice& choice, bool& done) {
     case Page::Play: break;
     case Page::Build: draw_build(); break;
     case Page::Settings: app_.settings_changed(book_.draw(app_.settings)); break;
+    case Page::Updates: draw_updates(); break;
     case Page::Log: draw_log(); break;
     case Page::Debug: draw_debug(); break;
   }
@@ -456,6 +462,11 @@ void Launcher::draw_setup() {
   ImGui::PopFont();
   if (built_state_ == BuiltState::OtherVersion || built_state_ == BuiltState::Broken)
     note("The game built before cannot be used (" + built_detail_ + "): build it again for this version.");
+  if (update_found()) {
+    coloured(true, "Bright Dawn " + update_.result().latest.tag + " is out: you may want it before you build.");
+    if (small_button("Open its page") && !SDL_OpenURL(update_.result().latest.page.c_str()))
+      log::warning("update", std::string("cannot open the browser: ") + SDL_GetError());
+  }
   ImGui::Spacing();
   draw_rom_chooser();
   ImGui::Spacing();
@@ -574,7 +585,7 @@ void Launcher::draw_start_dressed(LauncherChoice& choice, bool& done) {
   const ImRect bar = skin_.area(renderer, skin::kSaveLineLeft, skin::kSaveBelowTop, skin::kSaveGearLeft - 2,
                                 skin::kSaveBelowBottom);
   ImGui::SetCursorScreenPos(bar.Min);
-  if (ImGui::InvisibleButton("other pages", bar.GetSize())) page_ = Page::Settings;
+  if (ImGui::InvisibleButton("other pages", bar.GetSize())) page_ = bar_page();
   if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
   menu::message_bar(look(), list, bar, hint_.empty() ? standing_hint() : hint_);
   ImGui::End();
@@ -590,6 +601,7 @@ void Launcher::draw_pages_dressed() {
   } pages[] = {{Page::Play, "Play", "Back to the first page, to play."},
                {Page::Build, "Build", "Build the game from your ROM, so that its code runs natively."},
                {Page::Settings, "Settings", "How the game is shown and played, and how it is built."},
+               {Page::Updates, "Updates", "Whether a newer version of Bright Dawn is out."},
                {Page::Log, "Log", "Where this run's log is, for when something goes wrong."},
                {Page::Debug, "Debug", "The frame log: what each frame of the game costs."}};
   for (const auto& p : pages) {
@@ -615,6 +627,7 @@ void Launcher::draw_pages_dressed() {
     case Page::Play: break;
     case Page::Build: draw_build(); break;
     case Page::Settings: break;
+    case Page::Updates: draw_updates(); break;
     case Page::Log: draw_log(); break;
     case Page::Debug: draw_debug(); break;
   }
@@ -675,9 +688,12 @@ std::string Launcher::standing_hint() const {
   const std::string name = std::string("Bright Dawn ") + BD_VERSION;
   if (building()) return "The game is being built from your ROM. This takes some minutes.";
   switch (page_) {
-    case Page::Play: return "Settings, the build and the log: the gear, or Escape.";
+    case Page::Play:
+      if (update_found()) return "Bright Dawn " + update_.result().latest.tag + " is out: click here.";
+      return "Settings, the build and the log: the gear, or Escape.";
     case Page::Build: return "The game is built from your ROM, and its code then runs natively.";
     case Page::Settings: return "Point at a setting to see what it does.";
+    case Page::Updates: return name + (update_found() ? ": a newer version is out." : ".");
     case Page::Log: return "Attach the log when you report a problem.";
     case Page::Debug: return "Point at a switch to see what it does.";
   }
@@ -777,7 +793,7 @@ void Launcher::draw_start(LauncherChoice& choice, bool& done) {
   const std::string hint = standing_hint();
   ImGui::SetCursorPos(ImVec2((area.x - ImGui::CalcTextSize(hint.c_str()).x) / 2, area.y - em * 1.5f));
   ImGui::TextDisabled("%s", hint.c_str());
-  if (ImGui::IsItemClicked()) page_ = Page::Settings;
+  if (ImGui::IsItemClicked()) page_ = bar_page();
   // The gear in the lower right corner, as on the dressed page.
   const float pixel = std::max(2.0f, std::floor(em / 6));
   const ImVec2 corner(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x - ImGui::GetStyle().WindowPadding.x,
@@ -936,7 +952,59 @@ void Launcher::draw_log() {
           "log folder. Attach the log; never the ROM, saves or other game files.");
 }
 
-void Launcher::draw_toggle(std::string_view key) {
+bool Launcher::update_found() const {
+  return update_.state() == UpdateCheck::State::Done && update_.result().kind == ui::UpdateResult::Newer;
+}
+
+void Launcher::draw_updates() {
+  heading("Updates");
+  ImGui::TextWrapped("This version: %s", BD_VERSION);
+  const ui::UpdateResult& result = update_.result();
+  switch (update_.state()) {
+    case UpdateCheck::State::Idle: note("Not checked yet."); break;
+    case UpdateCheck::State::Checking: note("Asking GitHub..."); break;
+    case UpdateCheck::State::Failed: coloured(false, "The check failed: " + update_.error() + "."); break;
+    case UpdateCheck::State::Done:
+      switch (result.kind) {
+        case ui::UpdateResult::Newer:
+          coloured(true, "Bright Dawn " + result.latest.tag + " is out.");
+          break;
+        case ui::UpdateResult::UpToDate: coloured(true, "This is the newest version."); break;
+        case ui::UpdateResult::NotRelease:
+          note("This is a build from the source tree, not a release. The newest release is " + result.latest.tag + ".");
+          break;
+        case ui::UpdateResult::NoRelease: note("No release is out yet."); break;
+        case ui::UpdateResult::Unreadable: break;
+      }
+      break;
+  }
+  const bool found = update_.state() == UpdateCheck::State::Done && result.kind != ui::UpdateResult::NoRelease &&
+                     result.kind != ui::UpdateResult::Unreadable;
+  if (found && result.kind != ui::UpdateResult::UpToDate) {
+    if (button("Open its page")) {
+      if (!SDL_OpenURL(result.latest.page.c_str()))
+        log::warning("update", std::string("cannot open the browser: ") + SDL_GetError());
+    }
+    explain("Open the release's page on GitHub, with its notes and its downloads.");
+    ImGui::SameLine();
+  }
+  ImGui::BeginDisabled(update_.state() == UpdateCheck::State::Checking);
+  if (button("Check now")) update_.start();
+  ImGui::EndDisabled();
+  explain("Ask GitHub now whether a newer version is out.");
+  ImGui::SameLine();
+  if (button("All releases")) {
+    if (!SDL_OpenURL(std::string(ui::kReleasesPage).c_str()))
+      log::warning("update", std::string("cannot open the browser: ") + SDL_GetError());
+  }
+  explain("Open the list of Bright Dawn's releases on GitHub.");
+  ImGui::Spacing();
+  draw_toggle(ui::key::kCheckUpdates, {ui::key::kCheckUpdates});
+  note("An update is not installed for you: download it from the release's page. Your settings and saves stay "
+       "where they are; the game is built again from your ROM for the new version.");
+}
+
+void Launcher::draw_toggle(std::string_view key, std::initializer_list<std::string_view> columns) {
   const platform::SettingDef* def = app_.settings.find(key);
   if (def == nullptr) return;
   ImGui::PushID(def->key.c_str());
@@ -946,7 +1014,16 @@ void Launcher::draw_toggle(std::string_view key) {
     ImGui::AlignTextToFramePadding();
     menu::label(look(), def->label.c_str());
     explain(def->help.c_str());
-    ImGui::SameLine(ImGui::GetFontSize() * 9);  // The buttons of each switch one under the other.
+    // The buttons of each switch one under the other, unless its label is longer.
+    // The buttons of the page's switches one under the other, after the
+    // longest label (drawn in the outlined font).
+    ImGui::PushFont(app_.gui.outlined_font(), 0.0f);
+    float widest = 0.0f;
+    for (std::string_view k : columns) {
+      if (const platform::SettingDef* d = app_.settings.find(k)) widest = std::max(widest, ImGui::CalcTextSize(d->label.c_str()).x);
+    }
+    ImGui::PopFont();
+    ImGui::SameLine(std::max(ImGui::GetFontSize() * 9, ImGui::GetCursorStartPos().x + widest + ImGui::GetStyle().ItemSpacing.x * 2));
     if (menu::choice_button(look(), "On", on) && !on) clicked = true;
     explain(def->help.c_str());
     ImGui::SameLine();
@@ -962,25 +1039,26 @@ void Launcher::draw_toggle(std::string_view key) {
 }
 
 void Launcher::draw_debug() {
+  const std::initializer_list<std::string_view> all = {ui::key::kFrameLog, ui::key::kFrameLogSync, ui::key::kProcessor2D, ui::key::kPauseStep, ui::key::kFrameOverlay, ui::key::kCaptureHotkey, ui::key::kPerfReport, ui::key::kGpuWorkarounds};
   heading("Debug");
   note("The frame log writes what each frame of the game costs, part by part, a line a frame; at its end, the "
        "average and the 95th percentile of each part. It starts with the game, the next time the game starts.");
   ImGui::Spacing();
-  draw_toggle(ui::key::kFrameLog);
+  draw_toggle(ui::key::kFrameLog, all);
   ImGui::Spacing();
-  draw_toggle(ui::key::kFrameLogSync);
+  draw_toggle(ui::key::kFrameLogSync, all);
   ImGui::Spacing();
-  draw_toggle(ui::key::kProcessor2D);
+  draw_toggle(ui::key::kProcessor2D, all);
   ImGui::Spacing();
-  draw_toggle(ui::key::kPauseStep);
+  draw_toggle(ui::key::kPauseStep, all);
   ImGui::Spacing();
-  draw_toggle(ui::key::kFrameOverlay);
+  draw_toggle(ui::key::kFrameOverlay, all);
   ImGui::Spacing();
-  draw_toggle(ui::key::kCaptureHotkey);
+  draw_toggle(ui::key::kCaptureHotkey, all);
   ImGui::Spacing();
-  draw_toggle(ui::key::kPerfReport);
+  draw_toggle(ui::key::kPerfReport, all);
   ImGui::Spacing();
-  draw_toggle(ui::key::kGpuWorkarounds);
+  draw_toggle(ui::key::kGpuWorkarounds, all);
   ImGui::Spacing();
   const std::filesystem::path file = frame_log_path();
   ImGui::TextWrapped("The frame log: %s", utf8(file).c_str());

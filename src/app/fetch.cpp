@@ -9,19 +9,6 @@
 #include "core/sha256.h"
 
 namespace bd::app {
-namespace {
-
-// A program of the system's own, from System32 on Windows.
-std::string system_program(const char* name) {
-#if defined(_WIN32)
-  const char* root = SDL_getenv("SystemRoot");
-  return std::string(root != nullptr ? root : "C:\\Windows") + "\\System32\\" + name + ".exe";
-#else
-  return name;
-#endif
-}
-
-}  // namespace
 
 Fetch::~Fetch() {
   stop();
