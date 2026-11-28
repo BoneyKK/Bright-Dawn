@@ -163,6 +163,7 @@ class SoundDriver : public Timeline::Source {
   std::uint32_t shared_block() const { return shared_; }
   const Statistics& statistics() const { return statistics_; }
   const SequencePlayer& sequences() const { return sequences_; }
+  SequencePlayer& sequences() { return sequences_; }
   // Commands and situations that could not be dealt with as the program
   // would, in words, with how often each came.
   const std::map<std::string, std::uint64_t>& not_carried_out() const { return not_carried_out_; }

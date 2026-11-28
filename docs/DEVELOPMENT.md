@@ -121,6 +121,62 @@ but the request. A build from the source tree (`-dev`) does not ask by
 itself; *Check now* shows it the newest release. The switch *Check for
 updates* (`updates.check`) turns the check at start off.
 
+The sound (`src/audio`) is mixed in 32-bit floating point at 48,000 samples
+a second and handed to SDL a frame at a time (`src/app/audio_out.h`). The
+console's sound hardware (`src/nds/sound_hardware.h`) puts out 32,728 samples
+a second; a windowed-sinc resampler (`src/audio/resampler.h`: 32 taps, a
+Kaiser window, its cutoff at 95% of the lower Nyquist frequency) brings them
+to 48,000. *Sound quality* (`sound.quality`, `--sound-quality`) chooses what
+is taken from the hardware: *Enhanced* (the default) interpolates the game's
+sampled sounds between their samples (four-point Catmull-Rom, by where each
+channel's timer is between two samples) and keeps the mix at full precision;
+*Original* is the DS's own 10-bit output, each sample held until the next.
+The 10-bit output, the capture units (which the game's echo plays back) and
+every register are the same either way: the enhanced mix is made beside them
+(`bd_tests`: `sound_enhanced_output_leaves_what_the_ds_makes_as_it_is`). On
+the opening's music the two are as loud (RMS 0.137 and 0.142), with the same
+envelope. Mixing costs about 0.07 ms a frame. `--record-sound FILE` keeps the
+mix (16-bit, 48,000 a second).
+
+Replacement music plays Ogg Vorbis files in place of the game's music. Put
+them in the `music` folder in the user data folder, named after the piece
+they replace: `SEQ_MAINJ2.ogg` (or `MAINJ2.ogg`, in any case). The log names
+each piece of the game's music as it starts ("SEQ_MAP1 (the game's own) on
+player 0"), from the names in the ROM's sound archive (`src/rom/sdat.h`); the
+sequence the game asks for is told by its events, which are the same bytes as
+in the archive (`src/audio/music_replacer.h`). A file loops where its tags
+say (`LOOPSTART`, and `LOOPLENGTH` or `LOOPEND`, in samples, as many music
+tools write them), or as `music.ini` in the folder says, or else from its end
+to its start; the loop is exact to the sample and need not be where the
+game's own music loops. `music.ini` can also name other files and set a
+volume (`src/audio/music_pack.h` has the format):
+
+```ini
+[pack]
+volume = 90            ; percent, for every track
+
+[SEQ_MAP1]             ; or [MAP1]
+file = overworld.ogg
+loop_start = 1:02.5    ; minutes:seconds, 62.5s, or a sample number
+loop_end = 3:10
+loop = yes             ; no: once, then silence
+volume = 80
+```
+
+While a file plays, the game's sequence still runs, note for note, at volume
+0, so everything the game reads of it (which players play, their ticks, the
+variables a sequence sets) is as before. The file starts, pauses and stops
+with the sequence, and follows its player's volume and fader (the game's
+fades) and the master volume; a sequence that ends by itself (a fanfare) lets
+its file play to its end. The game's tempo changes and what it does to single
+tracks do not reach the file. A file at full scale plays at its own level
+under the player's volume: the game's own music reaches 0.7 to 0.9 of the
+console's full scale (RMS about -15 dB, measured on the opening's music),
+about what music files are made to. *Replacement music* (`sound.music_pack`,
+`--no-music-pack`) switches it off; *Replacement music volume*
+(`sound.music_volume`) sets its level. Files are decoded as they play by
+stb_vorbis (`third_party/stb`).
+
 To find out what makes a frame slow, switch on the *Frame log* on the
 launcher's Debug page (or start with `--frame-log`). From the next start of
 the game, `bright-dawn-frames.csv` next to the program has a line for each

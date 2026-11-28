@@ -143,6 +143,9 @@ void SoundHardware::start(unsigned channel) {
   ++statistics_.channels_started;
   c.position = c.source;
   c.counter = c.timer;
+  c.steps = 0;
+  c.history_at = 0xFFFFFFFF;
+  c.history = {};
   switch ((c.control >> kFormatShift) & 3) {
     case 2: {
       // The data begins with a header: the level and the index to start from.
@@ -290,7 +293,24 @@ bool SoundHardware::anything_running() const {
   return false;
 }
 
-SoundHardware::Output SoundHardware::resting() const { return Output{bias_, bias_}; }
+SoundHardware::Output SoundHardware::resting() const { return Output{bias_, bias_, 0, 0}; }
+
+double SoundHardware::interpolated(Channel& c, std::int32_t now) {
+  // A new sample since the last output sample: it joins the history.
+  if (c.history_at != c.steps) {
+    c.history = {c.history[1], c.history[2], c.history[3], now};
+    c.history_at = c.steps;
+  }
+  // How far the channel's timer is through the newest sample.
+  const double span = 0x10000 - static_cast<double>(c.timer);
+  const double f = std::clamp((static_cast<double>(c.counter) - c.timer) / span, 0.0, 1.0);
+  // Catmull-Rom between the second and third, the first and fourth around them.
+  const double y0 = c.history[0], y1 = c.history[1], y2 = c.history[2], y3 = c.history[3];
+  const double c1 = 0.5 * (y2 - y0);
+  const double c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+  const double c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+  return ((c3 * f + c2) * f + c1) * f + y1;
+}
 
 void SoundHardware::sample() {
   ++statistics_.samples;
@@ -302,32 +322,49 @@ void SoundHardware::sample() {
   // Levels carry 8 bits below the point from here to the master volume.
   std::int64_t mixer_left = 0, mixer_right = 0;
   std::int64_t alone_left[2] = {0, 0}, alone_right[2] = {0, 0};  // Channels 1 and 3 by themselves.
+  // Enhanced output: the same, from interpolated levels, unrounded.
+  double fine_mixer_left = 0, fine_mixer_right = 0;
+  double fine_alone_left[2] = {0, 0}, fine_alone_right[2] = {0, 0};
   for (unsigned i = 0; i < kChannels; ++i) {
     Channel& c = channels_[i];
     if ((c.control & kChannelStart) == 0) continue;
     std::int64_t value = level(i, c);
+    double fine = static_cast<double>(value);
+    if (enhanced_ && ((c.control >> kFormatShift) & 3) != 3) fine = interpolated(c, static_cast<std::int32_t>(value));
 
     c.counter += kTimerTicksPerSample;
     while (c.counter >= 0x10000) {
       c.counter = c.counter - 0x10000 + c.timer;
       if (!step(i, c)) break;
+      ++c.steps;
     }
 
     const unsigned divider = (c.control >> kDividerShift) & 3;
-    value <<= 4 - (divider == 3 ? 4 : divider);
+    const unsigned shift = 4 - (divider == 3 ? 4 : divider);
+    value <<= shift;
     value *= out_of_128(c.control & 0x7F);
     const std::int64_t pan = out_of_128((c.control >> kPanShift) & 0x7F);
     const std::int64_t left = (value * (128 - pan) / 128) >> 3;
     const std::int64_t right = (value * pan / 128) >> 3;
+    double fine_left = 0, fine_right = 0;
+    if (enhanced_) {
+      fine *= static_cast<double>(1u << shift) * static_cast<double>(out_of_128(c.control & 0x7F));
+      fine_left = fine * static_cast<double>(128 - pan) / (128.0 * 8.0);
+      fine_right = fine * static_cast<double>(pan) / (128.0 * 8.0);
+    }
 
     if (i == 1 || i == 3) {
       alone_left[i >> 1] = left;
       alone_right[i >> 1] = right;
+      fine_alone_left[i >> 1] = fine_left;
+      fine_alone_right[i >> 1] = fine_right;
       // Bits 12 and 13 keep channels 1 and 3 out of the mixer.
       if ((control_ & (0x1000u << (i >> 1))) != 0) continue;
     }
     mixer_left += left;
     mixer_right += right;
+    fine_mixer_left += fine_left;
+    fine_mixer_right += fine_right;
   }
 
   for (unsigned unit = 0; unit < kCaptureUnits; ++unit) {
@@ -348,8 +385,22 @@ void SoundHardware::sample() {
     const std::int64_t sixteen_bits = (level * master / 128) >> 8;
     return static_cast<std::uint16_t>(std::clamp<std::int64_t>((sixteen_bits >> 6) + bias_, 0, 0x3FF));
   };
-  const Output output{converted(chosen(control_ >> 8, mixer_left, alone_left)),
-                      converted(chosen(control_ >> 10, mixer_right, alone_right))};
+  Output output{converted(chosen(control_ >> 8, mixer_left, alone_left)),
+                converted(chosen(control_ >> 10, mixer_right, alone_right))};
+  if (enhanced_) {
+    const auto fine_chosen = [&](unsigned choice, double mixer, const double* alone) {
+      switch (choice & 3) {
+        case 0: return mixer;
+        case 1: return alone[0];
+        case 2: return alone[1];
+        default: return alone[0] + alone[1];
+      }
+    };
+    // As converted(), unrounded: 1 where the 10 bits reach their ends.
+    const double scale = static_cast<double>(master) / (128.0 * 256.0 * 32768.0);
+    output.fine_left = static_cast<float>(fine_chosen(control_ >> 8, fine_mixer_left, fine_alone_left) * scale);
+    output.fine_right = static_cast<float>(fine_chosen(control_ >> 10, fine_mixer_right, fine_alone_right) * scale);
+  }
   if (output.left != bias_ || output.right != bias_) ++statistics_.samples_with_sound;
   if (on_output) on_output(output);
 }

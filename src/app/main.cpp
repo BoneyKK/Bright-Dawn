@@ -34,6 +34,7 @@
 #include "app/hang_watch.h"
 #include "app/launcher.h"
 #include "app/window_icon.h"
+#include "audio/music_replacer.h"
 #include "core/log.h"
 #include "core/version.h"
 #include "debug/frame_log.h"
@@ -50,6 +51,7 @@
 #include "rom/game_id.h"
 #include "rom/program_code.h"
 #include "rom/rom.h"
+#include "rom/sdat.h"
 #include "translated_table.h"
 #include "ui/game_settings.h"
 
@@ -116,6 +118,9 @@ constexpr const char* kUsage =
     "  --widescreen          the 3D scene on the main screen a third wider (16:9),\n"
     "                        with the graphics hardware\n"
     "  --mute                no sound\n"
+    "  --sound-quality MODE  the game's sound: enhanced (sampled sounds smooth between\n"
+    "                        their samples; the default) or original (as the DS)\n"
+    "  --no-music-pack       the game's own music, not the replacement music\n"
     "  --language LANGUAGE   the console's language, which the game shows its text in:\n"
     "                        english, french, german, italian, spanish or japanese\n"
     "  --renderer WAY        drawing the window: vulkan (the default; the system's own\n"
@@ -152,7 +157,8 @@ constexpr const char* kUsage =
     "  --perf-report FILE    at the end, write the performance report (JSON) to FILE\n"
     "  --check-2d            draw the 2D pictures with the processor too, and log where\n"
     "                        the graphics hardware's differ\n"
-    "  --record-sound FILE   keep the game's sound in FILE (WAV, 16-bit stereo)\n"
+    "  --record-sound FILE   keep the program's sound in FILE (WAV, 16-bit stereo,\n"
+    "                        48,000 samples a second)\n"
     "  --interpret-only      do not use the translated code (bright-dawn-game only)\n"
     "  --video-drivers       list the window systems this build can use, and stop\n"
     "  --extract-code ROM DIR  check the ROM, write its program code to DIR (for the\n"
@@ -358,6 +364,43 @@ struct Played {
   int status = 0;
 };
 
+// The replacement music (audio/music_replacer.h): the sequences of the
+// ROM's sound archive, by name, and the pack in the user data folder's
+// "music" folder (which may be empty: the log still names the music the
+// game plays, for whoever makes a pack). Nothing without named sequences.
+std::unique_ptr<audio::MusicReplacer> replacement_music(const rom::Rom& rom, const std::filesystem::path& user_data) {
+  if (user_data.empty()) return nullptr;
+  const std::filesystem::path folder = user_data / "music";
+  std::vector<std::string> problems;
+  audio::MusicPack pack = audio::MusicPack::scan(folder, problems);
+  for (const std::string& p : problems) log::warning("music", p);
+  if (pack.size() == 0) log::info("music", "no replacement music (none in " + app::utf8(folder) + ")");
+  std::vector<rom::SdatSequence> sequences;
+  for (const rom::NamedFile& f : rom.fs().named_files()) {
+    const std::string& path = f.path;
+    if (path.size() < 5 || path.compare(path.size() - 5, 5, ".sdat") != 0) continue;
+    Result<ByteSpan> bytes = rom.file(f.file_id);
+    if (!bytes) continue;
+    Result<std::vector<rom::SdatSequence>> found = rom::sdat_sequences(bytes.value());
+    if (!found) {
+      log::warning("music", path + ": " + found.error().message);
+      continue;
+    }
+    sequences.insert(sequences.end(), found.value().begin(), found.value().end());
+  }
+  audio::SequenceCatalog catalog(sequences);
+  if (catalog.size() == 0) return nullptr;
+  if (pack.size() > 0)
+    log::info("music", std::to_string(pack.size()) + " pieces of replacement music in " + app::utf8(folder) + ", for " +
+                         std::to_string(catalog.size()) + " named sequences of the game");
+  for (const auto& [name, track] : pack.tracks()) {
+    bool known = false;
+    for (const rom::SdatSequence& s : sequences) known = known || audio::sequence_key(s.name) == name;
+    if (!known) log::warning("music", app::utf8(track.file.filename()) + ": the game has no sequence " + name);
+  }
+  return std::make_unique<audio::MusicReplacer>(std::move(catalog), std::move(pack));
+}
+
 // Plays the game from `source` until the run ends.
 Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
   Played played;
@@ -472,6 +515,7 @@ Played play(App& a, const std::filesystem::path& source, bool can_go_back) {
         played.status = 1;
         return played;
       }
+      if (rom) screen->set_music(replacement_music(rom.value(), a.user_data));
       log::info("game", "started");
     } else {
       screen->attach(console);
@@ -755,6 +799,10 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kWidescreen, "on");
     } else if (arg == "--textures" && has_value) {
       cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
+    } else if (arg == "--sound-quality" && has_value) {
+      cl.overrides.emplace_back(ui::key::kSoundQuality, argv[++i]);
+    } else if (arg == "--no-music-pack") {
+      cl.overrides.emplace_back(ui::key::kReplaceMusic, "off");
     } else if (arg == "--log-level" && has_value) {
       cl.overrides.emplace_back(ui::key::kLogLevel, argv[++i]);
     } else if (arg == "--frames" && has_value && parse_number(argv[i + 1], 1, 1LL << 40, number)) {

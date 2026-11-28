@@ -2,6 +2,8 @@
 //
 // Most tests listen through a capture unit: it records the mixer's output at
 // full 16-bit precision, one value per output sample when its timer says so.
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -464,4 +466,78 @@ TEST(sound_notes_what_it_does_not_model) {
   f.run(2);
   CHECK(f.bus.read32(kRecorded) == 0xEEEEEEEE);
   CHECK(f.sound.notes().size() == 4);
+}
+
+namespace {
+
+// Two channels: 16-bit, a step every fourth output sample, a loud sample
+// and a quiet one in turn; and 8-bit, a step every sample, on the right.
+void enhanced_scene(Fixture& f) {
+  for (unsigned i = 0; i < 16; ++i) f.bus.write16(kData + 2 * i, i % 2 == 0 ? 0x4000 : 0xC000);
+  for (unsigned i = 0; i < 64; ++i) f.bus.main_write(kData + 0x100 + i, 1, (i * 37) & 0xFF);
+  f.set_up(0, kLoop | format(1) | kFullVolume | (32u << SoundHardware::kPanShift), kData, 0, 8,
+           0x10000 - SoundHardware::kTimerTicksPerSample * 4);
+  f.set_up(2, kLoop | format(0) | kFullVolume | (127u << SoundHardware::kPanShift), kData + 0x100, 0, 16);
+  f.listen();
+  f.start(0);
+  f.start(2);
+}
+
+std::vector<SoundHardware::Output> outputs(bool enhanced, std::vector<std::uint8_t>* captured = nullptr) {
+  Fixture f;
+  f.sound.set_enhanced(enhanced);
+  std::vector<SoundHardware::Output> out;
+  f.sound.on_output = [&](SoundHardware::Output o) { out.push_back(o); };
+  enhanced_scene(f);
+  f.run(300);
+  if (captured != nullptr)
+    for (unsigned i = 0; i < 256; ++i) captured->push_back(static_cast<std::uint8_t>(f.bus.main_read(kRecorded + i, 1)));
+  return out;
+}
+
+}  // namespace
+
+TEST(sound_enhanced_output_leaves_what_the_ds_makes_as_it_is) {
+  std::vector<std::uint8_t> captured_original, captured_enhanced;
+  const auto original = outputs(false, &captured_original);
+  const auto enhanced = outputs(true, &captured_enhanced);
+  REQUIRE(original.size() == 300 && enhanced.size() == 300);
+  bool same = true;
+  for (std::size_t i = 0; i < 300; ++i)
+    same = same && original[i].left == enhanced[i].left && original[i].right == enhanced[i].right;
+  CHECK(same);
+  CHECK(captured_original == captured_enhanced);
+  // Off, there is no enhanced mix.
+  CHECK(original[100].fine_left == 0.0f && original[100].fine_right == 0.0f);
+}
+
+TEST(sound_enhanced_output_is_smooth_between_samples_and_at_the_same_level) {
+  const auto out = outputs(true);
+  // As loud as the 10-bit output: the same highest and lowest level, to
+  // within its rounding.
+  float fine_high = -2, fine_low = 2, ten_high = -2, ten_low = 2;
+  for (std::size_t i = 50; i < 300; ++i) {
+    fine_high = std::max(fine_high, out[i].fine_left);
+    fine_low = std::min(fine_low, out[i].fine_left);
+    const float ten = static_cast<float>(static_cast<int>(out[i].left) - 0x200) / 512.0f;
+    ten_high = std::max(ten_high, ten);
+    ten_low = std::min(ten_low, ten);
+  }
+  CHECK(std::abs(fine_high - ten_high) < 2.0f / 512 && std::abs(fine_low - ten_low) < 2.0f / 512);
+  // The 10-bit left side takes two levels; the enhanced one many, on the
+  // way between them.
+  std::vector<std::uint16_t> held;
+  std::vector<float> smooth;
+  for (std::size_t i = 50; i < 300; ++i) {
+    if (std::find(held.begin(), held.end(), out[i].left) == held.end()) held.push_back(out[i].left);
+    if (std::find(smooth.begin(), smooth.end(), out[i].fine_left) == smooth.end()) smooth.push_back(out[i].fine_left);
+  }
+  CHECK(held.size() <= 3 && smooth.size() >= 4);
+  // No step larger than the hold has: from loud to quiet over four samples.
+  float largest = 0;
+  for (std::size_t i = 51; i < 300; ++i) largest = std::max(largest, std::abs(out[i].fine_left - out[i - 1].fine_left));
+  float held_step = 0;
+  for (std::size_t i = 51; i < 300; ++i)
+    held_step = std::max(held_step, static_cast<float>(std::abs(out[i].left - out[i - 1].left)) / 512.0f);
+  CHECK(largest < held_step * 0.75f);
 }

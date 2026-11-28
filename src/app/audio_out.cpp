@@ -3,11 +3,11 @@
 #include <string>
 
 #include "core/log.h"
-#include "platform/audio_feed.h"
+#include "audio/mixer.h"
 
 namespace bd::app {
 
-using platform::AudioFeed;
+using audio::Mixer;
 
 AudioOut::~AudioOut() {
   if (stream_ != nullptr) SDL_DestroyAudioStream(stream_);
@@ -21,7 +21,7 @@ bool AudioOut::open() {
     log::warning("sound", std::string("no sound: the audio system cannot be started: ") + SDL_GetError());
     return false;
   }
-  const SDL_AudioSpec spec{SDL_AUDIO_S16, AudioFeed::kChannels, AudioFeed::kRate};
+  const SDL_AudioSpec spec{SDL_AUDIO_F32, 2, Mixer::kRate};
   stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
   if (stream_ == nullptr) {
     log::warning("sound", std::string("no sound: the audio device cannot be opened: ") + SDL_GetError());
@@ -48,13 +48,13 @@ void AudioOut::set(bool on, int volume) {
   }
 }
 
-void AudioOut::play(const std::vector<std::int16_t>& samples) {
+void AudioOut::play(const std::vector<float>& samples) {
   if (!on_ || samples.empty()) return;
   const int queued_bytes = SDL_GetAudioStreamQueued(stream_);
-  const std::size_t queued = queued_bytes > 0 ? static_cast<std::size_t>(queued_bytes) / 4 : 0;
-  if (AudioFeed::too_far_behind(queued)) SDL_ClearAudioStream(stream_);
-  SDL_SetAudioStreamFrequencyRatio(stream_, static_cast<float>(AudioFeed::speed(queued)));
-  SDL_PutAudioStreamData(stream_, samples.data(), static_cast<int>(samples.size() * sizeof(std::int16_t)));
+  const std::size_t queued = queued_bytes > 0 ? static_cast<std::size_t>(queued_bytes) / (2 * sizeof(float)) : 0;
+  if (Mixer::too_far_behind(queued)) SDL_ClearAudioStream(stream_);
+  SDL_SetAudioStreamFrequencyRatio(stream_, static_cast<float>(Mixer::speed(queued)));
+  SDL_PutAudioStreamData(stream_, samples.data(), static_cast<int>(samples.size() * sizeof(float)));
 }
 
 }  // namespace bd::app

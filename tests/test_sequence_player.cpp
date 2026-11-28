@@ -169,3 +169,59 @@ TEST(sequence_player_plays_square_waves_on_their_channels) {
   f.beats(48);
   CHECK(rises >= 180 && rises <= 190);
 }
+
+TEST(sequence_player_plays_a_replaced_sequence_silently_and_as_before) {
+  // The same sequence twice: heard, and with its music replaced.
+  Fixture heard, silent;
+  std::uint32_t asked_player = 99, asked_starts = 0, asked_data = 0;
+  silent.driver.sequences().on_prepare = [&](unsigned player, std::uint32_t starts, std::uint32_t data) {
+    asked_player = player;
+    asked_starts = starts;
+    asked_data = data;
+    return true;
+  };
+  for (Fixture* f : {&heard, &silent}) {
+    f->sequence({0x3C, 0x7F, 0x30, 0xFF});
+    f->play();
+    f->beats(1);
+  }
+  CHECK(asked_player == 0 && asked_starts == 1 && asked_data == kSequence);
+  CHECK(silent.driver.sequences().silent(0) && !heard.driver.sequences().silent(0));
+  // The same channel plays the note, at volume 0.
+  CHECK(heard.hardware.channel_active(4) && silent.hardware.channel_active(4));
+  CHECK((heard.hardware.read(channel(4), 4) & 0x37F) == 127 && (silent.hardware.read(channel(4), 4) & 0x37F) == 0);
+  CHECK((heard.hardware.read(channel(4), 4) & ~0x37Fu) == (silent.hardware.read(channel(4), 4) & ~0x37Fu));
+  // What the game sees is the same, to the end.
+  for (int i = 0; i < 10; ++i) {
+    heard.beats(10);
+    silent.beats(10);
+    CHECK(heard.playing() == silent.playing());
+    CHECK(heard.bus.read32(kShared + SoundDriver::kSharedPlayerTicks) == silent.bus.read32(kShared + SoundDriver::kSharedPlayerTicks));
+    CHECK(heard.hardware.channel_active(4) == silent.hardware.channel_active(4));
+  }
+  const SequencePlayer::PlayerInfo info = silent.driver.sequences().player_info(0);
+  CHECK(!info.prepared && info.starts == 1 && info.ends == 1);
+  CHECK(heard.driver.sequences().player_info(0).ends == 1);
+}
+
+TEST(sequence_player_tells_a_stop_from_an_end) {
+  Fixture f;
+  f.sequence({0x3C, 0x7F, 0x30, 0xFE, 0x00, 0x30, 0x00});  // A note, then waits for ever.
+  f.play();
+  f.beats(2);
+  SequencePlayer::PlayerInfo info = f.driver.sequences().player_info(0);
+  CHECK(info.prepared && info.playing && !info.paused && info.starts == 1 && info.ends == 0 && info.decibels == 0);
+  // The volume and fader the game sets.
+  f.command(SoundDriver::kSetPlayerValue, {0, SequencePlayer::kPlayerVolume, 64, 1});
+  f.command(SoundDriver::kSetPlayerValue, {0, SequencePlayer::kPlayerFader, static_cast<std::uint32_t>(-100) & 0xFFFF, 2});
+  f.command(SoundDriver::kPauseSequence, {0, 1});
+  info = f.driver.sequences().player_info(0);
+  CHECK(info.paused && info.decibels == SequencePlayer::decibels_squared(64) - 100);
+  // Made heard again: its note follows from the next beat.
+  f.driver.sequences().set_silent(0, true);
+  CHECK(f.driver.sequences().silent(0));
+  f.driver.sequences().set_silent(0, false);
+  f.command(SoundDriver::kStopSequence, {0});
+  info = f.driver.sequences().player_info(0);
+  CHECK(!info.prepared && info.starts == 1 && info.ends == 0);
+}

@@ -7,7 +7,8 @@ target_link_libraries(bd_test_support PUBLIC bd_rom)
 add_executable(bd_tests
   test_main.cpp
   test_assets.cpp
-  test_audio_feed.cpp
+  test_audio.cpp
+  test_sdat.cpp
   test_checksum.cpp
   test_machine_code_changes.cpp
   test_machine_interrupts.cpp
@@ -55,7 +56,8 @@ add_executable(bd_tests
   test_narc.cpp
   test_rom.cpp
 )
-target_link_libraries(bd_tests PRIVATE bd_test_support bd_platform bd_nds bd_gfx bd_input bd_game bd_ui bd_assets bd_debug)
+target_compile_definitions(bd_tests PRIVATE BD_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_link_libraries(bd_tests PRIVATE bd_test_support bd_audio bd_platform bd_nds bd_gfx bd_input bd_game bd_ui bd_assets bd_debug)
 add_test(NAME unit COMMAND bd_tests)
 
 # End-to-end checks of the command-line tool against a generated ROM.

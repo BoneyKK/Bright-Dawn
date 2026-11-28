@@ -47,7 +47,7 @@ in them, not before.
 | `runtime` | What the translated game calls: the dispatcher and the fallback interpreter. Knows nothing of the DS beyond its processor | `third_party/skyemu` |
 | `nds` | The console around the processor: memory map, system coprocessor, hardware registers, the state a game starts in (built); BIOS calls, interrupts, the second processor's services, the fixed-rate simulation loop (to come) | `core`, `rom`, `runtime`, and the *interfaces* of `gfx`, `audio`, `input` |
 | `gfx` | Capture of DS-level graphics state, presentation rules, renderer backends | `core`, `assets`, `platform` |
-| `audio` | Sequence playback, mixing, replacement tracks | `core`, `assets`, `platform` |
+| `audio` | The mix the device plays (48,000 a second, floating point), the change of rate, replacement music: Ogg Vorbis files with loops of their own in place of the game's sequences, which are told by name from the ROM's sound archive (built). The sequences themselves are played by the stand-in for the second processor's sound program, in `nds` | `core`, `rom`, `third_party/stb` |
 | `input` | Devices, mapping, touch replacements | `core`, `platform` |
 | `game` | What Bright Dawn knows of the game's own objects in memory: Start skips the story at the start of a new game (built) | `core` |
 | `ui` | What the settings book and setup screens show and keep, without drawing it: Bright Dawn's settings, each described once; following the game builder (built) | `platform`, `gfx`, `input`, `assets` |
@@ -171,7 +171,7 @@ metadata.
 | Decision | Reason |
 | --- | --- |
 | C++20, CMake | The recompiler's output is C; C++ is the common language for the surrounding runtime and for the graphics, audio and windowing libraries likely to be used. |
-| Third-party code kept to a minimum | SkyEmu's `arm7.h` (MIT) is the fallback interpreter, chosen after comparing six candidates on licence and fit and then proving it on the test corpus. Each later dependency is assessed the same way. SDL 3 (zlib licence) is the window, input and, later, sound layer: a pinned release, downloaded and checked against its hash by the build. Only the window program (`src/app`) uses it; `gfx` and `input` hold the rules that need no window, and are tested without one. |
+| Third-party code kept to a minimum | SkyEmu's `arm7.h` (MIT) is the fallback interpreter, chosen after comparing six candidates on licence and fit and then proving it on the test corpus. Each later dependency is assessed the same way. SDL 3 (zlib licence) is the window, input and sound layer: a pinned release, downloaded and checked against its hash by the build. Only the window program (`src/app`) uses it; `gfx`, `input` and `audio` hold the rules that need no window or device, and are tested without one. stb_vorbis (public domain or MIT) decodes the replacement music: one file without dependencies that seeks to an exact sample, behind `src/audio/vorbis_file.h`. |
 | The interpreter sits behind a C interface of its own | Nothing but one wrapper file includes the third-party header, so the interpreter can be replaced without touching the runtime. |
 | The translator stays in Python | It is the owner's tested code and runs once, offline. Rewriting it would discard its test history for no gain. |
 | Errors as values (`Result<T>`) in parsers | Input is untrusted and failures are expected; callers must handle them. |

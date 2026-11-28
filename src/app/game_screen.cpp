@@ -3,6 +3,7 @@
 #include "app/system_info.h"
 
 #include <algorithm>
+#include <bit>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
@@ -64,14 +65,51 @@ GameScreen::~GameScreen() {
 }
 
 void GameScreen::detach() {
-  if (console_ != nullptr) console_->sound_hardware().on_output = nullptr;
+  if (console_ != nullptr) {
+    console_->sound_hardware().on_output = nullptr;
+    console_->sound_driver().sequences().on_prepare = nullptr;
+  }
+  if (music_) music_->stop_all();
   console_ = nullptr;
+}
+
+void GameScreen::connect_sound() {
+  console_->sound_hardware().on_output = [this](nds::SoundHardware::Output o) {
+    if (enhanced_sound_) {
+      mixer_.add_console(o.fine_left, o.fine_right);
+    } else {
+      // The 10 bits around the resting level, as the DS puts them out.
+      mixer_.add_console(static_cast<float>(static_cast<int>(o.left & 0x3FF) - 0x200) / 512.0f,
+                         static_cast<float>(static_cast<int>(o.right & 0x3FF) - 0x200) / 512.0f);
+    }
+  };
+  console_->sound_driver().sequences().on_prepare = [this](unsigned player, std::uint32_t starts, std::uint32_t data) {
+    if (!music_ || !nds::Arm9Bus::in_main_memory(data)) return false;
+    const ByteSpan memory(console_->bus().main_memory(), nds::Arm9Bus::kMainRamSize);
+    return music_->prepared(player, starts, memory, data & (nds::Arm9Bus::kMainRamSize - 1));
+  };
+}
+
+void GameScreen::set_music(std::unique_ptr<audio::MusicReplacer> music) { music_ = std::move(music); }
+
+void GameScreen::update_music() {
+  if (!music_ || console_ == nullptr) return;
+  nds::SequencePlayer& sequences = console_->sound_driver().sequences();
+  std::array<audio::PlayerState, audio::MusicReplacer::kPlayers> players{};
+  for (unsigned p = 0; p < audio::MusicReplacer::kPlayers; ++p) {
+    const nds::SequencePlayer::PlayerInfo info = sequences.player_info(p);
+    players[p] = audio::PlayerState{info.prepared, info.playing, info.paused, info.starts, info.ends, info.decibels};
+  }
+  const auto master = static_cast<float>(console_->sound_hardware().read(nds::SoundHardware::kControl, 2) & 0x7F) / 127.0f;
+  music_->update(players, master, mixer_);
+  for (std::uint32_t failed = music_->take_failed(); failed != 0; failed &= failed - 1)
+    sequences.set_silent(static_cast<unsigned>(std::countr_zero(failed)), false);
 }
 
 void GameScreen::attach(nds::Console& console) {
   detach();
   console_ = &console;
-  console_->sound_hardware().on_output = [this](nds::SoundHardware::Output o) { sound_.add(o.left, o.right); };
+  connect_sound();
   // What was kept of the console before: its captures are numbered anew.
   capture_kept_ = 0;
   shown_3d_ = {};
@@ -92,10 +130,10 @@ bool GameScreen::open(std::string& error) {
     // Opaque: drawn over what is there, not blended.
     SDL_SetTextureBlendMode(*texture, SDL_BLENDMODE_NONE);
   }
-  console_->sound_hardware().on_output = [this](nds::SoundHardware::Output o) { sound_.add(o.left, o.right); };
+  connect_sound();
   if (!app_.options.record_sound.empty()) {
     std::string why;
-    if (sound_.record(app_.options.record_sound, why))
+    if (mixer_.record(app_.options.record_sound, why))
       log::info("sound", "the game's sound is kept in " + app_.options.record_sound.string());
     else
       log::warning("sound", why);
@@ -232,6 +270,19 @@ void GameScreen::apply_settings(bool first) {
                                       (workarounds_ & debug::kWorkaroundProcessor2D) == 0);
   console_->display().set_check_2d(app_.options.check_2d);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
+  enhanced_sound_ = s.value(key::kSoundQuality) != "original";
+  console_->sound_hardware().set_enhanced(enhanced_sound_);
+  const bool replace = s.toggle(key::kReplaceMusic);
+  if (replace_music_ && !replace && music_) {
+    // The game's own music again, from now on.
+    music_->stop_all();
+    for (unsigned p = 0; p < nds::SequencePlayer::kPlayers; ++p) console_->sound_driver().sequences().set_silent(p, false);
+  }
+  replace_music_ = replace;
+  if (music_) {
+    music_->set_enabled(replace);
+    music_->set_volume(static_cast<float>(s.number(key::kMusicVolume)) / 100.0f);
+  }
   if (!hardware) shown_3d_ = {};
   // Widescreen: the main engine's screen a third wider, where the graphics
   // hardware draws.
@@ -299,7 +350,8 @@ void GameScreen::apply_settings(bool first) {
 
 bool GameScreen::frame() {
   ++frames_run_;
-  audio_.play(sound_.take());
+  update_music();
+  audio_.play(mixer_.mix());
   keep_capture();
   if (!handle_events()) return false;
   if (menu_open_ && !run_menu()) return false;

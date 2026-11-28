@@ -27,6 +27,8 @@
 
 #include "app/app.h"
 #include "app/audio_out.h"
+#include "audio/mixer.h"
+#include "audio/music_replacer.h"
 #include "app/build_tools.h"
 #include "debug/frame_log_file.h"
 #include "debug/frame_stepper.h"
@@ -39,7 +41,6 @@
 #include "ui/game_settings.h"
 #include "gfx/screen_layout.h"
 #include "nds/console.h"
-#include "platform/audio_feed.h"
 #include "platform/frame_clock.h"
 
 namespace bd::app {
@@ -75,6 +76,9 @@ class GameScreen {
   // hotkeys read, and nothing of the game runs. False if the run is to end.
   bool hold_if_paused();
   bool captured() const { return captured_; }
+  // Replacement music (Settings, Sound): the sequences of the ROM's sound
+  // archive, and the music pack. Kept across resets.
+  void set_music(std::unique_ptr<audio::MusicReplacer> music);
 
  private:
   struct Key {
@@ -171,8 +175,13 @@ class GameScreen {
   // did, and the last capture it made.
   std::array<SDL_Texture*, 2> shown_3d_{};
   std::uint64_t capture_kept_ = 0;
-  // The game's sound (Settings, Sound), a frame at a time.
-  platform::AudioFeed sound_;
+  // The game's sound (Settings, Sound), mixed a frame at a time, with the
+  // replacement music beside it.
+  void connect_sound();
+  void update_music();
+  audio::Mixer mixer_;
+  std::unique_ptr<audio::MusicReplacer> music_;
+  bool enhanced_sound_ = false, replace_music_ = false;
   AudioOut audio_;
   std::vector<SDL_Gamepad*> gamepads_;
   std::vector<Key> keys_;

@@ -36,6 +36,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -80,6 +81,25 @@ class SequencePlayer {
   std::uint32_t ticks(unsigned player) const { return players_[player].ticks; }
   bool channel_in_use(unsigned channel) const { return channels_[channel].in_use; }
 
+  // A player as a replacement for its music needs to know it
+  // (audio/music_replacer.h).
+  struct PlayerInfo {
+    bool prepared = false, playing = false, paused = false;
+    std::uint32_t starts = 0;  // Sequences prepared on it so far.
+    std::uint32_t ends = 0;    // Of those, the ones that ended by themselves.
+    int decibels = 0;          // Its volume and fader, in tenths of a decibel.
+  };
+  PlayerInfo player_info(unsigned player) const;
+  // Called when a sequence is prepared on a player, with the player, the
+  // count of sequences prepared on it so far (this one included) and where
+  // the sequence's events are. True: play it silently (its music is
+  // replaced). A silent sequence runs as any other, note for note; only the
+  // volume written for its channels is 0.
+  std::function<bool(unsigned player, std::uint32_t starts, std::uint32_t data)> on_prepare;
+  // Makes a player's sequence silent, or heard again, from its next beat.
+  void set_silent(unsigned player, bool silent);
+  bool silent(unsigned player) const { return ((silent_ >> player) & 1) != 0; }
+
   // Things the player could not do as the program would, with how often.
   const std::map<std::string, std::uint64_t>& notes() const { return notes_; }
 
@@ -108,6 +128,8 @@ class SequencePlayer {
 
   struct Channel {
     bool in_use = false;
+    bool silent = false;     // Its sequence's music is replaced: its volume is written as 0.
+    std::int8_t player = -1; // The player whose note it is, or -1.
     bool starting = false;   // Its registers are to be set and the channel started.
     int track = -1;          // The track it plays for, or -1.
     Kind kind = Kind::kNone;
@@ -163,6 +185,7 @@ class SequencePlayer {
     std::int16_t fader = 0;
     std::uint16_t tempo = 120, tempo_ratio = 256, tempo_counter = kTickStep;
     std::uint32_t bank = 0;
+    std::uint32_t data = 0;  // Where the sequence's events are.
     std::array<std::int8_t, kTracksPerPlayer> tracks{};
     std::uint32_t ticks = 0;
   };
@@ -207,6 +230,8 @@ class SequencePlayer {
   std::array<Player, kPlayers> players_{};
   std::array<Track, kTracks> tracks_{};
   std::array<Channel, kChannels> channels_{};
+  std::array<std::uint32_t, kPlayers> starts_{}, ends_{};
+  std::uint32_t silent_ = 0;  // One bit for each player.
   std::uint32_t random_ = 0x12345678;
   std::map<std::string, std::uint64_t> notes_;
 };

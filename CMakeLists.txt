@@ -79,7 +79,6 @@ add_library(bd_debug STATIC src/debug/frame_log_file.cpp src/debug/gpu_info.cpp 
 target_link_libraries(bd_debug PUBLIC bd_core)
 
 add_library(bd_platform STATIC
-  src/platform/audio_feed.cpp
   src/platform/crash_log.cpp
   src/platform/frame_clock.cpp
   src/platform/paths.cpp
@@ -99,6 +98,7 @@ add_library(bd_rom STATIC
   src/rom/overlay.cpp
   src/rom/program_code.cpp
   src/rom/rom.cpp
+  src/rom/sdat.cpp
 )
 target_link_libraries(bd_rom PUBLIC bd_core)
 
@@ -106,6 +106,28 @@ target_link_libraries(bd_rom PUBLIC bd_core)
 # program can show.
 add_library(bd_assets STATIC src/assets/font.cpp src/assets/screen_picture.cpp)
 target_link_libraries(bd_assets PUBLIC bd_rom)
+
+# The Ogg Vorbis decoder (third_party/stb), compiled as it comes: without
+# this project's warning flags or the sanitizers, and always optimised.
+add_library(bd_stb_vorbis STATIC third_party/stb/stb_vorbis.c)
+target_include_directories(bd_stb_vorbis PUBLIC third_party/stb)
+if(MSVC)
+  target_compile_options(bd_stb_vorbis PRIVATE /w /O2)
+else()
+  target_compile_options(bd_stb_vorbis PRIVATE -w -O2)
+endif()
+
+# The program's sound: the mixer, the resampler and the replacement music
+# (src/audio). No window or device: the app plays what it mixes.
+add_library(bd_audio STATIC
+  src/audio/mixer.cpp
+  src/audio/music_pack.cpp
+  src/audio/music_replacer.cpp
+  src/audio/music_voice.cpp
+  src/audio/resampler.cpp
+  src/audio/vorbis_file.cpp
+)
+target_link_libraries(bd_audio PUBLIC bd_rom PRIVATE bd_stb_vorbis)
 
 # The fallback interpreter. This target wraps third-party code that is
 # compiled as it comes: without this project's warning flags, and without the
@@ -257,7 +279,7 @@ if(BD_BUILD_APP)
   target_include_directories(bd_app PUBLIC src)
   # The build type, for the performance report (empty when none was named).
   target_compile_definitions(bd_app PRIVATE "BD_BUILD_TYPE=\"$<CONFIG>\"")
-  target_link_libraries(bd_app PUBLIC bd_nds bd_gfx bd_input bd_game bd_platform bd_ui bd_imgui bd_game_library_host bd_assets bd_debug
+  target_link_libraries(bd_app PUBLIC bd_audio bd_nds bd_gfx bd_input bd_game bd_platform bd_ui bd_imgui bd_game_library_host bd_assets bd_debug
                         ${BD_SDL_TARGET})
 
   # The game runs on the main thread, and translated code nests native calls
@@ -326,6 +348,7 @@ endif()
 if(TARGET bright-dawn)
   install(TARGETS bright-dawn RUNTIME DESTINATION .)
   install(FILES third_party/imgui/LICENSE.txt DESTINATION licenses RENAME DearImGui.txt)
+  install(FILES third_party/stb/LICENSE.txt DESTINATION licenses RENAME stb_vorbis.txt)
   if(NOT BD_SYSTEM_SDL)
     install(FILES ${sdl3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL3.txt)
   endif()

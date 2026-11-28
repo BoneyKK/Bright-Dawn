@@ -311,6 +311,10 @@ void SequencePlayer::prepare(unsigned p, std::uint32_t data, std::uint32_t offse
   player = Player{};
   player.tracks.fill(-1);
   player.bank = bank;
+  player.data = data;
+  ++starts_[p];
+  const bool silent = on_prepare && on_prepare(p, starts_[p], data);
+  silent_ = (silent_ & ~(1u << p)) | (silent ? 1u << p : 0u);
   const int first = new_track();
   if (first < 0) return;
   Track& track = tracks_[static_cast<std::size_t>(first)];
@@ -364,6 +368,27 @@ int SequencePlayer::find_track(unsigned p, unsigned number) {
   return players_[p].tracks[number];
 }
 
+SequencePlayer::PlayerInfo SequencePlayer::player_info(unsigned p) const {
+  const Player& pl = players_[p];
+  PlayerInfo info;
+  info.prepared = pl.prepared;
+  info.playing = pl.playing;
+  info.paused = pl.paused;
+  info.starts = starts_[p];
+  info.ends = ends_[p];
+  info.decibels = decibels_squared(pl.volume) + pl.fader;
+  return info;
+}
+
+void SequencePlayer::set_silent(unsigned p, bool silent) {
+  if (p >= kPlayers) return;
+  silent_ = (silent_ & ~(1u << p)) | (silent ? 1u << p : 0u);
+  // The notes it is playing now follow; notes it has let go of keep what
+  // they were.
+  for (Channel& ch : channels_)
+    if (ch.in_use && ch.player == static_cast<std::int8_t>(p) && ch.track >= 0) ch.silent = silent;
+}
+
 std::uint32_t SequencePlayer::players_playing() const {
   std::uint32_t playing = 0;
   for (unsigned p = 0; p < kPlayers; ++p)
@@ -390,6 +415,7 @@ void SequencePlayer::beat() {
         ++player.ticks;
       }
       if (ended) {
+        ++ends_[p];
         finish(p);
         continue;
       }
@@ -734,6 +760,8 @@ void SequencePlayer::note(Track& track, unsigned p, int key, int velocity, std::
         ch.loop_length = read(wave + 8, 4) & 0x3FFFFF;
         ch.data = wave + 12;
       }
+      ch.player = static_cast<std::int8_t>(p);
+      ch.silent = silent(p);
       ch.key = static_cast<std::uint8_t>(key);
       ch.base_key = inst.key;
       ch.velocity = static_cast<std::uint8_t>(velocity);
@@ -887,6 +915,7 @@ void SequencePlayer::update_channel(int c) {
   std::uint32_t volume_register = loudness & 0x7F;
   if (driver_.surround_applies(unit)) volume_register = driver_.surround(volume_register, place_register) & 0x7F;
   volume_register |= loudness & 0x300;
+  if (ch.silent) volume_register = 0;
   std::uint32_t timer_register = (0x10000u - timer(ch.base_timer, pitch)) & 0xFFFF;
   if (ch.kind != Kind::kSampled) timer_register &= 0xFFFC;
 

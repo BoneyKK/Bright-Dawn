@@ -118,6 +118,20 @@ std::vector<SettingDef> game_setting_definitions() {
                         {{"sharp", "Sharp (nearest)"}, {"smooth", "Smooth (bilinear)"}}, "sharp"));
   defs.push_back(toggle(key::kSound, "Sound", "Sound", "Plays the game's sound and music.", true));
   defs.push_back(number(key::kVolume, "Sound", "Volume", "Sets how loud the game's sound is, in percent.", 0, 100, 100));
+  defs.push_back(choice(key::kSoundQuality, "Sound", "Sound quality",
+                        "Enhanced plays the game's sampled sounds smoothly between their samples, at full "
+                        "precision. Original plays them as the DS does: each sample held until the next, and the "
+                        "mix rounded to 10 bits.",
+                        {{"enhanced", "Enhanced"}, {"original", "Original (as the DS)"}}, "enhanced"));
+  defs.push_back(toggle(key::kReplaceMusic, "Sound", "Replacement music",
+                        "Plays Ogg Vorbis files from the \"music\" folder in the user data folder in place of the "
+                        "game's music: a file named after a piece of the game's music (SEQ_MAP1.ogg), or as "
+                        "music.ini there says, with a loop of its own. From the next piece of music.",
+                        true));
+  SettingDef music_volume = number(key::kMusicVolume, "Sound", "Replacement music volume",
+                                   "Sets how loud the replacement music is, in percent of its usual level.", 0, 200, 100);
+  music_volume.shown_with = std::string(key::kReplaceMusic);
+  defs.push_back(music_volume);
   defs.push_back(toggle(key::kPlayBuilt, "Game", "Play the built game",
                         "Plays the game built from your ROM, when there is one.",
                         true));

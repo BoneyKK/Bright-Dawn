@@ -63,7 +63,7 @@ jobs:
           # builder, with which the launcher builds the game library.
           exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
           expected=$(printf '%s\n' LICENSE.txt "bright-dawn$exe" licenses/DearImGui.txt licenses/SDL3.txt \
-            licenses/SkyEmu.txt | LC_ALL=C sort)
+            licenses/SkyEmu.txt licenses/stb_vorbis.txt | LC_ALL=C sort)
           actual=$(cd package/bright-dawn && find . -type f -not -path './builder/*' | sed 's|^[.]/||' | LC_ALL=C sort)
           if [ "$actual" != "$expected" ]; then
             echo "The package holds:"; echo "$actual"; echo "It should hold:"; echo "$expected"; exit 1
