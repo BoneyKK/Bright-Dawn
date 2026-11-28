@@ -119,10 +119,18 @@ std::vector<SettingDef> game_setting_definitions() {
   defs.push_back(toggle(key::kSound, "Sound", "Sound", "Plays the game's sound and music.", true));
   defs.push_back(number(key::kVolume, "Sound", "Volume", "Sets how loud the game's sound is, in percent.", 0, 100, 100));
   defs.push_back(choice(key::kSoundQuality, "Sound", "Sound quality",
-                        "Enhanced plays the game's sampled sounds smoothly between their samples, at full "
-                        "precision. Original plays them as the DS does: each sample held until the next, and the "
-                        "mix rounded to 10 bits.",
+                        "Enhanced plays the mix of the game's sound at full precision. Original rounds it to 10 "
+                        "bits, as the DS does.",
                         {{"enhanced", "Enhanced"}, {"original", "Original (as the DS)"}}, "enhanced"));
+  defs.push_back(choice(key::kInterpolation, "Sound", "Interpolation",
+                        "Makes the game's sampled sounds go smoothly from one sample to the next, in one of "
+                        "melonDS's ways, for less hiss. None holds each sample until the next, as the DS does.",
+                        {{"none", "None (as the DS)"},
+                         {"linear", "Linear"},
+                         {"cosine", "Cosine"},
+                         {"cubic", "Cubic"},
+                         {"gaussian", "Gaussian (as the SNES)"}},
+                        "cubic"));
   defs.push_back(toggle(key::kReplaceMusic, "Sound", "Replacement music",
                         "Plays Ogg Vorbis files from the \"music\" folder in the user data folder in place of the "
                         "game's music: a file named after a piece of the game's music (SEQ_MAP1.ogg), or as "

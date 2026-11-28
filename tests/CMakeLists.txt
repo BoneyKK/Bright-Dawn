@@ -32,6 +32,7 @@ add_executable(bd_tests
   test_sequence_player.cpp
   test_sound_driver.cpp
   test_sound_hardware.cpp
+  test_sound_interpolation.cpp
   test_second_processor.cpp
   test_problem_report.cpp
   test_save_summary.cpp

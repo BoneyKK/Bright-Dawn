@@ -62,7 +62,7 @@ jobs:
           # Only what a player needs: the program, its licences, and the
           # builder, with which the launcher builds the game library.
           exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
-          expected=$(printf '%s\n' LICENSE.txt "bright-dawn$exe" licenses/DearImGui.txt licenses/SDL3.txt \
+          expected=$(printf '%s\n' LICENSE.txt "bright-dawn$exe" licenses/DearImGui.txt licenses/SDL3.txt licenses/melonDS.txt \
             licenses/SkyEmu.txt licenses/stb_vorbis.txt | LC_ALL=C sort)
           actual=$(cd package/bright-dawn && find . -type f -not -path './builder/*' | sed 's|^[.]/||' | LC_ALL=C sort)
           if [ "$actual" != "$expected" ]; then

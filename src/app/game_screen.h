@@ -181,7 +181,7 @@ class GameScreen {
   void update_music();
   audio::Mixer mixer_;
   std::unique_ptr<audio::MusicReplacer> music_;
-  bool enhanced_sound_ = false, replace_music_ = false;
+  bool replace_music_ = false;
   AudioOut audio_;
   std::vector<SDL_Gamepad*> gamepads_;
   std::vector<Key> keys_;

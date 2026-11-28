@@ -400,7 +400,7 @@
     {
       "part": "audio",
       "status": "done",
-      "now": "Music and sound effects play through your audio device (SDL 3), mixed at 48,000 samples a second in floating point and kept in step with the frames. Sound quality: Enhanced (the game's sampled sounds smooth between their samples, at full precision) or Original (as the DS). Replacement music: Ogg Vorbis files in the music folder play in place of the game's music, by the names in the ROM's sound archive (SEQ_MAP1.ogg), each with a loop of its own (from its tags or music.ini), following the game's fades, pauses and stops. Settings, Sound: on or off, the volume, the quality, the replacement music and its volume."
+      "now": "Music and sound effects play through your audio device (SDL 3), mixed at 48,000 samples a second in floating point and kept in step with the frames. Sound quality: Enhanced (the mix at full precision) or Original (10 bits, as the DS); Interpolation of the game's sampled sounds between their samples, in melonDS's ways: None (as the DS), Linear, Cosine, Cubic or Gaussian. Replacement music: Ogg Vorbis files in the music folder play in place of the game's music, by the names in the ROM's sound archive (SEQ_MAP1.ogg), each with a loop of its own (from its tags or music.ini), following the game's fades, pauses and stops. Settings, Sound: on or off, the volume, the quality, the interpolation, the replacement music and its volume."
     },
     {
       "part": "input",

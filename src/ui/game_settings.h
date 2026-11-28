@@ -39,6 +39,7 @@ inline constexpr std::string_view kWidescreenHud = "graphics.widescreen_hud";
 inline constexpr std::string_view kSound = "sound.enabled";
 inline constexpr std::string_view kVolume = "sound.volume";
 inline constexpr std::string_view kSoundQuality = "sound.quality";
+inline constexpr std::string_view kInterpolation = "sound.interpolation";
 inline constexpr std::string_view kReplaceMusic = "sound.music_pack";
 inline constexpr std::string_view kMusicVolume = "sound.music_volume";
 inline constexpr std::string_view kPlayBuilt = "game.play_built";

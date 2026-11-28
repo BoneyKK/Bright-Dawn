@@ -483,9 +483,11 @@ void enhanced_scene(Fixture& f) {
   f.start(2);
 }
 
-std::vector<SoundHardware::Output> outputs(bool enhanced, std::vector<std::uint8_t>* captured = nullptr) {
+std::vector<SoundHardware::Output> outputs(bool enhanced, std::vector<std::uint8_t>* captured = nullptr,
+                                           bd::nds::Interpolation mode = bd::nds::Interpolation::kCubic) {
   Fixture f;
-  f.sound.set_enhanced(enhanced);
+  f.sound.set_full_precision(enhanced);
+  f.sound.set_interpolation(enhanced ? mode : bd::nds::Interpolation::kNone);
   std::vector<SoundHardware::Output> out;
   f.sound.on_output = [&](SoundHardware::Output o) { out.push_back(o); };
   enhanced_scene(f);
@@ -498,17 +500,43 @@ std::vector<SoundHardware::Output> outputs(bool enhanced, std::vector<std::uint8
 }  // namespace
 
 TEST(sound_enhanced_output_leaves_what_the_ds_makes_as_it_is) {
-  std::vector<std::uint8_t> captured_original, captured_enhanced;
+  using bd::nds::Interpolation;
+  std::vector<std::uint8_t> captured_original;
   const auto original = outputs(false, &captured_original);
-  const auto enhanced = outputs(true, &captured_enhanced);
-  REQUIRE(original.size() == 300 && enhanced.size() == 300);
-  bool same = true;
-  for (std::size_t i = 0; i < 300; ++i)
-    same = same && original[i].left == enhanced[i].left && original[i].right == enhanced[i].right;
-  CHECK(same);
-  CHECK(captured_original == captured_enhanced);
-  // Off, there is no enhanced mix.
-  CHECK(original[100].fine_left == 0.0f && original[100].fine_right == 0.0f);
+  REQUIRE(original.size() == 300);
+  for (Interpolation mode : {Interpolation::kNone, Interpolation::kLinear, Interpolation::kCosine,
+                             Interpolation::kCubic, Interpolation::kGaussian}) {
+    std::vector<std::uint8_t> captured_enhanced;
+    const auto enhanced = outputs(true, &captured_enhanced, mode);
+    REQUIRE(enhanced.size() == 300);
+    bool same = true;
+    for (std::size_t i = 0; i < 300; ++i)
+      same = same && original[i].left == enhanced[i].left && original[i].right == enhanced[i].right;
+    CHECK(same);
+    CHECK(captured_original == captured_enhanced);
+  }
+  // Original, with no interpolation: the speakers get the 10 bits.
+  bool ten_bits = true;
+  for (const SoundHardware::Output& o : original)
+    ten_bits = ten_bits && o.fine_left == static_cast<float>(static_cast<int>(o.left) - 0x200) / 512.0f &&
+               o.fine_right == static_cast<float>(static_cast<int>(o.right) - 0x200) / 512.0f;
+  CHECK(ten_bits);
+}
+
+TEST(sound_interpolation_at_original_precision_is_rounded_to_10_bits) {
+  Fixture f;
+  f.sound.set_interpolation(bd::nds::Interpolation::kLinear);
+  std::vector<SoundHardware::Output> out;
+  f.sound.on_output = [&](SoundHardware::Output o) { out.push_back(o); };
+  enhanced_scene(f);
+  f.run(300);
+  bool on_steps = true, between = false;
+  for (const SoundHardware::Output& o : out) {
+    const float steps = o.fine_left * 512.0f;
+    on_steps = on_steps && steps == std::floor(steps);
+    between = between || o.fine_left != static_cast<float>(static_cast<int>(o.left) - 0x200) / 512.0f;
+  }
+  CHECK(on_steps && between);
 }
 
 TEST(sound_enhanced_output_is_smooth_between_samples_and_at_the_same_level) {

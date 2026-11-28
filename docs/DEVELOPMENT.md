@@ -126,16 +126,24 @@ a second and handed to SDL a frame at a time (`src/app/audio_out.h`). The
 console's sound hardware (`src/nds/sound_hardware.h`) puts out 32,728 samples
 a second; a windowed-sinc resampler (`src/audio/resampler.h`: 32 taps, a
 Kaiser window, its cutoff at 95% of the lower Nyquist frequency) brings them
-to 48,000. *Sound quality* (`sound.quality`, `--sound-quality`) chooses what
-is taken from the hardware: *Enhanced* (the default) interpolates the game's
-sampled sounds between their samples (four-point Catmull-Rom, by where each
-channel's timer is between two samples) and keeps the mix at full precision;
-*Original* is the DS's own 10-bit output, each sample held until the next.
-The 10-bit output, the capture units (which the game's echo plays back) and
-every register are the same either way: the enhanced mix is made beside them
+to 48,000. Two settings choose what is taken from the hardware.
+*Sound quality* (`sound.quality`, `--sound-quality`): *Enhanced* (the
+default) keeps the mix at full precision; *Original* rounds it to 10 bits,
+as the DS does. *Interpolation* (`sound.interpolation`, `--interpolation`):
+how the game's sampled sounds go from one sample to the next, in melonDS's
+ways (`src/nds/sound_interpolation.h`, adapted from melonDS's `SPU.cpp`,
+GPL-3.0-or-later): *None* holds each sample until the next, as the DS does;
+*Linear*, *Cosine*, *Cubic* (the default) and *Gaussian* (the SNES sound
+unit's filter) go smoothly, by where each channel's timer is between two
+samples, one or two samples late. They give the same levels as melonDS from
+the same samples (checked against its code on 20 million cases). Original
+with None is the DS's own 10-bit output. The 10-bit output, the capture
+units (which the game's echo plays back) and every register are the same
+whatever the two settings are: the mix for the speakers is made beside them
 (`bd_tests`: `sound_enhanced_output_leaves_what_the_ds_makes_as_it_is`). On
-the opening's music the two are as loud (RMS 0.137 and 0.142), with the same
-envelope. Mixing costs about 0.07 ms a frame. `--record-sound FILE` keeps the
+the opening's music Enhanced and Original are as loud (RMS 0.142 and 0.137),
+with the same envelope. Mixing costs about 0.07 ms a frame; interpolation
+about 0.08 ms more with all 16 channels playing. `--record-sound FILE` keeps the
 mix (16-bit, 48,000 a second).
 
 Replacement music plays Ogg Vorbis files in place of the game's music. Put

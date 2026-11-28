@@ -118,8 +118,11 @@ constexpr const char* kUsage =
     "  --widescreen          the 3D scene on the main screen a third wider (16:9),\n"
     "                        with the graphics hardware\n"
     "  --mute                no sound\n"
-    "  --sound-quality MODE  the game's sound: enhanced (sampled sounds smooth between\n"
-    "                        their samples; the default) or original (as the DS)\n"
+    "  --sound-quality MODE  the game's sound mixed at full precision: enhanced (the\n"
+    "                        default) or original (rounded to 10 bits, as the DS)\n"
+    "  --interpolation MODE  sampled sounds between their samples, as melonDS does:\n"
+    "                        none (as the DS), linear, cosine, cubic (the default)\n"
+    "                        or gaussian\n"
     "  --no-music-pack       the game's own music, not the replacement music\n"
     "  --language LANGUAGE   the console's language, which the game shows its text in:\n"
     "                        english, french, german, italian, spanish or japanese\n"
@@ -801,6 +804,8 @@ int main(int argc, char** argv) {
       cl.overrides.emplace_back(ui::key::kTextures, argv[++i]);
     } else if (arg == "--sound-quality" && has_value) {
       cl.overrides.emplace_back(ui::key::kSoundQuality, argv[++i]);
+    } else if (arg == "--interpolation" && has_value) {
+      cl.overrides.emplace_back(ui::key::kInterpolation, argv[++i]);
     } else if (arg == "--no-music-pack") {
       cl.overrides.emplace_back(ui::key::kReplaceMusic, "off");
     } else if (arg == "--log-level" && has_value) {

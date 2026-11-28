@@ -1,0 +1,23 @@
+melonDS
+https://melonds.kuribo64.net
+https://github.com/melonDS-emu/melonDS
+
+Copyright 2016-2025 melonDS team
+
+melonDS is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version.
+
+melonDS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+details.
+
+Bright Dawn adapts this code from melonDS, and uses it under the GNU
+General Public License, version 3 (LICENSE.txt):
+
+- The interpolation of sampled sound between its samples (None, Linear,
+  Cosine, Cubic and the SNES Gaussian table), from src/SPU.cpp at commit
+  b86390e4428bf38ce4c1ce0e9ca446d6d25955e8 (2025-11-18). In Bright Dawn:
+  src/nds/sound_interpolation.h and src/nds/sound_interpolation.cpp.

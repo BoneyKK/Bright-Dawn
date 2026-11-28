@@ -185,6 +185,7 @@ add_library(bd_nds STATIC
   src/nds/sequence_player.cpp
   src/nds/sound_driver.cpp
   src/nds/sound_hardware.cpp
+  src/nds/sound_interpolation.cpp
   src/nds/system_control.cpp
   src/nds/timeline.cpp
   src/nds/timers.cpp
@@ -349,6 +350,7 @@ if(TARGET bright-dawn)
   install(TARGETS bright-dawn RUNTIME DESTINATION .)
   install(FILES third_party/imgui/LICENSE.txt DESTINATION licenses RENAME DearImGui.txt)
   install(FILES third_party/stb/LICENSE.txt DESTINATION licenses RENAME stb_vorbis.txt)
+  install(FILES third_party/melonds/NOTICE.txt DESTINATION licenses RENAME melonDS.txt)
   if(NOT BD_SYSTEM_SDL)
     install(FILES ${sdl3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL3.txt)
   endif()

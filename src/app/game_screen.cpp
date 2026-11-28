@@ -75,13 +75,8 @@ void GameScreen::detach() {
 
 void GameScreen::connect_sound() {
   console_->sound_hardware().on_output = [this](nds::SoundHardware::Output o) {
-    if (enhanced_sound_) {
-      mixer_.add_console(o.fine_left, o.fine_right);
-    } else {
-      // The 10 bits around the resting level, as the DS puts them out.
-      mixer_.add_console(static_cast<float>(static_cast<int>(o.left & 0x3FF) - 0x200) / 512.0f,
-                         static_cast<float>(static_cast<int>(o.right & 0x3FF) - 0x200) / 512.0f);
-    }
+    // As Sound quality and Interpolation say (nds/sound_hardware.h).
+    mixer_.add_console(o.fine_left, o.fine_right);
   };
   console_->sound_driver().sequences().on_prepare = [this](unsigned player, std::uint32_t starts, std::uint32_t data) {
     if (!music_ || !nds::Arm9Bus::in_main_memory(data)) return false;
@@ -270,8 +265,9 @@ void GameScreen::apply_settings(bool first) {
                                       (workarounds_ & debug::kWorkaroundProcessor2D) == 0);
   console_->display().set_check_2d(app_.options.check_2d);
   audio_.set(s.toggle(key::kSound), static_cast<int>(s.number(key::kVolume)));
-  enhanced_sound_ = s.value(key::kSoundQuality) != "original";
-  console_->sound_hardware().set_enhanced(enhanced_sound_);
+  console_->sound_hardware().set_full_precision(s.value(key::kSoundQuality) != "original");
+  console_->sound_hardware().set_interpolation(
+      nds::interpolation_named(s.value(key::kInterpolation)).value_or(nds::Interpolation::kNone));
   const bool replace = s.toggle(key::kReplaceMusic);
   if (replace_music_ && !replace && music_) {
     // The game's own music again, from now on.

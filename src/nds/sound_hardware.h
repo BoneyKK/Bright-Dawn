@@ -47,6 +47,7 @@
 #include <string>
 
 #include "nds/arm9_bus.h"
+#include "nds/sound_interpolation.h"
 #include "nds/timeline.h"
 
 namespace bd::nds {
@@ -98,9 +99,11 @@ class SoundHardware : public Timeline::Source {
   // output sample: 10 bits each, resting at the bias register's value.
   struct Output {
     std::uint16_t left = 0, right = 0;
-    // With enhanced output on (set_enhanced): the same mix with sampled
-    // sound interpolated between its samples, at full precision, 1 being
-    // full scale (where the 10 bits above reach their ends). 0 otherwise.
+    // What the speakers are given: the same mix, 1 being full scale (where
+    // the 10 bits above reach their ends), around the resting level of
+    // 0x200. With full precision off and no interpolation, it is the 10
+    // bits above; otherwise as set_full_precision() and set_interpolation()
+    // say.
     float fine_left = 0, fine_right = 0;
   };
 
@@ -130,18 +133,21 @@ class SoundHardware : public Timeline::Source {
   Time next_event() const override { return Timeline::kNever; }
   void run_until(Time now) override;
 
-  // Enhanced output (Settings, Sound quality): each output sample also
-  // carries a smoother mix (Output::fine_left and fine_right). Sampled sound
-  // (8-bit, 16-bit and compressed) is interpolated between its samples with
-  // a four-point cubic (Catmull-Rom) by where the channel's timer is between
-  // two of them, instead of each sample being held until the next; nothing
-  // is rounded to 10 bits. Square waves and noise are as they are. What the
+  // For the speakers only (Output::fine_left and fine_right): what the
   // hardware does otherwise (the 10-bit output, the capture units, which
-  // record the mix as the DS makes it, and every register) is the same with
-  // it on or off. The interpolation puts each sampled sound two of its own
-  // samples late (a quarter of a millisecond at 8,000 a second).
-  void set_enhanced(bool on) { enhanced_ = on; }
-  bool enhanced() const { return enhanced_; }
+  // record the mix as the DS makes it, and every register) is the same
+  // whatever these are.
+  //
+  // Full precision (Settings, Sound quality, Enhanced): the mix is not
+  // rounded to 10 bits. Off, it is, as the DS does.
+  void set_full_precision(bool on) { full_precision_ = on; }
+  bool full_precision() const { return full_precision_; }
+  // Interpolation (Settings, Sound, Interpolation): sampled sound (8-bit,
+  // 16-bit and compressed) goes smoothly from one sample to the next, by
+  // where the channel's timer is between them, in one of melonDS's ways
+  // (nds/sound_interpolation.h). Square waves and noise are as they are.
+  void set_interpolation(Interpolation mode) { interpolation_ = mode; }
+  Interpolation interpolation() const { return interpolation_; }
 
   // Called with every output sample, in order.
   std::function<void(Output)> on_output;
@@ -168,10 +174,8 @@ class SoundHardware : public Timeline::Source {
     unsigned duty_step = 0;      // Square wave: place in its eight steps.
     std::uint16_t noise = 0;     // Noise: the shift register,
     bool noise_low = false;      // and the level it last gave.
-    // Enhanced output: the last four samples of sampled sound, oldest
-    // first, and the count of steps when the newest was taken.
-    std::uint32_t steps = 0, history_at = 0xFFFFFFFF;
-    std::array<std::int32_t, 4> history{};
+    // Interpolation: the samples before the present one, newest first.
+    std::array<std::int32_t, 3> previous{};
   };
   struct Capture {
     std::uint8_t control = 0;
@@ -187,9 +191,6 @@ class SoundHardware : public Timeline::Source {
   void sample();
   // The level channel `i` gives now, as a signed 16-bit value.
   std::int32_t level(unsigned i, Channel& c);
-  // Enhanced output: sampled sound's level between its samples, given the
-  // level now (`now`).
-  static double interpolated(Channel& c, std::int32_t now);
   // Moves channel `i` on by one step of its timer. False if it ended.
   bool step(unsigned i, Channel& c);
   void capture(Capture& c, const Channel& timer_from, std::int64_t mixed);
@@ -202,7 +203,8 @@ class SoundHardware : public Timeline::Source {
   std::array<Capture, kCaptureUnits> captures_{};
   std::uint16_t control_ = 0;
   std::uint16_t bias_ = 0x200;  // As the firmware leaves it.
-  bool enhanced_ = false;
+  bool full_precision_ = false;
+  Interpolation interpolation_ = Interpolation::kNone;
   Time next_sample_ = kCyclesPerSample;
   Statistics statistics_;
   std::map<std::string, std::uint64_t> notes_;

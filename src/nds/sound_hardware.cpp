@@ -1,6 +1,7 @@
 #include "nds/sound_hardware.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "debug/frame_log.h"
 
@@ -143,9 +144,7 @@ void SoundHardware::start(unsigned channel) {
   ++statistics_.channels_started;
   c.position = c.source;
   c.counter = c.timer;
-  c.steps = 0;
-  c.history_at = 0xFFFFFFFF;
-  c.history = {};
+  c.previous = {};
   switch ((c.control >> kFormatShift) & 3) {
     case 2: {
       // The data begins with a header: the level and the index to start from.
@@ -293,23 +292,9 @@ bool SoundHardware::anything_running() const {
   return false;
 }
 
-SoundHardware::Output SoundHardware::resting() const { return Output{bias_, bias_, 0, 0}; }
-
-double SoundHardware::interpolated(Channel& c, std::int32_t now) {
-  // A new sample since the last output sample: it joins the history.
-  if (c.history_at != c.steps) {
-    c.history = {c.history[1], c.history[2], c.history[3], now};
-    c.history_at = c.steps;
-  }
-  // How far the channel's timer is through the newest sample.
-  const double span = 0x10000 - static_cast<double>(c.timer);
-  const double f = std::clamp((static_cast<double>(c.counter) - c.timer) / span, 0.0, 1.0);
-  // Catmull-Rom between the second and third, the first and fourth around them.
-  const double y0 = c.history[0], y1 = c.history[1], y2 = c.history[2], y3 = c.history[3];
-  const double c1 = 0.5 * (y2 - y0);
-  const double c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
-  const double c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
-  return ((c3 * f + c2) * f + c1) * f + y1;
+SoundHardware::Output SoundHardware::resting() const {
+  const float level = full_precision_ ? 0.0f : static_cast<float>(static_cast<int>(bias_) - 0x200) / 512.0f;
+  return Output{bias_, bias_, level, level};
 }
 
 void SoundHardware::sample() {
@@ -322,22 +307,34 @@ void SoundHardware::sample() {
   // Levels carry 8 bits below the point from here to the master volume.
   std::int64_t mixer_left = 0, mixer_right = 0;
   std::int64_t alone_left[2] = {0, 0}, alone_right[2] = {0, 0};  // Channels 1 and 3 by themselves.
-  // Enhanced output: the same, from interpolated levels, unrounded.
+  // For the speakers: the same, unrounded, from interpolated levels if
+  // asked for.
+  const bool fine_mix = full_precision_ || interpolation_ != Interpolation::kNone;
   double fine_mixer_left = 0, fine_mixer_right = 0;
   double fine_alone_left[2] = {0, 0}, fine_alone_right[2] = {0, 0};
   for (unsigned i = 0; i < kChannels; ++i) {
     Channel& c = channels_[i];
     if ((c.control & kChannelStart) == 0) continue;
     std::int64_t value = level(i, c);
-    double fine = static_cast<double>(value);
-    if (enhanced_ && ((c.control >> kFormatShift) & 3) != 3) fine = interpolated(c, static_cast<std::int32_t>(value));
+    const bool smooth = interpolation_ != Interpolation::kNone && ((c.control >> kFormatShift) & 3) != 3;
 
+    // As melonDS: each sample left behind joins those before, and the
+    // level is taken where the timer has got to.
+    std::int32_t present = static_cast<std::int32_t>(value);
+    bool running = true;
     c.counter += kTimerTicksPerSample;
     while (c.counter >= 0x10000) {
       c.counter = c.counter - 0x10000 + c.timer;
-      if (!step(i, c)) break;
-      ++c.steps;
+      if (smooth) c.previous = {present, c.previous[0], c.previous[1]};
+      if (!step(i, c)) {
+        running = false;
+        break;
+      }
+      if (smooth) present = level(i, c);
     }
+    double fine = static_cast<double>(value);
+    if (smooth && running)
+      fine = interpolate(interpolation_, present, c.previous, interpolation_position(c.counter, c.timer));
 
     const unsigned divider = (c.control >> kDividerShift) & 3;
     const unsigned shift = 4 - (divider == 3 ? 4 : divider);
@@ -347,7 +344,7 @@ void SoundHardware::sample() {
     const std::int64_t left = (value * (128 - pan) / 128) >> 3;
     const std::int64_t right = (value * pan / 128) >> 3;
     double fine_left = 0, fine_right = 0;
-    if (enhanced_) {
+    if (fine_mix) {
       fine *= static_cast<double>(1u << shift) * static_cast<double>(out_of_128(c.control & 0x7F));
       fine_left = fine * static_cast<double>(128 - pan) / (128.0 * 8.0);
       fine_right = fine * static_cast<double>(pan) / (128.0 * 8.0);
@@ -387,7 +384,11 @@ void SoundHardware::sample() {
   };
   Output output{converted(chosen(control_ >> 8, mixer_left, alone_left)),
                 converted(chosen(control_ >> 10, mixer_right, alone_right))};
-  if (enhanced_) {
+  if (!fine_mix) {
+    // The 10 bits around the resting level, as the DS puts them out.
+    output.fine_left = static_cast<float>(static_cast<int>(output.left) - 0x200) / 512.0f;
+    output.fine_right = static_cast<float>(static_cast<int>(output.right) - 0x200) / 512.0f;
+  } else {
     const auto fine_chosen = [&](unsigned choice, double mixer, const double* alone) {
       switch (choice & 3) {
         case 0: return mixer;
@@ -398,8 +399,15 @@ void SoundHardware::sample() {
     };
     // As converted(), unrounded: 1 where the 10 bits reach their ends.
     const double scale = static_cast<double>(master) / (128.0 * 256.0 * 32768.0);
-    output.fine_left = static_cast<float>(fine_chosen(control_ >> 8, fine_mixer_left, fine_alone_left) * scale);
-    output.fine_right = static_cast<float>(fine_chosen(control_ >> 10, fine_mixer_right, fine_alone_right) * scale);
+    const double left = fine_chosen(control_ >> 8, fine_mixer_left, fine_alone_left) * scale;
+    const double right = fine_chosen(control_ >> 10, fine_mixer_right, fine_alone_right) * scale;
+    // Without full precision, rounded to the 10 bits as converted() does.
+    const auto ten_bits = [&](double level) {
+      const double steps = std::clamp(std::floor(level * 512.0) + bias_, 0.0, 1023.0);
+      return static_cast<float>((steps - 0x200) / 512.0);
+    };
+    output.fine_left = full_precision_ ? static_cast<float>(left) : ten_bits(left);
+    output.fine_right = full_precision_ ? static_cast<float>(right) : ten_bits(right);
   }
   if (output.left != bias_ || output.right != bias_) ++statistics_.samples_with_sound;
   if (on_output) on_output(output);
